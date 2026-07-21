@@ -1,0 +1,273 @@
+#!/usr/bin/env bash
+#
+# ytdl — wrapper di yt-dlp per scaricare musica con naming e metadati puliti.
+#
+#   "Artista - Traccia.<ext>"  + tag ID3 (artista, titolo, album, copertina).
+#
+# USO:   ytdl [opzioni] URL
+# HELP:  ytdl --help
+#
+set -euo pipefail
+
+# ──────────────────────────────────────────────────────────────────
+#  CONFIG (modifica liberamente questa sezione)
+# ──────────────────────────────────────────────────────────────────
+# La cartella di default si può impostare anche con la variabile d'ambiente
+# $YTDL_OUT_DIR (es. in ~/.bash_profile). Il flag -o ha sempre la precedenza.
+DEFAULT_OUTPUT_DIR="${YTDL_OUT_DIR:-$HOME/Music/ytdl}"
+DEFAULT_FORMAT="mp3"
+
+# Regex di pulizia (sintassi Python `re`). Aggiungi qui i tuoi pattern.
+#
+# 1) Token tra parentesi quadre: [BAS012], [Premiere], [Free Download] ...
+STRIP_BRACKETS='\s*\[[^]]*\]'
+#
+# 2) Descrittori ridondanti tra parentesi tonde (case-insensitive).
+#    NB: NON tocca (… Remix) né (feat. …), che per la musica vuoi tenere.
+STRIP_TAGS='\s*\((?i:original mix|original|extended mix|extended|radio edit|radio version|free download|free dl|official (video|audio)|lyric video|visualizer|hd|hq|audio)\)'
+
+# ──────────────────────────────────────────────────────────────────
+#  Help
+# ──────────────────────────────────────────────────────────────────
+usage() {
+  cat <<'EOF'
+ytdl — scarica musica da YouTube / YT Music con yt-dlp, naming e tag puliti.
+
+USO
+  ytdl [opzioni] URL
+
+OPZIONI
+  -o, --output DIR    Cartella di destinazione   (default: $YTDL_OUT_DIR o ~/Music/ytdl)
+  -p, --playlist      Scarica l'INTERA playlist        (default: solo la traccia)
+  -f, --format FMT    Formato audio: mp3|flac|m4a|opus|wav   (default: mp3)
+  -n, --dry-run       Mostra i nomi file risultanti SENZA scaricare
+  -s, --silent        Nessun output (per lanciarlo in background con &)
+  -b, --background    Esegui in background e torna subito (implica -s)
+  -v, --verbose       Mostra tutto l'output di yt-dlp (per debug)
+  -h, --help          Questo messaggio
+
+ERRORI IN -s / -b
+  Senza output non vedi i fallimenti: se un download fallisce viene scritto
+  "<titolo>.log" (col dettaglio) nella cartella di output, al posto del file
+  audio. Controllo a posteriori:  ls *.log  nella cartella.
+
+NB: METTI SEMPRE L'URL TRA VIRGOLETTE. Contiene & che altrimenti la shell
+    interpreta come "esegui in background" (es. ...&list=...&index=2).
+
+TIP: per fissare la cartella di output per la sessione corrente:
+       export YTDL_OUT_DIR="/percorso/output"
+     (il flag -o ha comunque la precedenza)
+
+ESEMPI
+  ytdl "https://youtu.be/XXXX"                        # singola traccia
+  ytdl -p "https://youtube.com/playlist?list=YYYY"    # playlist intera
+  ytdl -f flac -o ~/Desktop "https://youtu.be/XXXX"   # FLAC sul Desktop
+  ytdl -n "https://youtu.be/XXXX"                     # anteprima dei nomi
+  ytdl -b "https://youtu.be/XXXX"                     # in background, torna subito
+
+COSA FA AL TITOLO
+  • Se ci sono metadati strutturati (YT Music / Topic) usa SEMPRE quelli:
+    artist e track nativi hanno la precedenza sul titolo del video.
+  • Altrimenti ricava "Artista - Traccia" splittando il titolo su " - ".
+  • In entrambi i casi rimuove [..] e (Original Mix)/(Extended)/ecc.,
+    mantenendo le info utili tipo (Qualcuno Remix) e (feat. …).
+EOF
+}
+
+# ──────────────────────────────────────────────────────────────────
+#  Parsing argomenti
+# ──────────────────────────────────────────────────────────────────
+OUTPUT_DIR="$DEFAULT_OUTPUT_DIR"
+FORMAT="$DEFAULT_FORMAT"
+NO_PLAYLIST=1
+DRY_RUN=0
+VERBOSE=0
+SILENT=0
+BACKGROUND=0
+URL=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o|--output)   OUTPUT_DIR="${2:?manca la cartella}"; shift 2 ;;
+    -f|--format)   FORMAT="${2:?manca il formato}";       shift 2 ;;
+    -p|--playlist) NO_PLAYLIST=0; shift ;;
+    -n|--dry-run)  DRY_RUN=1;     shift ;;
+    -s|--silent)   SILENT=1;      shift ;;
+    -b|--background) BACKGROUND=1; shift ;;
+    -v|--verbose)  VERBOSE=1;     shift ;;
+    -h|--help)     usage; exit 0 ;;
+    --)            shift; URL="${1:-}"; break ;;
+    -*)            echo "✗ Opzione sconosciuta: $1" >&2; echo; usage; exit 1 ;;
+    *)             URL="$1"; shift ;;
+  esac
+done
+
+if [[ -z "$URL" ]]; then
+  echo "✗ Nessun URL fornito." >&2; echo; usage; exit 1
+fi
+
+# Via eventuale slash finale dalla cartella (evita .../sw-rk//file.mp3)
+OUTPUT_DIR="${OUTPUT_DIR%/}"
+
+# ──────────────────────────────────────────────────────────────────
+#  Dipendenze
+# ──────────────────────────────────────────────────────────────────
+command -v yt-dlp >/dev/null 2>&1 || { echo "✗ yt-dlp non trovato.  brew install yt-dlp" >&2; exit 1; }
+command -v ffmpeg >/dev/null 2>&1 || { echo "✗ ffmpeg non trovato (serve per audio + copertina).  brew install ffmpeg" >&2; exit 1; }
+
+# ──────────────────────────────────────────────────────────────────
+#  Costruzione dei flag yt-dlp
+# ──────────────────────────────────────────────────────────────────
+# Template del nome file. Fallback a catena se un campo manca:
+#   artist -> creator -> xartist(dal titolo) -> uploader
+#   track  -> xtrack(dal titolo) -> title
+NAME_TEMPLATE='%(artist,creator,xartist,uploader)s - %(track,xtrack,title)s'
+
+# Flag di "normalizzazione metadati" condivisi da download e dry-run.
+# Ordine importante:
+#  1) pulisco title/track da [..] e (Original Mix)/ecc.
+#  2) splitto il TITOLO in campi-helper xartist/xtrack, SENZA toccare i campi
+#     artist/track nativi. Così i metadati strutturati di YT Music (quando ci
+#     sono) hanno SEMPRE la precedenza, e il titolo è solo un fallback. Questo
+#     evita il caso "Label - Artista — Traccia" che sovrascriveva l'artista.
+#  3) tag ID3 finali con la stessa precedenza del nome file.
+meta_args=(
+  --replace-in-metadata "title,track" "$STRIP_BRACKETS" ""
+  --replace-in-metadata "title,track" "$STRIP_TAGS"     ""
+  --parse-metadata "title:%(xartist)s - %(xtrack)s"
+  --parse-metadata "%(artist,creator,xartist,uploader)s:%(meta_artist)s"
+  --parse-metadata "%(track,xtrack,title)s:%(meta_title)s"
+)
+
+# Playlist sì/no
+if [[ "$NO_PLAYLIST" -eq 1 ]]; then
+  playlist_args=(--no-playlist)
+else
+  playlist_args=(--yes-playlist -i)   # -i: non fermarti al primo errore
+fi
+
+# ──────────────────────────────────────────────────────────────────
+#  Dry-run: solo anteprima dei nomi
+# ──────────────────────────────────────────────────────────────────
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  echo "▸ Anteprima (nessun download) — formato .$FORMAT"
+  echo "▸ Destinazione: $OUTPUT_DIR"
+  echo
+  yt-dlp \
+    --no-warnings \
+    "${meta_args[@]}" \
+    "${playlist_args[@]}" \
+    --skip-download \
+    --print "$NAME_TEMPLATE.$FORMAT" \
+    "$URL"
+  exit 0
+fi
+
+# ──────────────────────────────────────────────────────────────────
+#  Download
+# ──────────────────────────────────────────────────────────────────
+mkdir -p "$OUTPUT_DIR"
+
+# -b: rilancio me stesso in modalità silent (-s), scollegato dal terminale con
+#     nohup, e torno subito. Il download prosegue anche se chiudi il Terminal.
+if [[ "$BACKGROUND" -eq 1 ]]; then
+  reexec=(-s -f "$FORMAT" -o "$OUTPUT_DIR")
+  [[ "$NO_PLAYLIST" -eq 0 ]] && reexec+=(-p)
+  nohup "$0" "${reexec[@]}" "$URL" >/dev/null 2>&1 &
+  echo "▸ Avviato in background (PID $!)."
+  echo "  Audio → $OUTPUT_DIR"
+  echo "  Se un download fallisce, troverai <titolo>.log nella stessa cartella."
+  exit 0
+fi
+
+# -v: lascio passare tutto l'output di yt-dlp (debug).
+if [[ "$VERBOSE" -eq 1 ]]; then
+  echo "▸ Scarico (.$FORMAT) → $OUTPUT_DIR  [verbose]"; echo
+  yt-dlp \
+    -x --audio-format "$FORMAT" --audio-quality 0 \
+    --embed-metadata --embed-thumbnail \
+    "${meta_args[@]}" \
+    "${playlist_args[@]}" \
+    -o "$OUTPUT_DIR/$NAME_TEMPLATE.%(ext)s" \
+    "$URL"
+  echo; echo "✓ Fatto → $OUTPUT_DIR"
+  exit 0
+fi
+
+# Argomenti base condivisi da modalità silent e normale.
+# --no-simulate è necessario: --print/--print-to-file (before_dl) altrimenti
+# implicano --simulate (= nessun download).
+base_args=(
+  -x --audio-format "$FORMAT" --audio-quality 0
+  --embed-metadata --embed-thumbnail --no-simulate
+  "${meta_args[@]}"
+  "${playlist_args[@]}"
+  -o "$OUTPUT_DIR/$NAME_TEMPLATE.%(ext)s"
+)
+
+# -s: nessun output. Su errore (o zero file) scrive <titolo>.log nella cartella
+#     di output, col dettaglio dell'errore, al posto del file audio.
+if [[ "$SILENT" -eq 1 ]]; then
+  saved="$(mktemp)"; titlefile="$(mktemp)"; errlog="$(mktemp)"
+  trap 'rm -f "$saved" "$titlefile" "$errlog"' EXIT
+
+  set +e
+  yt-dlp "${base_args[@]}" \
+    --quiet --no-warnings --no-progress \
+    --print-to-file "before_dl:%(artist,creator,uploader)s - %(track,title)s" "$titlefile" \
+    --print-to-file "after_move:%(filepath)s" "$saved" \
+    "$URL" >/dev/null 2>"$errlog"
+  rc=$?
+  set -e
+
+  if [[ "$rc" -ne 0 || ! -s "$saved" ]]; then
+    label="$(tail -n1 "$titlefile" 2>/dev/null | tr '/:' '__')"
+    [[ -z "$label" ]] && label="ytdl-failed-$(date +%Y%m%d-%H%M%S)"
+    {
+      echo "ytdl — download FALLITO"
+      echo "data: $(date)"
+      echo "url:  $URL"
+      echo "rc:   $rc"
+      echo "----------------------------------------"
+      cat "$errlog"
+    } >"$OUTPUT_DIR/$label.log"
+  fi
+  exit "$rc"
+fi
+
+# Modalità normale (default): titolo SUBITO (before_dl) + barra + conferma.
+echo "▸ Scarico (.$FORMAT) → $OUTPUT_DIR"
+
+saved="$(mktemp)"
+trap 'rm -f "$saved"' EXIT
+
+set +e
+yt-dlp "${base_args[@]}" \
+  --quiet --no-warnings --progress \
+  --print "before_dl:  ♪ $NAME_TEMPLATE.$FORMAT" \
+  --print-to-file "after_move:%(filepath)s" "$saved" \
+  "$URL"
+rc=$?
+set -e
+
+# Conferma finale: con 1 traccia mostro il path completo; con N la cartella.
+first=""; count=0
+if [[ -f "$saved" ]]; then
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    count=$((count + 1))
+    [[ -z "$first" ]] && first="$f"
+  done <"$saved"
+fi
+
+echo
+if [[ "$count" -eq 1 ]]; then
+  echo "✓ Salvata in: $first"
+elif [[ "$count" -gt 1 ]]; then
+  echo "✓ $count tracce salvate in: $OUTPUT_DIR"
+else
+  echo "✗ Nessun file scaricato (rc=$rc)."
+  echo "  (se l'URL conteneva &, controlla che fosse tra virgolette)"
+fi
+
+exit "$rc"
