@@ -9,9 +9,23 @@
 #
 set -euo pipefail
 
+YTDL_VERSION="1.0.0"
+
 # ──────────────────────────────────────────────────────────────────
 #  CONFIG (modifica liberamente questa sezione)
 # ──────────────────────────────────────────────────────────────────
+# L'installer mette yt-dlp e ffmpeg in ~/.local/bin. Lo aggiungiamo qui perché
+# ytdl deve funzionare anche quando il PATH non è configurato: lanciato da
+# Finder, da un'app, o in un Terminale mai riavviato dopo l'installazione.
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) PATH="$HOME/.local/bin:$PATH" ;;
+esac
+
+# Repository da cui ytdl si aggiorna (--update).
+# TODO: impostare lo slug GitHub reale prima di pubblicare.
+YTDL_REPO="${YTDL_REPO:-OWNER/yt-download}"
+YTDL_BRANCH="${YTDL_BRANCH:-main}"
 # La cartella di default si può impostare anche con la variabile d'ambiente
 # $YTDL_OUT_DIR (es. in ~/.bash_profile). Il flag -o ha sempre la precedenza.
 DEFAULT_OUTPUT_DIR="${YTDL_OUT_DIR:-$HOME/Music/ytdl}"
@@ -45,6 +59,13 @@ OPZIONI
   -b, --background    Esegui in background e torna subito (implica -s)
   -v, --verbose       Mostra tutto l'output di yt-dlp (per debug)
   -h, --help          Questo messaggio
+  -V, --version       Mostra la versione di ytdl e yt-dlp
+      --update        Aggiorna ytdl e yt-dlp all'ultima versione
+
+AGGIORNAMENTI
+  yt-dlp smette di funzionare quando YouTube cambia qualcosa: succede ogni
+  pochi mesi. Se i download iniziano a fallire, la prima cosa da provare è:
+       ytdl --update
 
 ERRORI IN -s / -b
   Senza output non vedi i fallimenti: se un download fallisce viene scritto
@@ -75,6 +96,42 @@ EOF
 }
 
 # ──────────────────────────────────────────────────────────────────
+#  Versione e aggiornamento
+# ──────────────────────────────────────────────────────────────────
+show_version() {
+  echo "ytdl $YTDL_VERSION"
+  if command -v yt-dlp >/dev/null 2>&1; then
+    echo "yt-dlp $(yt-dlp --version 2>/dev/null || echo "(non risponde)")"
+  else
+    echo "yt-dlp non installato"
+  fi
+}
+
+# Rilancia l'installer, che è l'unico posto in cui vive la logica di
+# provisioning: aggiorna ytdl, yt-dlp e ffmpeg insieme e coerentemente.
+do_update() {
+  local url="https://raw.githubusercontent.com/$YTDL_REPO/$YTDL_BRANCH/install.sh"
+
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "✗ curl non disponibile: impossibile aggiornare." >&2
+    return 1
+  fi
+
+  echo "▸ Aggiorno ytdl e yt-dlp…"
+  echo
+  # L'installer sostituisce i file con mv: lo script in esecuzione resta
+  # valido fino all'uscita.
+  if ! curl -fsSL --retry 3 --connect-timeout 20 "$url" | bash; then
+    echo >&2
+    echo "✗ Aggiornamento fallito." >&2
+    echo "  Controlla la connessione e riprova. Se il problema persiste," >&2
+    echo "  reinstalla ytdl seguendo le istruzioni del README." >&2
+    return 1
+  fi
+  return 0
+}
+
+# ──────────────────────────────────────────────────────────────────
 #  Parsing argomenti
 # ──────────────────────────────────────────────────────────────────
 OUTPUT_DIR="$DEFAULT_OUTPUT_DIR"
@@ -96,6 +153,8 @@ while [[ $# -gt 0 ]]; do
     -b|--background) BACKGROUND=1; shift ;;
     -v|--verbose)  VERBOSE=1;     shift ;;
     -h|--help)     usage; exit 0 ;;
+    -V|--version)  show_version; exit 0 ;;
+    --update)      do_update; exit $? ;;
     --)            shift; URL="${1:-}"; break ;;
     -*)            echo "✗ Opzione sconosciuta: $1" >&2; echo; usage; exit 1 ;;
     *)             URL="$1"; shift ;;
@@ -112,8 +171,21 @@ OUTPUT_DIR="${OUTPUT_DIR%/}"
 # ──────────────────────────────────────────────────────────────────
 #  Dipendenze
 # ──────────────────────────────────────────────────────────────────
-command -v yt-dlp >/dev/null 2>&1 || { echo "✗ yt-dlp non trovato.  brew install yt-dlp" >&2; exit 1; }
-command -v ffmpeg >/dev/null 2>&1 || { echo "✗ ffmpeg non trovato (serve per audio + copertina).  brew install ffmpeg" >&2; exit 1; }
+# I messaggi puntano a ciò che l'utente può realmente fare: le dipendenze le
+# installa il nostro installer, non un gestore di pacchetti che non ha.
+missing_dep() {
+  echo "✗ $1 non trovato." >&2
+  echo >&2
+  echo "  Le dipendenze di ytdl sembrano mancanti o incomplete." >&2
+  echo "  Per reinstallarle:" >&2
+  echo >&2
+  echo "      ytdl --update" >&2
+  echo >&2
+  exit 1
+}
+
+command -v yt-dlp >/dev/null 2>&1 || missing_dep "yt-dlp"
+command -v ffmpeg >/dev/null 2>&1 || missing_dep "ffmpeg (serve per estrarre l'audio e incorporare la copertina)"
 
 # ──────────────────────────────────────────────────────────────────
 #  Costruzione dei flag yt-dlp
