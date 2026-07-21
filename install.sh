@@ -25,7 +25,7 @@ MIN_PYTHON="3.10"
 OS_MAJOR=""; OS_MINOR=""; TIER=""; ARCH=""; PYTHON=""
 
 TMPDIR_YTDL=""
-cleanup() { [ -n "$TMPDIR_YTDL" ] && rm -rf "$TMPDIR_YTDL"; }
+cleanup() { [ -n "$TMPDIR_YTDL" ] && rm -rf "$TMPDIR_YTDL"; return 0; }
 trap cleanup EXIT
 
 # ──────────────────────────────────────────────────────────────────
