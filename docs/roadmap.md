@@ -43,17 +43,21 @@ any macOS from 10.13 up, and can keep it working over time.
 | 1.7 | Actionable failure messages (no `brew install`) | done | Now point at `ytdl --update` ([U3](improvements.md)) |
 | 1.8 | Guided path for macOS 10.13–10.14 (python.org 3.13) | done | Aborts with an explanation below 10.13 |
 | 1.9 | `ytdl --update` (updates yt-dlp **and** the script) | done | Re-runs the installer, single provisioning path ([U2](improvements.md)) |
-| 1.10 | Public GitHub repo, first release, documented one-liner | **blocked** | Needs the real GitHub slug — see below |
+| 1.10 | Public GitHub repo, first release, documented one-liner | in progress | Slug set to `alergyonthestage/ytdl`; repo not yet pushed |
 | 1.11 | Real-hardware testing | **blocked** | Needs physical Macs — see below |
+| 1.12 | Licence (PolyForm Strict 1.0.0) | done | Use permitted, redistribution and derivatives are not |
+| 1.13 | Italian user guides (install + usage) | done | [installazione](guida-installazione.md), [uso](guida-uso.md) |
 
 **Definition of done:** a tester who has never opened Terminal completes the
 install unaided and downloads a track.
 
 ### What is blocking
 
-- **1.10 — the GitHub repository slug.** `install.sh`, `ytdl` and the README
-  carry an `OWNER/yt-download` placeholder. Until the repository is published
-  and the slug substituted, neither the one-liner nor `--update` can work.
+- **1.10 — publishing the repository.** The slug `alergyonthestage/ytdl` is now
+  wired into `install.sh`, `ytdl` and the README. The repository still has to be
+  created and pushed as **public**: the one-liner and `--update` both fetch over
+  unauthenticated HTTPS, which a private repository refuses. See
+  [ADR-0002](decisions/0002-public-repository-and-licence.md).
 - **1.11 — real hardware.** Every claim in [distribution.md](distribution.md) is
   verified against upstream documentation and live HTTP checks, and the pure
   logic is unit-tested — but the install has never run on macOS. The Mojave path

@@ -2,7 +2,7 @@
 #
 # ytdl installer — provisions ytdl and its dependencies on macOS.
 #
-#   curl -fsSL https://raw.githubusercontent.com/OWNER/yt-download/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/alergyonthestage/ytdl/main/install.sh | bash
 #
 # Installs into ~/.local/bin without sudo. See docs/distribution.md for the
 # constraints behind the choices made here.
@@ -12,8 +12,8 @@ set -euo pipefail
 # ──────────────────────────────────────────────────────────────────
 #  Configuration
 # ──────────────────────────────────────────────────────────────────
-# TODO: set to the real GitHub slug before publishing the repository.
-REPO_SLUG="${YTDL_REPO:-OWNER/yt-download}"
+
+REPO_SLUG="${YTDL_REPO:-alergyonthestage/ytdl}"
 REPO_BRANCH="${YTDL_BRANCH:-main}"
 INSTALL_DIR="${YTDL_INSTALL_DIR:-$HOME/.local/bin}"
 

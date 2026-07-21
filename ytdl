@@ -23,8 +23,8 @@ case ":$PATH:" in
 esac
 
 # Repository da cui ytdl si aggiorna (--update).
-# TODO: impostare lo slug GitHub reale prima di pubblicare.
-YTDL_REPO="${YTDL_REPO:-OWNER/yt-download}"
+
+YTDL_REPO="${YTDL_REPO:-alergyonthestage/ytdl}"
 YTDL_BRANCH="${YTDL_BRANCH:-main}"
 # La cartella di default si può impostare anche con la variabile d'ambiente
 # $YTDL_OUT_DIR (es. in ~/.bash_profile). Il flag -o ha sempre la precedenza.

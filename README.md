@@ -7,13 +7,17 @@ already embedded — ready for your music library.
 A wrapper around [yt-dlp](https://github.com/yt-dlp/yt-dlp) that handles the
 metadata work for you.
 
+> 🇮🇹 **Guide in italiano:** [installazione](docs/guida-installazione.md) ·
+> [uso quotidiano](docs/guida-uso.md) — scritte per chi non ha mai aperto il
+> Terminale.
+
 ## Install
 
 Open **Terminal** (press `⌘ Space`, type `Terminal`, press Enter), then paste
 this line and press Enter:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/yt-download/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/alergyonthestage/ytdl/main/install.sh | bash
 ```
 
 Everything is installed into your own user folder — no password, no admin
@@ -84,4 +88,5 @@ The installer sets these up for you:
 
 ## Licence
 
-TBD.
+[PolyForm Strict 1.0.0](LICENSE.md) — you may use this software for any
+noncommercial purpose. Redistributing it, or building on it, is not permitted.
