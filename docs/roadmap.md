@@ -24,31 +24,42 @@ flowchart LR
 | 0.4 | Distribution constraints analysis + ADR-0001 | done |
 | 0.5 | This roadmap | done |
 
-## Phase 1 — Distribution — `planned` — **immediate priority**
+Documentation lives in [docs/](README.md); user-facing install instructions are
+in the top-level [README](../README.md).
+
+## Phase 1 — Distribution — `in progress` — **immediate priority**
 
 Goal: a user with no developer tooling installs `ytdl` by pasting one line, on
 any macOS from 10.13 up, and can keep it working over time.
 
-| # | Item | Depends on | Notes |
+| # | Item | Status | Notes |
 |---|---|---|---|
-| 1.1 | `ytdl --version` + version constant | — | Prerequisite for update and support ([U1](improvements.md)) |
-| 1.2 | `install.sh`: macOS + arch detection | 1.1 | Must handle the `10.x` → `11+` version scheme correctly |
-| 1.3 | Provision yt-dlp (binary or zipimport per target) | 1.2 | `releases/latest/download/…`, no pinned version |
-| 1.4 | Verify `SHA2-256SUMS` before installing | 1.3 | Mandatory, see ADR-0001 |
-| 1.5 | Provision ffmpeg per architecture | 1.2 | martin-riedl (signed) for 10.15+, evermeet for 10.13–10.14 |
-| 1.6 | Install into `~/.local/bin` + PATH in `.zprofile` / `.bash_profile` | 1.3 | Idempotent; login shells are what Terminal.app starts |
-| 1.7 | Actionable failure messages (no `brew install`) | 1.6 | Replaces the current dependency checks ([U3](improvements.md)) |
-| 1.8 | Guided path for macOS 10.13–10.14 (python.org 3.13) | 1.3 | Abort with explanation below 10.13 |
-| 1.9 | `ytdl --update` (updates yt-dlp **and** the script) | 1.1 | Ships with v1; not a later addition ([U2](improvements.md)) |
-| 1.10 | Public GitHub repo, first release, documented one-liner | 1.1–1.9 | README with copy-paste install |
-| 1.11 | Real-hardware testing | 1.10 | At minimum: one Apple Silicon on current macOS, one Intel on ≤10.14 |
+| 1.1 | `ytdl --version` + version constant | done | Prerequisite for update and support ([U1](improvements.md)) |
+| 1.2 | `install.sh`: macOS + arch detection | done | Handles the `10.x` → `11+` scheme; covered by tests |
+| 1.3 | Provision yt-dlp (binary or zipimport per target) | done | `releases/latest/download/…`, no pinned version |
+| 1.4 | Verify `SHA2-256SUMS` before installing | done | Mandatory, see ADR-0001 |
+| 1.5 | Provision ffmpeg per architecture | done | martin-riedl (signed) for 10.15+, evermeet for 10.13–10.14 |
+| 1.6 | Install into `~/.local/bin` + PATH in `.zprofile` / `.bash_profile` | done | Idempotent; login shells are what Terminal.app starts |
+| 1.7 | Actionable failure messages (no `brew install`) | done | Now point at `ytdl --update` ([U3](improvements.md)) |
+| 1.8 | Guided path for macOS 10.13–10.14 (python.org 3.13) | done | Aborts with an explanation below 10.13 |
+| 1.9 | `ytdl --update` (updates yt-dlp **and** the script) | done | Re-runs the installer, single provisioning path ([U2](improvements.md)) |
+| 1.10 | Public GitHub repo, first release, documented one-liner | **blocked** | Needs the real GitHub slug — see below |
+| 1.11 | Real-hardware testing | **blocked** | Needs physical Macs — see below |
 
 **Definition of done:** a tester who has never opened Terminal completes the
 install unaided and downloads a track.
 
-Item 1.11 is the one that cannot be faked — every claim in
-[distribution.md](distribution.md) is verified against upstream documentation, but
-not yet against a real Mojave machine.
+### What is blocking
+
+- **1.10 — the GitHub repository slug.** `install.sh`, `ytdl` and the README
+  carry an `OWNER/yt-download` placeholder. Until the repository is published
+  and the slug substituted, neither the one-liner nor `--update` can work.
+- **1.11 — real hardware.** Every claim in [distribution.md](distribution.md) is
+  verified against upstream documentation and live HTTP checks, and the pure
+  logic is unit-tested — but the install has never run on macOS. The Mojave path
+  in particular (python.org Python 3.13 + zipimport yt-dlp) is verified only on
+  paper. Minimum coverage: one Apple Silicon Mac on current macOS, one Intel Mac
+  on 10.13 or 10.14.
 
 ## Phase 2 — Robustness — `planned`
 
