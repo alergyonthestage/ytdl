@@ -4,11 +4,12 @@ Single source of truth for planned work. Updated at the end of each cycle.
 
 Status: `done` · `in progress` · `planned` · `deferred`
 
-The engine is being rebuilt as a single Go binary (CLI + queue daemon + web GUI),
-shelling out to yt-dlp/ffmpeg; the installer stays Bash and Python is not adopted.
-See [ADR-0003](decisions/0003-engine-language-go.md) for the rationale. The
-confirmed sequence is **foundations → backend integrations → robustness → GUI**,
-with the GUI last.
+The engine is a single Go binary (CLI + future queue daemon + web GUI), shelling
+out to yt-dlp/ffmpeg; the installer stays Bash and Python is not adopted. See
+[ADR-0003](decisions/0003-engine-language-go.md) for the rationale, and
+[go-engine.md](go-engine.md) for the as-built engine. The confirmed sequence is
+**foundations → backend integrations → robustness → GUI**, with the GUI last.
+**Cycle 1 (foundations, phase 3) is done**; next is Cycle 2 (backend, phase 4).
 
 ```mermaid
 flowchart LR

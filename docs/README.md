@@ -1,7 +1,9 @@
 # Documentation
 
-Documentation for `ytdl`, a Bash wrapper around yt-dlp that downloads audio with
-clean `Artist - Track` naming and correct ID3 tags.
+Documentation for `ytdl`, a yt-dlp front-end that downloads audio with clean
+`Artist - Track` naming and correct ID3 tags. As of Cycle 1 it is a compiled Go
+binary (see [go-engine.md](go-engine.md)); the original Bash script remains the
+golden parity reference.
 
 ## For users (Italian)
 
@@ -14,7 +16,8 @@ clean `Artist - Track` naming and correct ID3 tags.
 
 | Document | What it covers |
 |---|---|
-| [architecture.md](architecture.md) | As-built design of the current script: execution modes, metadata pipeline, dependencies |
+| [go-engine.md](go-engine.md) | **As-built Go engine** (Cycle 1): package layout, the parity gate, build/test/release, deliberate divergences, Cycle 2 extension points |
+| [architecture.md](architecture.md) | As-built design of the original Bash script (now the golden reference): execution modes, metadata pipeline, dependencies |
 | [improvements.md](improvements.md) | Findings from the initial analysis, plus the requested evolutions |
 | [distribution.md](distribution.md) | Constraints and design for shipping to non-developer macOS users |
 | [roadmap.md](roadmap.md) | Operational plan, phased, with status |
