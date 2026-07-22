@@ -439,7 +439,7 @@ exit "$rc"
 **Error log file creation:**
 - **Filename:** `<OUTPUT_DIR>/<title>.log`
 - **Title extraction:** Last line of `before_dl` output (which contains `"Artist - Track"`)
-- **Character replacement:** `/` and `:` in title → `__` (to avoid invalid paths)
+- **Character replacement:** each of `/` and `:` in title → `_` (to avoid invalid paths)
 - **Fallback title:** If title extraction fails, use `ytdl-failed-YYYYMMDD-HHMMSS`
 - **File contents:**
   ```
@@ -780,7 +780,7 @@ The default mode reads `$saved` line by line, skipping empty lines (lines 328–
 
 ### 9. Title Extraction for Error Logs
 
-Silent mode extracts the title from `$titlefile` by taking the last line and translating `/` and `:` to `__` (line 296). This is the **only** place where character translation happens. Go must replicate this exactly.
+Silent mode extracts the title from `$titlefile` by taking the last line and translating each of `/` and `:` to `_` (line 296). This is the **only** place where character translation happens. Go must replicate this exactly.
 
 ### 10. Date Format for Fallback Title
 
@@ -821,7 +821,7 @@ A video with both native `artist`/`track` fields AND a title like `"Other - Trac
 
 ### 3. Error Log Character Replacement
 
-The replacement `tr '/:' '__'` replaces both `/` and `:` with `__`. A title like `A/B:C` becomes `A__B__C`. The Go port must use the same translation.
+The replacement `tr '/:' '__'` maps each character of SET1 to the same position in SET2 — `/`→`_` and `:`→`_` — so a title like `A/B:C` becomes `A_B_C` (single underscores, not `A__B__C`). The Go port must use the same translation.
 
 ### 4. First-Present Semantics
 
@@ -923,7 +923,7 @@ before_dl:  ♪ Artist 2 - Song 2.flac
 - [ ] Use `--no-simulate` in `base_args` (used by SILENT and DEFAULT)
 - [ ] Implement `--print-to-file before_dl:...` for title extraction in SILENT mode
 - [ ] Implement `--print-to-file after_move:%(filepath)s` to track saved files
-- [ ] Handle character replacement `/` and `:` → `__` for error log filename
+- [ ] Handle character replacement `/` and `:` → `_` for error log filename
 - [ ] Use `date +%Y%m%d-%H%M%S` format for fallback error log name
 - [ ] Implement `EXIT` trap equivalent to clean temp files
 - [ ] Correctly expand template strings (NO shell interpolation when building yt-dlp argv)

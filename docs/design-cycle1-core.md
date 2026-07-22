@@ -203,7 +203,7 @@ Bash — the goldens use valid single-URL inputs and stay green):
 
 | Fix | Behaviour | Where |
 |---|---|---|
-| **C1** | validate `-f` against `mp3\|flac\|m4a\|opus\|wav`; invalid → exit 1 with a clear message (Bash forwarded it to yt-dlp) | `config.Resolve`, before `BuildArgs` |
+| **C1** | validate `-f` against `mp3\|flac\|m4a\|opus\|wav`; invalid → exit 1 with a clear message (Bash forwarded it to yt-dlp) | `cmd/ytdl/main.go` (flag fail-fast, before resolve); `config.validate` re-checks |
 | **C3** | **reject** a second positional argument instead of silently keeping the last | `internal/cli/parse.go` |
 | **C5** | sanitize the `.log` filename to a conservative charset (beyond `tr '/:' '__'`) | `internal/run/runner.go` |
 
