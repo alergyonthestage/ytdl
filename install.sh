@@ -70,6 +70,7 @@ detect_platform() {
   OS_MAJOR="${ver%%.*}"
   rest="${ver#*.}"
   OS_MINOR="${rest%%.*}"
+  case "$OS_MAJOR" in ''|*[!0-9]*) OS_MAJOR=0 ;; esac
   case "$OS_MINOR" in ''|*[!0-9]*) OS_MINOR=0 ;; esac
 
   if [ "$OS_MAJOR" -ge 11 ]; then
@@ -230,10 +231,19 @@ install_ytdl() {
   info "Downloading ${asset}…"
   download "$RELEASE_BASE/$asset" "$tmp"
   download "$RELEASE_BASE/SHA2-256SUMS" "$sums"
+
+  # Unlike yt-dlp (an unpinned upstream release), this is our own asset: a name
+  # missing from SHA2-256SUMS is a release.yml packaging bug, so hard-fail rather
+  # than fall through verify_checksum's tolerant warn-and-skip.
+  awk -v n="$asset" '$2 == n {found = 1} END {exit found ? 0 : 1}' "$sums" || fail \
+    "The release is missing a checksum for $asset — refusing to install." \
+    "This is a packaging error in the ytdl release. Please report it."
   verify_checksum "$tmp" "$asset" "$sums"
 
   # Replacing a running binary via rename is safe on macOS: the running process
   # keeps its open inode until it exits, so --update can replace ytdl in place.
+  # Relies on $TMPDIR and $INSTALL_DIR being on the same filesystem (true on
+  # stock macOS) so mv is an atomic rename, not a copy+unlink.
   mv "$tmp" "$INSTALL_DIR/ytdl"
   chmod +x "$INSTALL_DIR/ytdl"
   # Binaries fetched with curl are not quarantined, but clear the attribute

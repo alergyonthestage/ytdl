@@ -33,3 +33,10 @@ jobs:
 
       - name: go test
         run: go test ./...
+
+      # The installer's own logic (platform detection, asset selection, checksum
+      # verification) is pure bash with no macOS-only deps, so it runs here too.
+      - name: installer tests
+        run: |
+          bash -n install.sh
+          bash tests/test-installer.sh

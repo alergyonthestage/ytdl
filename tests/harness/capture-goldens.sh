@@ -148,9 +148,9 @@ capture_bg() {
   local name="$1"; shift
   rm -f "$NOHUP_CAP"
   bash "$YTDL" "$@" >/dev/null 2>&1 || true
-  # nohup runs backgrounded; wait (bounded, no sleep) for the atomic rename.
+  # nohup runs backgrounded; poll (bounded, ~5s max) for the atomic rename.
   local n=0
-  while [ ! -e "$NOHUP_CAP" ] && [ "$n" -lt 2000000 ]; do n=$((n + 1)); done
+  while [ ! -e "$NOHUP_CAP" ] && [ "$n" -lt 500 ]; do sleep 0.01; n=$((n + 1)); done
   [ -s "$NOHUP_CAP" ] || { echo "no nohup capture for '$name' (args: $*)" >&2; exit 1; }
   python3 "$NORMALIZER" "$NOHUP_CAP" "$TEST_OUT" "$TEST_HOME" "$YTDL" > "$TESTDATA/$name.args"
   COUNT=$((COUNT + 1))
