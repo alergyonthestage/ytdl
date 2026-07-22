@@ -101,8 +101,10 @@ prompt and no signing. The only new cost is a CI cross-compile-and-checksum step
   it universal breaks the fully non-interactive, no-admin, single-paste install
   for the macOS 10.15+ majority (python.org is an admin `.pkg`). Paying that for a
   last-priority GUI is a bad trade. It also does not remove the shell-outs to
-  yt-dlp/ffmpeg/osascript. Note the legacy path still installs Python for yt-dlp;
-  that is unaffected.
+  yt-dlp/ffmpeg/osascript. ~~Note the legacy path still installs Python for yt-dlp;
+  that is unaffected.~~ **(Superseded by [ADR-0005](0005-macos-floor-and-single-engine.md):
+  the floor is raised to macOS 10.15 and the legacy Python path is removed — Python
+  is no longer provisioned anywhere in the project.)**
 - **Rust, single engine** — rejected. Same architecture, smaller binary, but a
   heavier build and advantages the workload cannot use. Reconsider only if a
   genuine CPU-bound need appears.

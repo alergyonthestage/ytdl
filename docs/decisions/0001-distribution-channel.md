@@ -1,8 +1,12 @@
 # ADR-0001 — Distribute via a curl-based installer script
 
-- **Status:** accepted
+- **Status:** accepted (support floor superseded in part)
 - **Date:** 2026-07-21
 - **Context:** [distribution.md](../distribution.md)
+- **Superseded in part:** the macOS support **floor** (10.13 → **10.15**) is
+  superseded by [ADR-0005](0005-macos-floor-and-single-engine.md), which drops the
+  legacy Python path. The distribution *channel* decided here (curl installer,
+  install into `~/.local/bin`, mandatory checksum verification) stands unchanged.
 
 ## Context
 
@@ -29,6 +33,11 @@ first release.
 On macOS 10.13–10.14 the installer uses the zipimport yt-dlp and directs the user
 to the signed python.org Python 3.13 installer. Below 10.13 it aborts with an
 explicit explanation.
+
+> **Superseded by [ADR-0005](0005-macos-floor-and-single-engine.md):** the legacy
+> 10.13–10.14 Python path is removed. The Go engine requires macOS 10.15+, so the
+> floor is raised to 10.15 Catalina and Python is dropped from the project. The
+> abort-below-floor behaviour remains, only the threshold moves (10.13 → 10.15).
 
 ## Alternatives considered
 
