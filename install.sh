@@ -14,15 +14,15 @@ set -euo pipefail
 # ──────────────────────────────────────────────────────────────────
 
 REPO_SLUG="${YTDL_REPO:-alergyonthestage/ytdl}"
-REPO_BRANCH="${YTDL_BRANCH:-main}"
 INSTALL_DIR="${YTDL_INSTALL_DIR:-$HOME/.local/bin}"
 
 YTDLP_BASE="https://github.com/yt-dlp/yt-dlp/releases/latest/download"
-PYTHON_DOWNLOAD_URL="https://www.python.org/downloads/macos/"
-MIN_PYTHON="3.10"
+# The compiled ytdl binaries are published per release; /latest/ gives the
+# newest without pinning a version (see docs/decisions/0005).
+RELEASE_BASE="https://github.com/$REPO_SLUG/releases/latest/download"
 
 # Populated by detect_platform()
-OS_MAJOR=""; OS_MINOR=""; TIER=""; ARCH=""; PYTHON=""
+OS_MAJOR=""; OS_MINOR=""; TIER=""; ARCH=""
 
 TMPDIR_YTDL=""
 cleanup() { [ -n "$TMPDIR_YTDL" ] && rm -rf "$TMPDIR_YTDL"; return 0; }
@@ -57,8 +57,9 @@ fail() {
 #  Platform detection
 # ──────────────────────────────────────────────────────────────────
 # macOS changed its version scheme at 11: "10.15.7" then "11.0", "26.1".
-# Reading only the first component misreads 10.15 as "10" and would route
-# Catalina down the legacy path — compare minor too while major is 10.
+# Reading only the first component misreads 10.15 as "10", so we compare the
+# minor too while the major is 10. The floor is 10.15 Catalina — the Go engine
+# needs it (docs/decisions/0005).
 detect_platform() {
   command -v sw_vers >/dev/null 2>&1 || fail \
     "This installer only supports macOS." \
@@ -72,11 +73,9 @@ detect_platform() {
   case "$OS_MINOR" in ''|*[!0-9]*) OS_MINOR=0 ;; esac
 
   if [ "$OS_MAJOR" -ge 11 ]; then
-    TIER="modern"
+    TIER="supported"
   elif [ "$OS_MAJOR" -eq 10 ] && [ "$OS_MINOR" -ge 15 ]; then
-    TIER="modern"
-  elif [ "$OS_MAJOR" -eq 10 ] && [ "$OS_MINOR" -ge 13 ]; then
-    TIER="legacy"
+    TIER="supported"
   else
     TIER="unsupported"
   fi
@@ -84,60 +83,14 @@ detect_platform() {
   ARCH="$(uname -m)"
 
   if [ "$TIER" = "unsupported" ]; then
-    fail "macOS $ver is too old to run a current yt-dlp." \
-      "The oldest supported version is macOS 10.13 High Sierra." \
+    fail "macOS $ver is too old for ytdl." \
+      "The oldest supported version is macOS 10.15 Catalina." \
       "" \
-      "yt-dlp stopped building for older systems in August 2025, and no" \
-      "supported Python is available for macOS below 10.13."
+      "ytdl is a compiled binary and its toolchain targets macOS 10.15 or" \
+      "newer, so macOS 10.13–10.14 are no longer supported."
   fi
 
-  info "macOS $ver ($ARCH) — using the ${TIER} install path"
-}
-
-# ──────────────────────────────────────────────────────────────────
-#  Python (only needed on the legacy path)
-# ──────────────────────────────────────────────────────────────────
-# The zipimport yt-dlp is a Python script. Its shebang points at whatever
-# python3 is first in PATH, which on old macOS is missing or too old — so we
-# locate a suitable interpreter ourselves and call it explicitly.
-python_is_new_enough() {
-  "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null
-}
-
-find_python() {
-  local candidate
-  for candidate in \
-    /Library/Frameworks/Python.framework/Versions/3.*/bin/python3 \
-    /usr/local/bin/python3 \
-    "$(command -v python3 2>/dev/null || true)"
-  do
-    [ -n "$candidate" ] || continue
-    [ -x "$candidate" ] || continue
-    if python_is_new_enough "$candidate"; then
-      PYTHON="$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
-
-require_python() {
-  if find_python; then
-    ok "Found Python $("$PYTHON" -c 'import platform;print(platform.python_version())') at $PYTHON"
-    return 0
-  fi
-
-  fail "Python $MIN_PYTHON or newer is required on macOS 10.13–10.14." \
-    "Your macOS is too old for the standalone yt-dlp build, so ytdl needs" \
-    "Python to run yt-dlp instead. Installing it takes about two minutes:" \
-    "" \
-    "  1. Open  $PYTHON_DOWNLOAD_URL" \
-    "  2. Download the latest Python 3.13 macOS installer" \
-    "  3. Open the downloaded .pkg and click through it" \
-    "  4. Run this installer again" \
-    "" \
-    "That installer is signed by the Python Software Foundation, so macOS" \
-    "will open it without any security warning."
+  info "macOS $ver ($ARCH) — supported"
 }
 
 # ──────────────────────────────────────────────────────────────────
@@ -209,32 +162,14 @@ install_ytdlp() {
   local sums="$TMPDIR_YTDL/SHA2-256SUMS"
   download "$YTDLP_BASE/SHA2-256SUMS" "$sums"
 
-  if [ "$TIER" = "modern" ]; then
-    # Universal standalone build with Python embedded — needs macOS 10.15+.
-    local tmp="$TMPDIR_YTDL/yt-dlp_macos"
-    info "Downloading the standalone build…"
-    download "$YTDLP_BASE/yt-dlp_macos" "$tmp"
-    verify_checksum "$tmp" "yt-dlp_macos" "$sums"
-    mv "$tmp" "$INSTALL_DIR/yt-dlp"
-    chmod +x "$INSTALL_DIR/yt-dlp"
-  else
-    # Platform-independent zipimport build, run through the Python we found.
-    local tmp="$TMPDIR_YTDL/yt-dlp"
-    info "Downloading the Python build…"
-    download "$YTDLP_BASE/yt-dlp" "$tmp"
-    verify_checksum "$tmp" "yt-dlp" "$sums"
-    mv "$tmp" "$INSTALL_DIR/yt-dlp.pyz"
-    chmod +x "$INSTALL_DIR/yt-dlp.pyz"
-
-    # Wrapper with an absolute interpreter path: the shebang inside the
-    # zipimport build would otherwise pick up an unusable system python3.
-    cat > "$INSTALL_DIR/yt-dlp" <<EOF
-#!/bin/bash
-# Generated by the ytdl installer — do not edit.
-exec "$PYTHON" "$INSTALL_DIR/yt-dlp.pyz" "\$@"
-EOF
-    chmod +x "$INSTALL_DIR/yt-dlp"
-  fi
+  # Universal standalone build with Python embedded — needs macOS 10.15+, which
+  # is now the floor, so it serves every supported target.
+  local tmp="$TMPDIR_YTDL/yt-dlp_macos"
+  info "Downloading the standalone build…"
+  download "$YTDLP_BASE/yt-dlp_macos" "$tmp"
+  verify_checksum "$tmp" "yt-dlp_macos" "$sums"
+  mv "$tmp" "$INSTALL_DIR/yt-dlp"
+  chmod +x "$INSTALL_DIR/yt-dlp"
 
   ok "yt-dlp installed"
 }
@@ -246,13 +181,10 @@ EOF
 # Source depends on the target — see docs/distribution.md.
 ffmpeg_url_for() {
   local tool="$1"
-  if [ "$TIER" = "legacy" ]; then
-    # evermeet.cx: macOS 10.13+, Intel only. Every Mojave Mac is Intel, so
-    # this is not a limitation on the legacy path.
-    echo "https://evermeet.cx/ffmpeg/getrelease/$tool/zip"
-  elif [ "$ARCH" = "arm64" ]; then
+  if [ "$ARCH" = "arm64" ]; then
     echo "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/$tool.zip"
   else
+    # martin-riedl's amd64 build covers every supported Intel Mac (10.15+).
     echo "https://ffmpeg.martin-riedl.de/redirect/latest/macos/amd64/release/$tool.zip"
   fi
 }
@@ -279,17 +211,35 @@ install_ffmpeg() {
 # ──────────────────────────────────────────────────────────────────
 #  ytdl itself
 # ──────────────────────────────────────────────────────────────────
+# The compiled ytdl binary is published per-arch on each release.
+ytdl_asset_for() {
+  case "$ARCH" in
+    arm64) echo "ytdl_macos_arm64" ;;
+    *)     echo "ytdl_macos_amd64" ;;
+  esac
+}
+
 install_ytdl() {
   step "Installing ytdl"
-  local tmp="$TMPDIR_YTDL/ytdl"
-  download "https://raw.githubusercontent.com/$REPO_SLUG/$REPO_BRANCH/ytdl" "$tmp"
 
-  head -1 "$tmp" | grep -q '^#!' || fail \
-    "The downloaded ytdl script looks wrong." \
-    "Check that YTDL_REPO points at the right repository."
+  local asset sums tmp
+  asset="$(ytdl_asset_for)"
+  sums="$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+  tmp="$TMPDIR_YTDL/$asset"
 
+  info "Downloading ${asset}…"
+  download "$RELEASE_BASE/$asset" "$tmp"
+  download "$RELEASE_BASE/SHA2-256SUMS" "$sums"
+  verify_checksum "$tmp" "$asset" "$sums"
+
+  # Replacing a running binary via rename is safe on macOS: the running process
+  # keeps its open inode until it exits, so --update can replace ytdl in place.
   mv "$tmp" "$INSTALL_DIR/ytdl"
   chmod +x "$INSTALL_DIR/ytdl"
+  # Binaries fetched with curl are not quarantined, but clear the attribute
+  # defensively, consistent with ffmpeg.
+  xattr -d com.apple.quarantine "$INSTALL_DIR/ytdl" 2>/dev/null || true
+
   ok "ytdl installed"
 }
 
@@ -348,7 +298,7 @@ verify_install() {
 
   PATH="$INSTALL_DIR:$PATH" "$INSTALL_DIR/yt-dlp" --version >/dev/null 2>&1 \
     || fail "yt-dlp was installed but does not run." \
-       "If you are on macOS 10.13 or 10.14, check that Python is still installed."
+       "Please report this along with your macOS version."
   ok "yt-dlp works"
 
   "$INSTALL_DIR/ffmpeg" -version >/dev/null 2>&1 \
@@ -365,7 +315,6 @@ main() {
   printf '%sInstalling into %s%s\n' "$DIM" "$INSTALL_DIR" "$R"
 
   detect_platform
-  [ "$TIER" = "legacy" ] && require_python
 
   TMPDIR_YTDL="$(mktemp -d)"
   mkdir -p "$INSTALL_DIR"
