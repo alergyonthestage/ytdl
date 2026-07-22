@@ -1,0 +1,138 @@
+// Package cli parses ytdl's command line, mirroring the Bash while/case parser
+// (ytdl lines 146-166) with the two baked-in fixes C1 and C3, and owns all the
+// parse-time user-facing text.
+package cli
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/alergyonthestage/ytdl/internal/core"
+)
+
+// Action is what the parsed command line asks ytdl to do. Help, Version and
+// Update short-circuit during parsing (like the Bash `exit` inside the loop),
+// before the URL is even required.
+type Action int
+
+const (
+	ActionRun Action = iota
+	ActionHelp
+	ActionVersion
+	ActionUpdate
+)
+
+// Parsed is the result of parsing. When Action == ActionRun, RunMode, URL and
+// the flag pointers describe the download; otherwise only Action matters.
+type Parsed struct {
+	Action    Action
+	RunMode   core.Mode // valid when Action == ActionRun
+	URL       string
+	OutputDir *string // -o/--output, nil if not given
+	Format    *string // -f/--format, nil if not given
+	Playlist  bool    // -p/--playlist seen
+}
+
+// ParseError is a user-facing parse failure. Usage requests that the help text
+// be shown alongside the message (matching the Bash error paths).
+type ParseError struct {
+	Msg   string
+	Usage bool
+}
+
+func (e *ParseError) Error() string { return e.Msg }
+
+// Parse walks args left-to-right exactly like the Bash parser: -o/-f consume the
+// next token (error if absent); -h/-V/--update short-circuit immediately; `--`
+// takes the next single token as the URL and stops; an unknown -flag errors; a
+// positional is the URL. Post-URL flags still parse. C3: a second positional is
+// rejected rather than silently overwriting the first.
+func Parse(args []string) (*Parsed, error) {
+	p := &Parsed{}
+	var dry, background, verbose, silent, haveURL bool
+
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		switch a {
+		case "-o", "--output":
+			if i+1 >= len(args) {
+				return nil, &ParseError{Msg: MsgMissingOutputDir}
+			}
+			v := args[i+1]
+			p.OutputDir = &v
+			i += 2
+		case "-f", "--format":
+			if i+1 >= len(args) {
+				return nil, &ParseError{Msg: MsgMissingFormat}
+			}
+			v := args[i+1]
+			p.Format = &v
+			i += 2
+		case "-p", "--playlist":
+			p.Playlist = true
+			i++
+		case "-n", "--dry-run":
+			dry = true
+			i++
+		case "-s", "--silent":
+			silent = true
+			i++
+		case "-b", "--background":
+			background = true
+			i++
+		case "-v", "--verbose":
+			verbose = true
+			i++
+		case "-h", "--help":
+			p.Action = ActionHelp
+			return p, nil
+		case "-V", "--version":
+			p.Action = ActionVersion
+			return p, nil
+		case "--update":
+			p.Action = ActionUpdate
+			return p, nil
+		case "--":
+			// The next single token is the URL; the remainder is ignored (parity
+			// with `--) shift; URL="${1:-}"; break`). A bare `--` leaves URL empty.
+			if i+1 < len(args) {
+				p.URL = args[i+1]
+				haveURL = true
+			}
+			i = len(args)
+		default:
+			if strings.HasPrefix(a, "-") && a != "-" {
+				return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, a), Usage: true}
+			}
+			if haveURL {
+				return nil, &ParseError{Msg: fmt.Sprintf(MsgTooManyArguments, p.URL), Usage: true}
+			}
+			p.URL = a
+			haveURL = true
+			i++
+		}
+	}
+
+	if !haveURL || p.URL == "" {
+		return nil, &ParseError{Msg: MsgNoURL, Usage: true}
+	}
+
+	// Runtime mode priority, matching the Bash dispatch order (dry-run is checked
+	// first, then background, verbose, silent, else default). When several mode
+	// flags are set, the highest-priority one runs.
+	switch {
+	case dry:
+		p.RunMode = core.ModeDryRun
+	case background:
+		p.RunMode = core.ModeBackground
+	case verbose:
+		p.RunMode = core.ModeVerbose
+	case silent:
+		p.RunMode = core.ModeSilent
+	default:
+		p.RunMode = core.ModeDefault
+	}
+	p.Action = ActionRun
+	return p, nil
+}
