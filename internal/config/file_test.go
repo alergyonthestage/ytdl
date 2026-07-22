@@ -1,0 +1,191 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func writeConfig(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestLoadFileMissingIsSilent(t *testing.T) {
+	p, warns, err := LoadFile(filepath.Join(t.TempDir(), "does-not-exist"))
+	if err != nil {
+		t.Fatalf("missing file returned error: %v", err)
+	}
+	if len(warns) != 0 {
+		t.Fatalf("missing file produced warnings: %v", warns)
+	}
+	if (p != Partial{}) {
+		t.Fatalf("missing file produced a non-zero Partial: %+v", p)
+	}
+}
+
+func TestLoadFileValidKeys(t *testing.T) {
+	path := writeConfig(t, `
+# a comment
+   # indented comment
+
+output_dir = /music/out
+format=flac
+audio_quality = 5
+playlist_default = TRUE
+embed_thumbnail = false
+embed_metadata=true
+`)
+	p, warns, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 0 {
+		t.Fatalf("unexpected warnings: %v", warns)
+	}
+	if p.OutputDir == nil || *p.OutputDir != "/music/out" {
+		t.Errorf("OutputDir = %v, want /music/out", p.OutputDir)
+	}
+	if p.Format == nil || *p.Format != "flac" {
+		t.Errorf("Format = %v, want flac", p.Format)
+	}
+	if p.AudioQuality == nil || *p.AudioQuality != "5" {
+		t.Errorf("AudioQuality = %v, want 5", p.AudioQuality)
+	}
+	if p.PlaylistDefault == nil || !*p.PlaylistDefault {
+		t.Errorf("PlaylistDefault = %v, want true (case-insensitive)", p.PlaylistDefault)
+	}
+	if p.EmbedThumbnail == nil || *p.EmbedThumbnail {
+		t.Errorf("EmbedThumbnail = %v, want false", p.EmbedThumbnail)
+	}
+	if p.EmbedMetadata == nil || !*p.EmbedMetadata {
+		t.Errorf("EmbedMetadata = %v, want true", p.EmbedMetadata)
+	}
+}
+
+// The regex and template values contain spaces, (), \, (?i:...) and even a '#'.
+// They must survive verbatim: split on the FIRST '=', no unquoting, no inline
+// comment stripping.
+func TestLoadFileRawValuesPreserved(t *testing.T) {
+	nameTpl := `%(artist,creator,xartist,uploader)s - %(track,xtrack,title)s`
+	brackets := `\s*\[[^]]*\]`
+	tags := `\s*\((?i:original mix|original|extended mix|extended|radio edit)\)`
+	weird := `a = b # not a comment = still value`
+
+	path := writeConfig(t, "name_template = "+nameTpl+"\n"+
+		"strip_brackets = "+brackets+"\n"+
+		"strip_tags = "+tags+"\n"+
+		"output_dir = "+weird+"\n")
+
+	p, warns, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 0 {
+		t.Fatalf("unexpected warnings: %v", warns)
+	}
+	if p.NameTemplate == nil || *p.NameTemplate != nameTpl {
+		t.Errorf("NameTemplate = %q, want %q", derefS(p.NameTemplate), nameTpl)
+	}
+	if p.StripBrackets == nil || *p.StripBrackets != brackets {
+		t.Errorf("StripBrackets = %q, want %q", derefS(p.StripBrackets), brackets)
+	}
+	if p.StripTags == nil || *p.StripTags != tags {
+		t.Errorf("StripTags = %q, want %q", derefS(p.StripTags), tags)
+	}
+	// first '=' split: key "output_dir", value is the whole remainder after the
+	// first '=' — including later '=' and the '#', which is NOT a comment here.
+	if p.OutputDir == nil || *p.OutputDir != weird {
+		t.Errorf("OutputDir = %q, want %q (raw remainder after the first '=')", derefS(p.OutputDir), weird)
+	}
+}
+
+func TestLoadFileHomeExpansion(t *testing.T) {
+	t.Setenv("HOME", "/home/tester")
+	path := writeConfig(t, "output_dir = ~/Music/x\n")
+	p, _, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.OutputDir == nil || *p.OutputDir != "/home/tester/Music/x" {
+		t.Errorf("OutputDir = %q, want /home/tester/Music/x", derefS(p.OutputDir))
+	}
+
+	path = writeConfig(t, "output_dir = ~\n")
+	p, _, _ = LoadFile(path)
+	if p.OutputDir == nil || *p.OutputDir != "/home/tester" {
+		t.Errorf("bare ~ = %q, want /home/tester", derefS(p.OutputDir))
+	}
+
+	// No $VAR expansion.
+	path = writeConfig(t, "output_dir = $HOME/x\n")
+	p, _, _ = LoadFile(path)
+	if p.OutputDir == nil || *p.OutputDir != "$HOME/x" {
+		t.Errorf("OutputDir = %q, want the literal $HOME/x (no var expansion)", derefS(p.OutputDir))
+	}
+}
+
+func TestLoadFileUnknownKeyWarns(t *testing.T) {
+	// Future/GUI keys must warn-and-ignore, never brick an older binary.
+	path := writeConfig(t, "concurrency = 4\nnotify = true\nformat = mp3\n")
+	p, warns, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 2 {
+		t.Fatalf("want 2 unknown-key warnings, got %d: %v", len(warns), warns)
+	}
+	if p.Format == nil || *p.Format != "mp3" {
+		t.Errorf("the known key after unknown ones was dropped: %v", p.Format)
+	}
+}
+
+func TestLoadFileMalformedLineWarns(t *testing.T) {
+	path := writeConfig(t, "this line has no equals\n= empty key\nformat = mp3\n")
+	_, warns, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 2 {
+		t.Fatalf("want 2 malformed-line warnings, got %d: %v", len(warns), warns)
+	}
+}
+
+func TestLoadFileInvalidValueOnKnownKeyWarnsAndFallsThrough(t *testing.T) {
+	pinHome(t)
+	path := writeConfig(t, "format = bogus\nplaylist_default = maybe\naudio_quality = x\n")
+	p, warns, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 3 {
+		t.Fatalf("want 3 invalid-value warnings, got %d: %v", len(warns), warns)
+	}
+	// Invalid values must be left unset (nil) so they fall through to defaults.
+	if p.Format != nil {
+		t.Errorf("invalid format was kept: %v", *p.Format)
+	}
+	if p.PlaylistDefault != nil {
+		t.Errorf("invalid playlist_default was kept: %v", *p.PlaylistDefault)
+	}
+	if p.AudioQuality != nil {
+		t.Errorf("invalid audio_quality was kept: %v", *p.AudioQuality)
+	}
+	// End-to-end: the invalid config values fall through to the built-in defaults.
+	got, _ := Resolve(Partial{}, Partial{}, p, Env{})
+	if got.Format != DefaultFormat {
+		t.Errorf("resolved Format = %q, want default %q", got.Format, DefaultFormat)
+	}
+}
+
+func derefS(p *string) string {
+	if p == nil {
+		return "<nil>"
+	}
+	return *p
+}
