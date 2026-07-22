@@ -263,7 +263,7 @@ install_ffmpeg() {
   local tool zip
   for tool in ffmpeg ffprobe; do
     zip="$TMPDIR_YTDL/$tool.zip"
-    info "Downloading $tool…"
+    info "Downloading ${tool}…"
     download "$(ffmpeg_url_for "$tool")" "$zip"
     extract_binary "$zip" "$tool" "$INSTALL_DIR/$tool"
   done
