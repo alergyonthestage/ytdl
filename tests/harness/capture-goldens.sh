@@ -192,8 +192,9 @@ capture normal-m4a-playlist     -f m4a -p     -o "$TEST_OUT" "$PLAYLIST"
 capture normal-mp3-defaultdir                 "$SINGLE"
 capture silent-mp3-defaultdir   -s            "$SINGLE"
 
-# ── trailing slash on -o must be stripped (parity, ytdl line 169) ──
-capture silent-mp3-trailingslash -s           -o "$TEST_OUT/" "$SINGLE"
+# Note: the -o trailing-slash strip (ytdl line 169) is a config.Resolve concern,
+# not a BuildArgs one — after the strip the argv is identical to the plain -o
+# case, so it is covered by an internal/config unit test, not a golden here.
 
 # ── background (re-exec argv via nohup; argv[0] normalized to {{SELF}}) ──
 capture_bg background-mp3-single    -b            -o "$TEST_OUT" "$SINGLE"
