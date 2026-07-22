@@ -341,7 +341,10 @@ verify_install() {
     fail "ytdl was installed but does not run." \
       "Please report this along with the output above."
   fi
-  ok "ytdl $v"
+  # `ytdl --version` prints its own labelled lines (ytdl x.y.z / yt-dlp …);
+  # show just the first so the status line reads "✓ ytdl 1.0.0", not
+  # "✓ ytdl ytdl 1.0.0" with the yt-dlp line dangling under the checkmark.
+  ok "$(printf '%s\n' "$v" | head -1)"
 
   PATH="$INSTALL_DIR:$PATH" "$INSTALL_DIR/yt-dlp" --version >/dev/null 2>&1 \
     || fail "yt-dlp was installed but does not run." \

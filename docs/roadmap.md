@@ -32,6 +32,10 @@ in the top-level [README](../README.md).
 Goal: a user with no developer tooling installs `ytdl` by pasting one line, on
 any macOS from 10.13 up, and can keep it working over time.
 
+Status: published and working. The one-liner installs cleanly on current macOS
+(Apple Silicon, verified on hardware). Two things remain before calling it done:
+a real end-to-end download, and a test of the legacy path on an old Intel Mac.
+
 | # | Item | Status | Notes |
 |---|---|---|---|
 | 1.1 | `ytdl --version` + version constant | done | Prerequisite for update and support ([U1](improvements.md)) |
@@ -43,27 +47,38 @@ any macOS from 10.13 up, and can keep it working over time.
 | 1.7 | Actionable failure messages (no `brew install`) | done | Now point at `ytdl --update` ([U3](improvements.md)) |
 | 1.8 | Guided path for macOS 10.13–10.14 (python.org 3.13) | done | Aborts with an explanation below 10.13 |
 | 1.9 | `ytdl --update` (updates yt-dlp **and** the script) | done | Re-runs the installer, single provisioning path ([U2](improvements.md)) |
-| 1.10 | Public GitHub repo, first release, documented one-liner | in progress | Slug set to `alergyonthestage/ytdl`; repo not yet pushed |
-| 1.11 | Real-hardware testing | **blocked** | Needs physical Macs — see below |
+| 1.10 | Public GitHub repo, first release, documented one-liner | done | Published at `alergyonthestage/ytdl`; one-liner install confirmed working |
+| 1.11 | Real-hardware testing | in progress | Modern path verified on Apple Silicon (below); legacy path still pending |
 | 1.12 | Licence (PolyForm Strict 1.0.0) | done | Use permitted, redistribution and derivatives are not |
 | 1.13 | Italian user guides (install + usage) | done | [installazione](guida-installazione.md), [uso](guida-uso.md) |
 
 **Definition of done:** a tester who has never opened Terminal completes the
 install unaided and downloads a track.
 
-### What is blocking
+### 1.11 — what is verified, what remains
 
-- **1.10 — publishing the repository.** The slug `alergyonthestage/ytdl` is now
-  wired into `install.sh`, `ytdl` and the README. The repository still has to be
-  created and pushed as **public**: the one-liner and `--update` both fetch over
-  unauthenticated HTTPS, which a private repository refuses. See
-  [ADR-0002](decisions/0002-public-repository-and-licence.md).
-- **1.11 — real hardware.** Every claim in [distribution.md](distribution.md) is
-  verified against upstream documentation and live HTTP checks, and the pure
-  logic is unit-tested — but the install has never run on macOS. The Mojave path
-  in particular (python.org Python 3.13 + zipimport yt-dlp) is verified only on
-  paper. Minimum coverage: one Apple Silicon Mac on current macOS, one Intel Mac
-  on 10.13 or 10.14.
+**Verified on real hardware (2026-07-22, MacBook Pro, macOS 15.6, Apple Silicon):**
+the full modern path end to end — checksum verification, ffmpeg/ffprobe download
+and extraction from the martin-riedl arm64 zips, the signed ffmpeg actually
+running, PATH written to `.zprofile` and `.bash_profile`, and the final
+`ytdl --version` / `yt-dlp` / `ffmpeg` checks all passing.
+
+**Still unverified — the legacy path.** macOS 10.13–10.14 (Intel), with
+python.org Python 3.13 driving the zipimport yt-dlp, has only been checked on
+paper. This is the remaining gap in phase 1, and needs an old Intel Mac to close.
+
+**A real download** has not been run yet either — installation succeeded, but the
+end-to-end "paste a URL, get a tagged file" test is the true definition of done.
+
+### Lesson learned — the raw CDN cache
+
+`raw.githubusercontent.com` serves through a CDN that caches a branch path for a
+few minutes. Right after a push, `.../main/install.sh` can still return the
+previous version, which looks exactly like "the fix didn't work". A commit-pinned
+URL (`.../<sha>/install.sh`) bypasses it. `git ls-remote` and `codeload` are
+authoritative for what GitHub actually holds. Not worth engineering around —
+`--update` runs rarely and the window is minutes — but worth remembering when a
+fresh push appears not to have taken effect.
 
 ## Phase 2 — Robustness — `planned`
 
