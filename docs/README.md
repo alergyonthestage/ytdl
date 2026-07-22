@@ -27,6 +27,7 @@ clean `Artist - Track` naming and correct ID3 tags.
 | [go-port-parity-contract.md](go-port-parity-contract.md) | Exact behavioural spec the Go port must reproduce (flags, modes, argv, metadata pipeline, exit codes) |
 | [golden-test-design.md](golden-test-design.md) | Strategy to capture the Bash argv as golden references and validate the Go port |
 | [design-cycle1-core.md](design-cycle1-core.md) | **Approved core design** (Gate B): package layout, `BuildArgs`, golden tests, runner, config seam |
+| [design-cycle1-remaining.md](design-cycle1-remaining.md) | **Approved remaining design** (Gate B): config file + precedence, release CI + checksums, simplified installer |
 
 ## Decisions
 
@@ -36,6 +37,7 @@ clean `Artist - Track` naming and correct ID3 tags.
 | [0002](decisions/0002-public-repository-and-licence.md) | Public repository with a restrictive licence | accepted |
 | [0003](decisions/0003-engine-language-go.md) | Build the engine as a single Go binary | accepted |
 | [0004](decisions/0004-go-engine-package-layout.md) | Go engine package layout: reusable `internal/` core | accepted |
+| [0005](decisions/0005-macos-floor-and-single-engine.md) | Raise the macOS floor to 10.15; single Go engine, no Python | accepted |
 
 ## Reading order
 
