@@ -1,0 +1,45 @@
+name: release
+
+# On a v* tag: cross-compile the macOS binaries from Linux (no macOS runner, no
+# lipo), publish them with a yt-dlp-format SHA2-256SUMS, and cut a "latest"
+# release so the installer's releases/latest/download/… URLs resolve
+# (design-cycle1-remaining.md §4.2).
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+
+      - name: Cross-compile darwin/arm64 + darwin/amd64
+        run: |
+          mkdir -p dist
+          ldflags="-s -w -X github.com/alergyonthestage/ytdl/internal/buildinfo.Version=${GITHUB_REF_NAME}"
+          for arch in arm64 amd64; do
+            CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" \
+              go build -trimpath -ldflags "$ldflags" -o "dist/ytdl_macos_${arch}" ./cmd/ytdl
+          done
+
+      - name: Checksums (yt-dlp SHA2-256SUMS format)
+        working-directory: dist
+        run: sha256sum ytdl_macos_arm64 ytdl_macos_amd64 > SHA2-256SUMS
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --latest \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist/ytdl_macos_arm64 dist/ytdl_macos_amd64 dist/SHA2-256SUMS
