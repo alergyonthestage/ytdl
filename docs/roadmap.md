@@ -227,6 +227,14 @@ flowchart TD
 
 ### Cycle 1 — Go engine foundations & parity (phase 3) — **first**
 
+**Status (2026-07-22):** run across three sessions — (1) core analysis + design,
+(2) remaining analysis + design, (3) implementation via a full workflow. **Session 1
+done:** core analysis + design approved at Gate B — see
+[design-cycle1-core.md](design-cycle1-core.md), [ADR-0004](decisions/0004-go-engine-package-layout.md),
+[parity contract](go-port-parity-contract.md), [golden-test design](golden-test-design.md).
+Core scope = 3.3 + 3.4 + shared-core scaffolding + config seam. Session 2 designs the
+remainder: config file (3.5/3.6), CI (3.1), installer (3.2). No implementation yet.
+
 - **Scope:** Go module + CI cross-compile + checksums; installer provisions the
   binary; port the yt-dlp arg builder + metadata pipeline with **golden tests** vs
   the Bash argv; thin CLI at flag-parity; config file (parse-not-`source`) +
