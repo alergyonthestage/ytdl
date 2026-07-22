@@ -128,6 +128,7 @@ func TestParseErrors(t *testing.T) {
 		{"missing -o arg", []string{"-o"}, MsgMissingOutputDir, false},
 		{"missing -f arg", []string{"-f"}, MsgMissingFormat, false},
 		{"unknown flag", []string{"-z", "u"}, "✗ Opzione sconosciuta: -z", true},
+		{"lone dash is unknown (Bash -* matches -)", []string{"-"}, "✗ Opzione sconosciuta: -", true},
 		{"second positional (C3)", []string{"u1", "u2"}, "", true},
 	}
 	for _, c := range cases {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/alergyonthestage/ytdl/internal/cli"
 	"github.com/alergyonthestage/ytdl/internal/config"
@@ -53,6 +54,16 @@ func realMain(args []string) int {
 	settings, warns := resolveSettings(parsed)
 	for _, w := range warns {
 		fmt.Fprintf(os.Stderr, "! %s\n", w.String())
+	}
+
+	// A download needs a usable destination. If $HOME is unresolvable the default
+	// output dir degrades to a CWD-relative path; fail fast for run actions rather
+	// than writing somewhere unexpected. Help/version already returned above and
+	// stay permissive; an explicit absolute -o / $YTDL_OUT_DIR / config dir is honoured.
+	if _, err := os.UserHomeDir(); err != nil && !filepath.IsAbs(settings.OutputDir) {
+		fmt.Fprintln(os.Stderr, "✗ Impossibile determinare la cartella di destinazione: $HOME non è impostata.")
+		fmt.Fprintln(os.Stderr, "  Imposta $HOME oppure indica una cartella assoluta con -o /percorso.")
+		return 1
 	}
 
 	if err := run.CheckDeps(); err != nil {

@@ -102,7 +102,9 @@ func Parse(args []string) (*Parsed, error) {
 			}
 			i = len(args)
 		default:
-			if strings.HasPrefix(a, "-") && a != "-" {
+			// A lone "-" is an unknown option, not a URL: the Bash `case -*)`
+			// glob matches a bare "-" too (the `*` matches zero characters).
+			if strings.HasPrefix(a, "-") {
 				return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, a), Usage: true}
 			}
 			if haveURL {

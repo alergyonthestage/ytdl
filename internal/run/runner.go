@@ -340,7 +340,9 @@ func writeFailLog(o core.Options, titleFile, errlog string, rc int) {
 
 	var b strings.Builder
 	fmt.Fprintln(&b, "ytdl — download FALLITO")
-	fmt.Fprintf(&b, "data: %s\n", time.Now().Format("Mon Jan  2 15:04:05 2006"))
+	// _2 pads the day the way C's %e does; "Jan  2" would emit a double space
+	// before a two-digit day. (Bash `date` also prints a %Z zone Go omits here.)
+	fmt.Fprintf(&b, "data: %s\n", time.Now().Format("Mon Jan _2 15:04:05 2006"))
 	fmt.Fprintf(&b, "url:  %s\n", o.URL)
 	fmt.Fprintf(&b, "rc:   %d\n", rc)
 	fmt.Fprintln(&b, "----------------------------------------")
@@ -350,19 +352,18 @@ func writeFailLog(o core.Options, titleFile, errlog string, rc int) {
 	_ = os.WriteFile(dest, []byte(b.String()), 0o644)
 }
 
-// lastLine returns the last non-empty line of a file, or "".
+// lastLine returns the file's last line, matching Bash `tail -n1`: a single
+// trailing newline is stripped, but a trailing BLANK line (…\n\n) yields "" —
+// so a before_dl file ending in a blank line makes silent mode fall back to the
+// timestamped .log name, exactly like the Bash tool (parity).
 func lastLine(path string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if lines[i] != "" {
-			return lines[i]
-		}
-	}
-	return ""
+	s := strings.TrimSuffix(string(data), "\n")
+	lines := strings.Split(s, "\n")
+	return lines[len(lines)-1]
 }
 
 // sanitizeLogName maps the parity `/` and `:` to `_`, then (C5) replaces any

@@ -218,10 +218,23 @@ func TestSanitizeLogName(t *testing.T) {
 }
 
 func TestLastLine(t *testing.T) {
-	f := filepath.Join(t.TempDir(), "titles")
-	os.WriteFile(f, []byte("first\nsecond\nlast\n"), 0o644)
-	if got := lastLine(f); got != "last" {
-		t.Errorf("lastLine = %q, want last", got)
+	// Matches `tail -n1`: one trailing newline stripped; a trailing BLANK line
+	// yields "" (so silent mode falls back to the timestamped .log name).
+	cases := map[string]string{
+		"first\nsecond\nlast\n": "last", // normal: trailing newline stripped
+		"Artist - Track\n\n":    "",     // trailing blank line -> empty (Bash tail -n1)
+		"a\nb":                  "b",    // no trailing newline
+		"only\n":                "only", // single line
+		"":                      "",     // empty file
+	}
+	for content, want := range cases {
+		f := filepath.Join(t.TempDir(), "titles")
+		if err := os.WriteFile(f, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := lastLine(f); got != want {
+			t.Errorf("lastLine(%q) = %q, want %q", content, got, want)
+		}
 	}
 	if got := lastLine(filepath.Join(t.TempDir(), "nope")); got != "" {
 		t.Errorf("missing file lastLine = %q, want empty", got)
