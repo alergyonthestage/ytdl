@@ -26,6 +26,7 @@ clean `Artist - Track` naming and correct ID3 tags.
 |---|---|---|
 | [0001](decisions/0001-distribution-channel.md) | Distribute via a curl-based installer script | accepted |
 | [0002](decisions/0002-public-repository-and-licence.md) | Public repository with a restrictive licence | accepted |
+| [0003](decisions/0003-engine-language-go.md) | Build the engine as a single Go binary | accepted |
 
 ## Reading order
 

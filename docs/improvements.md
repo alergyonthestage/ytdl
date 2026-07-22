@@ -1,8 +1,14 @@
 # Improvements & Evolutions
 
 Findings from the initial analysis of `ytdl`, plus the evolutions requested by
-the maintainer. Nothing here is implemented yet; sequencing lives in
-[roadmap.md](roadmap.md).
+the maintainer. Sequencing lives in [roadmap.md](roadmap.md).
+
+Status since the initial analysis: **E1 (distribution) is essentially done**
+(phase 1), and the engine will be rebuilt as a single Go binary — see
+[ADR-0003](decisions/0003-engine-language-go.md). That decision re-homes several
+findings below: the queue (U5), notifications (U6) and persistent logs (U7) are
+delivered by the Go engine, and the maintainability item M2 (one yt-dlp call site)
+is satisfied by the Go core rather than a Bash refactor.
 
 Severity is about *impact on a non-developer user*, which is the audience the
 distribution work targets.
@@ -38,6 +44,64 @@ distribution work targets.
 | M3 | No README, no licence | low | Needed before sharing the repository or publishing releases. |
 | M4 | Interface language is Italian | — | Help text and messages are Italian, comments and identifiers partly so. Fine for the current audience; revisit only if distribution widens beyond it. |
 
+## Backend evolution detail
+
+<a id="u4"></a>
+
+### U4 — persistent configuration & useful settings
+
+A config file at `${XDG_CONFIG_HOME:-$HOME/.config}/ytdl/config`, parsed as strict
+`key=value` with a **whitelist — never `source`d** (it will be written by the GUI;
+sourcing user-writable shell is an injection risk). Precedence:
+`flag > env > session override > config file > built-in default`.
+
+| Group | Key | Purpose |
+|---|---|---|
+| Output | `output_dir` | default download directory |
+| | `format` | `mp3\|flac\|m4a\|opus\|wav` (validated, C1) |
+| | `audio_quality` | `0` = best |
+| | `playlist_default` | download whole playlists by default |
+| Naming | `name_template` | today hardcoded `%(artist,…)s - %(track,…)s`; the requested custom title formatting |
+| | `strip_brackets` / `strip_tags` | cleanup regexes, today constants in the script |
+| Behaviour | `background_default` | always run in background (requested) |
+| | `concurrency` | max parallel downloads (see U5) |
+| | `open_folder_on_done` | reveal the folder when finished |
+| Notifications | `notify` / `notify_on` / `notify_sound` | see U6 |
+| Logs | `log_dir` / `log_retention_days` / `breadcrumb_on_failure` | see U7 |
+| Metadata | `embed_thumbnail` / `embed_metadata` / `overwrites` / `archive` | `archive` avoids re-downloading playlist items already fetched |
+
+### U5 — queue & concurrency
+
+A filesystem spool under `~/.local/state/ytdl/queue/{pending,running,done,failed}/`,
+with **atomic `mv` state transitions** (maildir-style, no locks), driven by the Go
+daemon `ytdld`. The spool *is* the state, so both the CLI and the GUI inspect it
+directly. Default concurrency cap **2–3**: `unlimited` is allowed but discouraged
+because parallel connections invite YouTube throttling/429s and saturate bandwidth
+and ffmpeg CPU.
+
+### U6 — completion notification
+
+`osascript -e 'display notification …'` on macOS — zero dependency. Config:
+`notify` on/off, `notify_on=success|failure|both`, `notify_sound`. **Known limit:**
+`display notification` is attributed to the calling app (Script Editor/terminal),
+not "ytdl", and cannot attach a click action (e.g. open the folder) without
+`terminal-notifier` (a dependency, avoided) or a signed `.app`. MVP is a plain
+banner; the notification abstraction (`notify-send` on Linux later) keeps this
+open/closed.
+
+### U7 — persistent logs & failure-log auto-cleanup
+
+Two levels: a **central persistent store** (`~/.local/state/ytdl/logs/`, every job,
+retained by age/count) and an **optional in-destination breadcrumb** on failure
+(off by default keeps the music folder clean). The maintainer's auto-cleanup rule —
+"a later successful download of the same URL into the same folder deletes the stale
+`.log`" — requires identifying which breadcrumb maps to which URL. Today the name
+derives from the *title* (fragile, C5) and does not encode the URL. Fix: name the
+breadcrumb after **hash(normalised URL)** (the URL is stable across retries, the
+title is not); on success, compute `hash(url)` and delete the matching breadcrumb.
+Playlists: one breadcrumb per failed item, keyed by item id; the item's success
+removes its own.
+
 ## Requested evolutions
 
 ### E1 — Distribution (primary objective)
@@ -49,13 +113,22 @@ falling back to older or alternative builds rather than erroring out.
 
 Design and constraints: [distribution.md](distribution.md).
 
-### E2 — Minimal GUI (secondary)
+### E2 — GUI for non-developer users (high value, last priority)
 
-A clickable app in `/Applications` or on the Desktop opening a small window with:
+A GUI so users who do not know the Terminal can:
 
-- URL input and a run button,
-- queued executions with an optional background flag,
-- output directory configurable per run and globally.
+- start a **foreground** download from a link and watch live progress,
+- pick format and other available settings,
+- change the output directory **per run / per session / as a global setting**,
+- edit user settings from the GUI (not by hand-editing the config file),
+- launch **background** downloads and view the queue and in-progress jobs.
 
-This depends on U4 (persistent config) and U5 (real queue) being addressed first —
-the GUI is a front-end over those, not a replacement for them.
+Runtime is settled by [ADR-0003](decisions/0003-engine-language-go.md): a **web UI
+served by the Go daemon** (`net/http` + SSE for live progress) — no extra runtime,
+no signing, no payment. Delivered in two stages (roadmap phase 6): an AppleScript
+MVP (paste/drop URL, pick folder, enqueue) for immediate zero-dependency value,
+then the full web UI.
+
+The GUI is a **front-end over the engine**, not a reimplementation: it depends on
+U4 (config) and U5 (queue) existing first. Editing settings from the GUI is safe
+because the config is parsed with a whitelist, not `source`d (see U4).

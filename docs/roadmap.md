@@ -4,14 +4,34 @@ Single source of truth for planned work. Updated at the end of each cycle.
 
 Status: `done` · `in progress` · `planned` · `deferred`
 
+The engine is being rebuilt as a single Go binary (CLI + queue daemon + web GUI),
+shelling out to yt-dlp/ffmpeg; the installer stays Bash and Python is not adopted.
+See [ADR-0003](decisions/0003-engine-language-go.md) for the rationale. The
+confirmed sequence is **foundations → backend integrations → robustness → GUI**,
+with the GUI last.
+
 ```mermaid
 flowchart LR
-    P0["Phase 0<br/>repo + docs"] --> P1["Phase 1<br/>distribution"]
-    P1 --> P2["Phase 2<br/>robustness"]
-    P2 --> P3["Phase 3<br/>config + queue"]
-    P3 --> P4["Phase 4<br/>minimal GUI"]
-    P4 --> P5["Phase 5<br/>Windows / Linux"]
+    P0["Phase 0<br/>repo + docs"] --> P1["Phase 1<br/>distribution (Bash)"]
+    P1 --> P2["Phase 2<br/>live Bash fixes<br/>(parallel)"]
+    P1 --> P3["Phase 3<br/>Go engine<br/>foundations"]
+    P3 --> P4["Phase 4<br/>backend integrations<br/>(config·logs·notify·queue)"]
+    P4 --> P5["Phase 5<br/>robustness &amp; tests"]
+    P5 --> P6["Phase 6<br/>GUI (web on Go)"]
+    P6 --> P7["Phase 7<br/>Windows / Linux"]
     P1 -. "unblocks sharing" .-> U["users on their Macs"]
+```
+
+```mermaid
+flowchart LR
+    subgraph legacy["Bash — shipping now"]
+        BASH["ytdl script"]
+    end
+    subgraph target["Go — target engine"]
+        GO["ytdl binary + ytdld daemon"]
+    end
+    BASH -->|"phase 2: cheap fixes only"| BASH
+    BASH -.->|"phase 3: port with golden tests,<br/>then supersede at parity"| GO
 ```
 
 ## Phase 0 — Repository & documentation — `done`
@@ -80,64 +100,99 @@ authoritative for what GitHub actually holds. Not worth engineering around —
 `--update` runs rarely and the window is minutes — but worth remembering when a
 fresh push appears not to have taken effect.
 
-## Phase 2 — Robustness — `planned`
+## Phase 2 — Live Bash fixes — `planned` (parallel, optional)
 
-Fixes from [improvements.md](improvements.md), worth doing once real users exist.
+Cheap correctness fixes to the **currently shipping** Bash tool, worth doing for
+real users today while the Go engine (phases 3–6) is built. Kept deliberately
+small: only what is low-cost on Bash and not superseded by the port. The
+substantive versions of persistent logs, notifications, config and the queue are
+delivered by the Go engine, not bolted onto the Bash script.
 
 | # | Item | Ref |
 |---|---|---|
 | 2.1 | Validate `--format` against the supported list | C1 |
-| 2.2 | Check AtomicParsley when format is `m4a`, or restrict formats | C2 |
-| 2.3 | Handle multiple URLs, or reject extra arguments explicitly | C3 |
-| 2.4 | Harden the `-b` re-exec argument forwarding | C4 |
-| 2.5 | Sanitise failure-log filenames | C5 |
-| 2.6 | macOS notification on completion in silent/background mode | U6 |
-| 2.7 | Move failure logs out of the music directory | U7 |
-| 2.8 | Test harness for arg parsing and mode selection (bats) | M1 |
-| 2.9 | README + licence | M3 |
-| 2.10 | Double-clickable `install.command` for Finder-only users | — |
+| 2.2 | Handle multiple URLs, or reject extra arguments explicitly | C3 |
+| 2.3 | Harden the `-b` re-exec argument forwarding | C4 |
+| 2.4 | Sanitise failure-log filenames | C5 |
+| 2.5 | Check AtomicParsley when format is `m4a`, or restrict formats | C2 |
 
-## Phase 3 — Persistent config & queue — `planned`
+## Phase 3 — Go engine foundations — `planned` — **next**
 
-Prerequisites for the GUI; also valuable on the CLI alone.
+The pivot to the Go engine ([ADR-0003](decisions/0003-engine-language-go.md)).
+Establish the binary and reach parity with the Bash `ytdl`, so it can supersede it
+without regressions. This is "foundations" in the confirmed sequence.
 
 | # | Item | Ref |
 |---|---|---|
-| 3.1 | Config file (`~/.config/ytdl/config`) for output dir and format | U4 |
-| 3.2 | Precedence: flag > env > config file > default | U4 |
-| 3.3 | Real queue with a concurrency limit, replacing unbounded `-b` | U5 |
-| 3.4 | Job status inspection (`ytdl --status` or similar) | U5 |
+| 3.1 | Go module + CI cross-compile (macOS arm64 + Intel) + checksum publication | ADR-0003 |
+| 3.2 | Installer provisions the `ytdl` binary the same way as yt-dlp/ffmpeg | ADR-0003 |
+| 3.3 | Port the yt-dlp arg builder + metadata pipeline; **golden tests** vs the Bash argv | ADR-0003 |
+| 3.4 | Thin CLI front-end over the shared core (parity with today's flags) | — |
+| 3.5 | Persistent config file (`~/.config/ytdl/config`), strict `key=value` **parse, not `source`** | U4 |
+| 3.6 | Precedence: flag > env > session override > config file > built-in default | U4 |
 
-## Phase 4 — Minimal GUI — `planned` (secondary priority)
+Useful config settings — the full list lives in [improvements.md](improvements.md#u4)
+(output dir, format, name template, background-by-default, concurrency, notify,
+log dir/retention, embed options, …).
 
-A clickable app opening a small window: URL field, run button, queued runs with
-optional background flag, output directory per-run and global.
+## Phase 4 — Backend integrations (Go) — `planned`
 
-Depends on phase 3 — the GUI should be a front-end over a real queue and a real
-config file, not a reimplementation of either.
+The maintainer's requested backend evolutions, built on the Go core.
 
-Open decision, to be settled with a dedicated design pass and its own ADR:
+| # | Item | Ref |
+|---|---|---|
+| 4.1 | Persistent central log store (`~/.local/state/ytdl/logs/`) + retention | U7 |
+| 4.2 | Optional in-destination failure breadcrumb, keyed by **hash(URL)** | U7 |
+| 4.3 | Auto-cleanup: a successful download removes the stale breadcrumb for that URL | U7 |
+| 4.4 | System notification on completion, toggleable (`notify`, `notify_on`) | U6 |
+| 4.5 | Real queue + daemon (`ytdld`): filesystem spool with atomic state transitions | U5 |
+| 4.6 | Bounded concurrency (default cap 2–3; `unlimited` allowed but discouraged) | U5 |
+| 4.7 | Job status inspection: `ytdl queue [--watch]`, `status`, `cancel`, `retry` | U5 |
 
-- **AppleScript / Automator app bundle** — zero dependencies, native dialogs,
-  works down to Mojave, no build toolchain. Ugly, limited layout.
-- **SwiftUI app** — proper UI, but needs a build toolchain, raises a minimum-macOS
-  floor, and reopens notarization ($99/year).
-- **Local web UI opened in the browser** — easiest layout work, no signing, but
-  needs a background process and feels less like an app.
+## Phase 5 — Robustness & tests (Go) — `planned`
 
-Recommendation to evaluate first: the AppleScript route, as the only option that
-adds no dependency and no signing cost while covering the whole support matrix.
+Hardening of the new engine once its features exist: comprehensive error handling,
+edge cases, retries/backoff, YouTube rate-limit handling, and a real test suite
+(Go's `testing`, beyond the golden tests of 3.3).
 
-## Phase 5 — Windows / Linux — `deferred`
+## Phase 6 — GUI — `planned` (last priority, high user value)
 
-Out of scope until macOS distribution is proven with real users. The installer
-should not be over-generalised in advance; the script itself is portable Bash,
-so the work is mostly a second installer and dependency-provisioning path.
+A GUI for non-developer users. It is a **front-end over the Go engine** (config +
+queue + runner already built), not a reimplementation. Runtime is settled by
+ADR-0003: a web UI served by the Go daemon.
+
+| # | Item | Notes |
+|---|---|---|
+| 6a | AppleScript/Automator MVP: paste/drop URL, pick folder, enqueue | zero-dep, works to Mojave, immediate value for non-devs |
+| 6b | Web UI served by `ytdld`: live foreground progress, format/settings, per-run/session/global output dir, settings editor, queue + in-progress view | `net/http` + SSE; needs 3–4 done |
+
+The settings editor writing the config file is safe precisely because the config
+is parsed with a whitelist, not `source`d (3.5).
+
+## Phase 7 — Windows / Linux — `deferred`
+
+Out of scope until macOS distribution is proven with real users. Now mostly a
+second installer and dependency path, since the Go engine cross-compiles
+(`GOOS`/`GOARCH`). Notifications abstract to `notify-send` on Linux.
+
+## Deferred / evaluated, not scheduled
+
+- **GUI installer window (`.dmg`/`.pkg`)** — deferred. A native installer window
+  without Gatekeeper friction needs paid signing ($99/yr), which is out of scope.
+  The constraint-respecting alternative is a double-clickable `install.command`
+  (browser-quarantined → one-time Privacy & Security override), a shell wrapper
+  over the same installer. Not a priority.
+- **Python as a universal dependency** — evaluated and rejected
+  ([ADR-0003](decisions/0003-engine-language-go.md)): it would break the
+  non-interactive install for the majority to benefit only the GUI, which Go
+  serves without a runtime dependency.
 
 ## Known open questions
 
 - Does the Python 3.13 install path actually work end-to-end on a real Mojave
-  machine? Verified from documentation, not from hardware (1.11).
+  machine? Verified from documentation, not from hardware (1.11). Unchanged by
+  ADR-0003: Python remains the legacy path's yt-dlp runtime, not the engine's.
 - Is ffmpeg strictly required for every format we advertise, or only for cover
   embedding and some conversions? Affects whether ffmpeg can be optional (C2).
-- Sequoia/Tahoe Gatekeeper specifics matter only if phase 4 ships a `.app`.
+- Sequoia/Tahoe Gatekeeper specifics matter only if a `.app`/`.pkg` ships — now
+  only relevant to a possible `install.command`, not the web GUI.
