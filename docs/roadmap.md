@@ -276,3 +276,8 @@ Phase 7 (Windows/Linux) stays deferred and is not a scheduled cycle.
   embedding and some conversions? Affects whether ffmpeg can be optional (C2).
 - Sequoia/Tahoe Gatekeeper specifics matter only if a `.app`/`.pkg` ships — now
   only relevant to a possible `install.command`, not the web GUI.
+- **Documentation drift (found in Session 1):** the `ytdl` script header comment
+  (line 5) lists an *album* ID3 tag, but `meta_args` writes only `meta_artist` and
+  `meta_title` — no album is produced. `architecture.md` is correct (it omits album).
+  The Go port must **not** add album (parity); the script header comment should be
+  corrected. Tracked here until fixed.
