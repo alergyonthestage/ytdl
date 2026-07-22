@@ -187,6 +187,78 @@ second installer and dependency path, since the Go engine cross-compiles
   non-interactive install for the majority to benefit only the GUI, which Go
   serves without a runtime dependency.
 
+## Implementation via development cycles
+
+Phases 3–6 are executed as **sequential development cycles — one per session**.
+Each session orchestrates its cycle by delegating to subagents / workflows, under
+one non-negotiable rule:
+
+> **Implementation never starts without preliminary analysis + design + an explicit
+> human-in-the-loop (HITL) approval of the design.**
+
+### Per-session protocol
+
+```mermaid
+flowchart TD
+    S0["0 · Kickoff (lead, inline)<br/>read docs, restate scope + DoD"] --> S1
+    S1["1 · Analysis<br/>fan-out analyst/Explore, read-only"] --> GA{"HITL gate A<br/>open questions answered?"}
+    GA -->|no| S1
+    GA -->|yes| S2["2 · Design (/design)<br/>interfaces, packages, tests, ADR if needed"]
+    S2 --> GB{"HITL gate B<br/>design approved? (MANDATORY)"}
+    GB -->|no| S2
+    GB -->|yes| S3["3 · Implementation<br/>workflow/subagents, worktree-isolated,<br/>tests alongside, atomic commits"]
+    S3 --> S4["4 · Review &amp; verify<br/>adversarial reviewer agents + run tests"]
+    S4 --> GC{"HITL gate C<br/>changes approved?"}
+    GC -->|no| S3
+    GC -->|yes| S5["5 · Docs &amp; close (/commit)<br/>update roadmap status, changelog"]
+```
+
+- **No file writes before gate B.** Stages 0–2 are analysis/design only (per the
+  workflow rules). Stage 3 is the first that touches implementation files.
+- **Skills/agents:** `/analyze` + `analyst`/`Explore` (stage 1), `/design` (stage 2),
+  `reviewer` + `/review` (stage 4), `/commit` (stage 5).
+- **Agent budget — balance by complexity, soft cap ~5–10 per cycle** (the workflow
+  engine caps concurrency regardless): analysis 1–3, design 1–2, implementation
+  3–8 (widest), review 2–3.
+- **Workflow vs subagent:** use the Workflow tool for wide deterministic fan-out /
+  pipelines and adversarial review panels (requires explicit opt-in per session —
+  e.g. "orchestrate this cycle with a workflow"); use individual subagents for a
+  handful of independent analysis/review tasks.
+
+### Cycle 1 — Go engine foundations & parity (phase 3) — **first**
+
+- **Scope:** Go module + CI cross-compile + checksums; installer provisions the
+  binary; port the yt-dlp arg builder + metadata pipeline with **golden tests** vs
+  the Bash argv; thin CLI at flag-parity; config file (parse-not-`source`) +
+  precedence.
+- **Entry:** none; the Bash tool keeps shipping in parallel.
+- **Done when:** the Go `ytdl` reproduces the Bash tool's behaviour (golden tests
+  green), reads config, and installs through the existing installer.
+- **Main risk:** porting the metadata pipeline (the crown jewel) — mitigated by the
+  golden tests.
+
+### Cycle 2 — Backend integrations (phase 4 + phase 5 hardening)
+
+- **Scope:** central persistent logs + retention; failure breadcrumb by hash(URL)
+  + auto-cleanup; toggleable notifications; queue + `ytdld` daemon (spool, atomic
+  transitions) + bounded concurrency + `status`/`cancel`/`retry`; hardening + tests.
+- **Entry:** Cycle 1 done (Go core + config exist).
+- **Done when:** queued/background downloads run under a concurrency cap with
+  inspectable status; logs persist centrally and auto-clean; notifications fire per
+  config; test suite green.
+
+### Cycle 3 — GUI (phase 6)
+
+- **Scope:** AppleScript MVP (paste/drop URL → pick folder → enqueue), then the web
+  UI served by `ytdld` (live foreground progress via SSE, format/settings,
+  per-run/session/global output dir, settings editor, queue + in-progress view).
+- **Entry:** Cycles 1–2 done (config + queue + runner exist).
+- **Done when:** a non-developer starts a foreground download and watches progress,
+  launches background downloads, sees the queue, and edits settings — all without
+  the Terminal.
+
+Phase 7 (Windows/Linux) stays deferred and is not a scheduled cycle.
+
 ## Known open questions
 
 - Does the Python 3.13 install path actually work end-to-end on a real Mojave
