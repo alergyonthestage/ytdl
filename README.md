@@ -25,14 +25,8 @@ rights, nothing touched system-wide.
 
 When it finishes, **open a new Terminal window** and you are ready to go.
 
-### If you are on macOS 10.13 or 10.14
-
-The installer will ask you to install Python first, then run it again. This is
-because current yt-dlp builds need macOS 10.15 or newer, so on older systems it
-runs through Python instead. The Python installer is the official one from
-python.org and opens without any security warning.
-
-macOS 10.12 and older cannot be supported.
+ytdl runs on **macOS 10.15 Catalina or newer** (Intel or Apple Silicon). Older
+systems are not supported.
 
 ## Use
 
@@ -71,8 +65,7 @@ That updates ytdl, yt-dlp and ffmpeg together. It is almost always the fix.
 | System | Status |
 |---|---|
 | macOS 10.15 Catalina → current, Intel or Apple Silicon | supported |
-| macOS 10.13 High Sierra – 10.14 Mojave | supported, requires Python (installer guides you) |
-| macOS 10.12 and older | not supported |
+| macOS 10.14 Mojave and older | not supported |
 | Windows, Linux | planned |
 
 ## Documentation

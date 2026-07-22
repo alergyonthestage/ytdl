@@ -2,7 +2,7 @@
 #
 # ytdl — wrapper di yt-dlp per scaricare musica con naming e metadati puliti.
 #
-#   "Artista - Traccia.<ext>"  + tag ID3 (artista, titolo, album, copertina).
+#   "Artista - Traccia.<ext>"  + tag ID3 (artista, titolo, copertina).
 #
 # USO:   ytdl [opzioni] URL
 # HELP:  ytdl --help

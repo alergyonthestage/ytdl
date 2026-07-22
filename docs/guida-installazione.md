@@ -3,13 +3,13 @@
 Questa guida ti accompagna passo passo. Non serve sapere niente di programmazione:
 si tratta di copiare e incollare una riga.
 
-Tempo necessario: circa 5 minuti (10 se hai un Mac più vecchio).
+Tempo necessario: circa 5 minuti.
 
 ## Prima di iniziare
 
 Ti serve:
 
-- un Mac con macOS 10.13 High Sierra o più recente
+- un Mac con macOS 10.15 Catalina o più recente
 - una connessione a internet
 
 Non ti serve la password di amministratore: viene installato tutto dentro la tua
@@ -18,7 +18,7 @@ cartella utente, senza toccare il sistema.
 ### Che versione di macOS ho?
 
 Clicca sulla **mela** in alto a sinistra → **Informazioni su questo Mac**.
-Il numero che vedi (per esempio `14.5`, `12.7` o `10.14.6`) è la tua versione.
+Il numero che vedi (per esempio `14.5`, `12.7` o `10.15.7`) è la tua versione.
 
 ```mermaid
 flowchart TD
@@ -26,8 +26,7 @@ flowchart TD
     B -->|sì| C[Vai al passo 1:<br/>installazione normale]
     B -->|no, inizia con 10| D{È 10.15<br/>o più alto?}
     D -->|sì| C
-    D -->|no, è 10.13 o 10.14| E[Leggi prima<br/>'Se hai un Mac più vecchio']
-    D -->|no, è 10.12 o meno| F[Purtroppo non è<br/>possibile installarlo]
+    D -->|no, è 10.14 o meno| F[Purtroppo non è<br/>possibile installarlo]
 ```
 
 ## Passo 1 — Apri il Terminale
@@ -69,23 +68,8 @@ Poi scrivi:
 ytdl --version
 ```
 
-Se vedi due righe con `ytdl 1.0.0` e la versione di `yt-dlp`, l'installazione è
+Se vedi due righe con `ytdl 2.0.0` e la versione di `yt-dlp`, l'installazione è
 riuscita. Puoi passare alla [guida all'uso](guida-uso.md).
-
-## Se hai un Mac più vecchio (macOS 10.13 o 10.14)
-
-Su questi sistemi serve un passaggio in più, perché il programma che scarica la
-musica non funziona più su macOS così vecchi senza l'aiuto di Python.
-
-L'installatore te lo dirà da solo e si fermerà. Quando succede:
-
-1. Apri <https://www.python.org/downloads/macos/>
-2. Scarica l'installatore di **Python 3.13** per macOS
-3. Apri il file scaricato (finisce in `.pkg`) e clicca **Continua** fino alla fine
-4. Torna al Terminale e incolla di nuovo il comando del Passo 2
-
-Quel file viene dal sito ufficiale di Python ed è firmato, quindi macOS lo apre
-senza avvisi di sicurezza.
 
 ## Se qualcosa non funziona
 
@@ -104,10 +88,10 @@ ma il Mac non lo sta trovando da solo.
 
 ### L'installazione si ferma con un messaggio di errore
 
-Ogni errore dell'installatore dice cosa fare. I due più comuni sono:
+Ogni errore dell'installatore dice cosa fare. Il più comune è:
 
-- **macOS troppo vecchio** — sotto 10.13 non è purtroppo possibile installarlo.
-- **Serve Python** — vedi la sezione qui sopra.
+- **macOS troppo vecchio** — sotto 10.15 Catalina non è purtroppo possibile
+  installarlo.
 
 ### «Checksum mismatch»
 
@@ -134,7 +118,7 @@ Vale la pena provare questo comando **prima** di segnalare qualsiasi problema.
 Nel Terminale:
 
 ```
-rm -f ~/.local/bin/ytdl ~/.local/bin/yt-dlp ~/.local/bin/yt-dlp.pyz
+rm -f ~/.local/bin/ytdl ~/.local/bin/yt-dlp
 rm -f ~/.local/bin/ffmpeg ~/.local/bin/ffprobe
 ```
 
