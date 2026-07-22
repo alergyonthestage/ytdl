@@ -71,6 +71,7 @@ That updates ytdl, yt-dlp and ffmpeg together. It is almost always the fix.
 ## Documentation
 
 Design notes, distribution constraints and the roadmap are in [docs/](docs/).
+Release history is in the [changelog](CHANGELOG.md).
 
 ## Requirements
 

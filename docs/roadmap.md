@@ -125,25 +125,27 @@ delivered by the Go engine, not bolted onto the Bash script.
 | 2.4 | Sanitise failure-log filenames | C5 |
 | 2.5 | Check AtomicParsley when format is `m4a`, or restrict formats | C2 |
 
-## Phase 3 — Go engine foundations — `planned` — **next**
+## Phase 3 — Go engine foundations — `done`
 
 The pivot to the Go engine ([ADR-0003](decisions/0003-engine-language-go.md)).
 Establish the binary and reach parity with the Bash `ytdl`, so it can supersede it
 without regressions. This is "foundations" in the confirmed sequence.
 
-| # | Item | Ref |
-|---|---|---|
-| 3.1 | Go module + CI cross-compile (macOS arm64 + Intel) + checksum publication | ADR-0003 |
-| 3.2 | Installer provisions the `ytdl` binary the same way as yt-dlp/ffmpeg | ADR-0003 |
-| 3.3 | Port the yt-dlp arg builder + metadata pipeline; **golden tests** vs the Bash argv | ADR-0003 |
-| 3.4 | Thin CLI front-end over the shared core (parity with today's flags) | — |
-| 3.5 | Persistent config file (`~/.config/ytdl/config`), strict `key=value` **parse, not `source`** | U4 |
-| 3.6 | Precedence: flag > env > session override > config file > built-in default | U4 |
+| # | Item | Status | Ref |
+|---|---|---|---|
+| 3.1 | Go module + CI cross-compile (macOS arm64 + Intel) + checksum publication | done | ADR-0003 |
+| 3.2 | Installer provisions the `ytdl` binary the same way as yt-dlp/ffmpeg | done | ADR-0003 |
+| 3.3 | Port the yt-dlp arg builder + metadata pipeline; **golden tests** vs the Bash argv | done | ADR-0003 |
+| 3.4 | Thin CLI front-end over the shared core (parity with today's flags) | done | — |
+| 3.5 | Persistent config file (`~/.config/ytdl/config`), strict `key=value` **parse, not `source`** | done | U4 |
+| 3.6 | Precedence: flag > env > session override > config file > built-in default | done | U4 |
 
-**Designed (Session 2, Gate B 2026-07-22):** 3.1/3.2/3.5/3.6 are specified in
-[design-cycle1-remaining.md](design-cycle1-remaining.md); the floor/installer
-simplification is [ADR-0005](decisions/0005-macos-floor-and-single-engine.md).
-Implementation is Session 3.
+**Implemented (Session 3, 2026-07-22)** on branch `feat/go-engine/cycle1`:
+`internal/{config,core,cli,run,buildinfo}` + `cmd/ytdl`, golden-tested for byte-exact
+argv parity against the Bash `ytdl`; CI (`.github/workflows/`) and the single-path
+installer per [ADR-0005](decisions/0005-macos-floor-and-single-engine.md). Designed in
+[design-cycle1-core.md](design-cycle1-core.md) + [design-cycle1-remaining.md](design-cycle1-remaining.md).
+The first release tag `v2.0.0` triggers `release.yml`.
 
 Useful config settings — the full list lives in [improvements.md](improvements.md#u4)
 (output dir, format, name template, background-by-default, concurrency, notify,
@@ -239,11 +241,10 @@ flowchart TD
   e.g. "orchestrate this cycle with a workflow"); use individual subagents for a
   handful of independent analysis/review tasks.
 
-### Cycle 1 — Go engine foundations & parity (phase 3) — **first**
+### Cycle 1 — Go engine foundations & parity (phase 3) — **done**
 
 **Status (2026-07-22):** run across three sessions — (1) core analysis + design,
-(2) remaining analysis + design, (3) implementation via a full workflow.
-**Sessions 1 & 2 done** (design approved at Gate B; no implementation yet):
+(2) remaining analysis + design, (3) implementation. **All three done.**
 
 - **Session 1 — core:** 3.3 + 3.4 + shared-core scaffolding + config seam. See
   [design-cycle1-core.md](design-cycle1-core.md),
@@ -255,18 +256,19 @@ flowchart TD
   [design-cycle1-remaining.md](design-cycle1-remaining.md) and
   [ADR-0005](decisions/0005-macos-floor-and-single-engine.md) (floor → 10.15, single
   Go engine, Python removed).
+- **Session 3 — implementation:** the whole cycle built on branch
+  `feat/go-engine/cycle1` (lead inline + adversarial review subagents). Delivered:
+  the golden capture harness + 20 byte-exact references, `internal/{config,core,cli,
+  run,buildinfo}` + `cmd/ytdl`, CI (`ci.yml` + `release.yml`), the single-path
+  installer, and the user-doc flip to the 10.15 floor / 2.0.0. `go test -race ./...`,
+  `go vet`, `gofmt`, and the 19 installer checks all green; a Stage-4 review found no
+  critical issues and its fixes are applied.
 
-**Next: Session 3 — implementation** of the whole cycle via a workflow.
-
-- **Scope:** Go module + CI cross-compile + checksums; installer provisions the
-  binary; port the yt-dlp arg builder + metadata pipeline with **golden tests** vs
-  the Bash argv; thin CLI at flag-parity; config file (parse-not-`source`) +
-  precedence.
-- **Entry:** none; the Bash tool keeps shipping in parallel.
-- **Done when:** the Go `ytdl` reproduces the Bash tool's behaviour (golden tests
-  green), reads config, and installs through the existing installer.
-- **Main risk:** porting the metadata pipeline (the crown jewel) — mitigated by the
-  golden tests.
+**Done:** the Go `ytdl` reproduces the Bash tool's behaviour byte-for-byte (goldens
+green + end-to-end argv checks), reads the config file, and installs through the
+updated installer. The crown-jewel metadata pipeline is pinned by the golden tests.
+**Not yet shipped:** the branch is unpushed (pushed from host); tagging `v2.0.0`
+triggers the release and makes the installer's `releases/latest` URLs resolve.
 
 ### Cycle 2 — Backend integrations (phase 4 + phase 5 hardening)
 
@@ -300,8 +302,7 @@ Phase 7 (Windows/Linux) stays deferred and is not a scheduled cycle.
   embedding and some conversions? Affects whether ffmpeg can be optional (C2).
 - Sequoia/Tahoe Gatekeeper specifics matter only if a `.app`/`.pkg` ships — now
   only relevant to a possible `install.command`, not the web GUI.
-- **Documentation drift (found in Session 1):** the `ytdl` script header comment
-  (line 5) lists an *album* ID3 tag, but `meta_args` writes only `meta_artist` and
-  `meta_title` — no album is produced. `architecture.md` is correct (it omits album).
-  The Go port must **not** add album (parity); the script header comment should be
-  corrected. Tracked here until fixed.
+- ~~**Documentation drift (found in Session 1):** the `ytdl` script header comment
+  lists an *album* ID3 tag, but `meta_args` writes only `meta_artist`/`meta_title`.~~
+  **Closed (Session 3):** the Go port correctly omits album (parity, golden-tested)
+  and the Bash header comment was corrected.
