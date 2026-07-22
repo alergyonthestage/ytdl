@@ -72,6 +72,13 @@ a real end-to-end download, and a test of the legacy path on an old Intel Mac.
 | 1.12 | Licence (PolyForm Strict 1.0.0) | done | Use permitted, redistribution and derivatives are not |
 | 1.13 | Italian user guides (install + usage) | done | [installazione](guida-installazione.md), [uso](guida-uso.md) |
 
+> **Superseded by [ADR-0005](decisions/0005-macos-floor-and-single-engine.md)
+> (2026-07-22):** items 1.3 (zipimport per target), 1.5 (evermeet for legacy Intel),
+> 1.8 (Mojave Python path) and the legacy half of 1.11 are dropped — Cycle 1 raises
+> the floor to **macOS 10.15** and removes the Python/legacy path. They stay marked
+> *done* for the currently-shipping Bash installer; the removal lands with the
+> installer change (item 3.2, Session 3).
+
 **Definition of done:** a tester who has never opened Terminal completes the
 install unaided and downloads a track.
 
@@ -83,9 +90,11 @@ and extraction from the martin-riedl arm64 zips, the signed ffmpeg actually
 running, PATH written to `.zprofile` and `.bash_profile`, and the final
 `ytdl --version` / `yt-dlp` / `ffmpeg` checks all passing.
 
-**Still unverified — the legacy path.** macOS 10.13–10.14 (Intel), with
-python.org Python 3.13 driving the zipimport yt-dlp, has only been checked on
-paper. This is the remaining gap in phase 1, and needs an old Intel Mac to close.
+**The legacy path is no longer a gap.** macOS 10.13–10.14 (Intel + python.org
+Python 3.13 + zipimport yt-dlp) was only ever checked on paper; rather than close
+that gap on old hardware, [ADR-0005](decisions/0005-macos-floor-and-single-engine.md)
+**drops** the legacy path (the Go engine needs 10.15+). No old-Intel-Mac testing is
+required.
 
 **A real download** has not been run yet either — installation succeeded, but the
 end-to-end "paste a URL, get a tagged file" test is the true definition of done.
@@ -130,6 +139,11 @@ without regressions. This is "foundations" in the confirmed sequence.
 | 3.4 | Thin CLI front-end over the shared core (parity with today's flags) | — |
 | 3.5 | Persistent config file (`~/.config/ytdl/config`), strict `key=value` **parse, not `source`** | U4 |
 | 3.6 | Precedence: flag > env > session override > config file > built-in default | U4 |
+
+**Designed (Session 2, Gate B 2026-07-22):** 3.1/3.2/3.5/3.6 are specified in
+[design-cycle1-remaining.md](design-cycle1-remaining.md); the floor/installer
+simplification is [ADR-0005](decisions/0005-macos-floor-and-single-engine.md).
+Implementation is Session 3.
 
 Useful config settings — the full list lives in [improvements.md](improvements.md#u4)
 (output dir, format, name template, background-by-default, concurrency, notify,
@@ -228,12 +242,21 @@ flowchart TD
 ### Cycle 1 — Go engine foundations & parity (phase 3) — **first**
 
 **Status (2026-07-22):** run across three sessions — (1) core analysis + design,
-(2) remaining analysis + design, (3) implementation via a full workflow. **Session 1
-done:** core analysis + design approved at Gate B — see
-[design-cycle1-core.md](design-cycle1-core.md), [ADR-0004](decisions/0004-go-engine-package-layout.md),
-[parity contract](go-port-parity-contract.md), [golden-test design](golden-test-design.md).
-Core scope = 3.3 + 3.4 + shared-core scaffolding + config seam. Session 2 designs the
-remainder: config file (3.5/3.6), CI (3.1), installer (3.2). No implementation yet.
+(2) remaining analysis + design, (3) implementation via a full workflow.
+**Sessions 1 & 2 done** (design approved at Gate B; no implementation yet):
+
+- **Session 1 — core:** 3.3 + 3.4 + shared-core scaffolding + config seam. See
+  [design-cycle1-core.md](design-cycle1-core.md),
+  [ADR-0004](decisions/0004-go-engine-package-layout.md),
+  [parity contract](go-port-parity-contract.md),
+  [golden-test design](golden-test-design.md).
+- **Session 2 — remaining:** config file (3.5/3.6), CI (3.1), installer (3.2),
+  plus the macOS floor raise. See
+  [design-cycle1-remaining.md](design-cycle1-remaining.md) and
+  [ADR-0005](decisions/0005-macos-floor-and-single-engine.md) (floor → 10.15, single
+  Go engine, Python removed).
+
+**Next: Session 3 — implementation** of the whole cycle via a workflow.
 
 - **Scope:** Go module + CI cross-compile + checksums; installer provisions the
   binary; port the yt-dlp arg builder + metadata pipeline with **golden tests** vs
@@ -269,9 +292,10 @@ Phase 7 (Windows/Linux) stays deferred and is not a scheduled cycle.
 
 ## Known open questions
 
-- Does the Python 3.13 install path actually work end-to-end on a real Mojave
-  machine? Verified from documentation, not from hardware (1.11). Unchanged by
-  ADR-0003: Python remains the legacy path's yt-dlp runtime, not the engine's.
+- ~~Does the Python 3.13 install path actually work end-to-end on a real Mojave
+  machine?~~ **Closed by [ADR-0005](decisions/0005-macos-floor-and-single-engine.md):**
+  the floor is raised to macOS 10.15 and the Python/legacy path is dropped, so the
+  question is moot.
 - Is ffmpeg strictly required for every format we advertise, or only for cover
   embedding and some conversions? Affects whether ffmpeg can be optional (C2).
 - Sequoia/Tahoe Gatekeeper specifics matter only if a `.app`/`.pkg` ships — now

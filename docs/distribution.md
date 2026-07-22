@@ -7,6 +7,13 @@ fails with actionable messages.
 All version and URL claims below were verified against upstream sources on
 **2026-07-21**. Claims that could not be verified are marked *unverified*.
 
+> **Floor raised to macOS 10.15 (2026-07-22, [ADR-0005](decisions/0005-macos-floor-and-single-engine.md)).**
+> Cycle 1 ships a Go engine that requires macOS 10.15+, so the project **drops the
+> legacy 10.13–10.14 path and Python entirely**. The Mojave/Python analysis below is
+> retained for rationale; the **current** support floor is **10.15 Catalina**, and the
+> installer provisions a single standalone path (no Python, no evermeet). Sections
+> describing the legacy path are historical unless marked otherwise.
+
 ## The central constraint
 
 yt-dlp **dropped its legacy macOS builds**. Since the end of August 2025 no
@@ -22,20 +29,27 @@ runners, and PyInstaller supports only macOS 10.15+. It will not be reversed.
 So **Mojave 10.14 cannot run the standard yt-dlp binary.** The upstream advice to
 those users is "upgrade macOS, or use a Python install".
 
-That second path still works, and it is the one this project takes.
+That second path still works, but the project **no longer takes it**: Cycle 1's Go
+engine requires macOS 10.15+, so the floor is raised to 10.15 and the Python path is
+dropped ([ADR-0005](decisions/0005-macos-floor-and-single-engine.md)). The analysis
+of that path below is kept for the record.
 
 ## Support matrix
 
-The viable combinations, all from **official or signed sources**:
+The viable combinations, all from **official or signed sources** (post-[ADR-0005](decisions/0005-macos-floor-and-single-engine.md)):
 
 | Target | yt-dlp | ffmpeg | Extra step |
 |---|---|---|---|
 | macOS 11+ Apple Silicon | `yt-dlp_macos` (universal) | martin-riedl `arm64` (signed + notarized) | — |
-| macOS 10.15+ Intel | `yt-dlp_macos` (universal) | martin-riedl `amd64`, or evermeet.cx | — |
-| **macOS 10.13–10.14** (always Intel) | `yt-dlp` zipimport | evermeet.cx (10.13+, Intel) | **install Python 3.13** (python.org, 10.13+) |
-| macOS ≤ 10.12 | none | — | out of support |
+| macOS 10.15+ Intel | `yt-dlp_macos` (universal) | martin-riedl `amd64` (signed + notarized) | — |
+| macOS 10.14 Mojave and older | not supported | — | floor raised to 10.15 ([ADR-0005](decisions/0005-macos-floor-and-single-engine.md)) |
 
-Two facts make the old-macOS row work out better than expected:
+At the 10.15 floor, `yt-dlp_macos` (10.15+) and martin-riedl's signed arm64/amd64
+builds cover **every** supported target — no zipimport, no Python, no evermeet.
+
+<details><summary><b>Historical</b> — why the dropped 10.13–10.14 row once worked</summary>
+
+Two facts made the old-macOS row work out better than expected:
 
 - **Python 3.13's installer supports macOS 10.13+**, so it installs on Mojave.
   The minimum was raised from 10.9 to 10.13, not to 11 as the `macos11.pkg`
@@ -46,8 +60,11 @@ Two facts make the old-macOS row work out better than expected:
   can run Mojave, so every Mojave machine is Intel by definition. The ARM gap only
   affects macOS 11+, where martin-riedl provides signed arm64 builds.
 
-The realistic floor with official sources is therefore **macOS 10.13 High Sierra**,
-one version *below* the requested Mojave target.
+</details>
+
+The realistic floor with official sources *was* macOS 10.13 High Sierra. Cycle 1's
+Go engine raises it to **macOS 10.15 Catalina** ([ADR-0005](decisions/0005-macos-floor-and-single-engine.md));
+10.13–10.14 is no longer supported.
 
 ## Verified download endpoints
 
@@ -60,6 +77,12 @@ Each was checked with an HTTP request on 2026-07-21:
 | ffmpeg arm64 | `https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip` | 307 → asset |
 | ffmpeg amd64 | `https://ffmpeg.martin-riedl.de/redirect/latest/macos/amd64/release/ffmpeg.zip` | 307 → asset |
 | ffmpeg Intel/legacy | `https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip` | 302 → asset |
+
+Post-[ADR-0005](decisions/0005-macos-floor-and-single-engine.md) the **yt-dlp
+zipimport** and **evermeet** endpoints are no longer used (the legacy path is
+dropped); they are kept in the table as verified references. Cycle 1 adds our **own**
+release assets — `ytdl_macos_arm64`, `ytdl_macos_amd64` and a `SHA2-256SUMS` — fetched
+the same way (see [design-cycle1-remaining.md](design-cycle1-remaining.md)).
 
 The `releases/latest/download/…` form matters: it always resolves to the current
 release, so **no version is hardcoded** in the installer and updates need no
@@ -113,22 +136,20 @@ verifiable checksums.
 
 ## Installer design
 
+Post-[ADR-0005](decisions/0005-macos-floor-and-single-engine.md), single path (no
+Python branch); Cycle 1 (item 3.2) adds the `ytdl` binary fetch:
+
 ```mermaid
 flowchart TD
-    A[curl -fsSL … | bash] --> B[detect macOS version + arch]
-    B --> C{macOS ≥ 10.15?}
-    C -->|yes| D[fetch yt-dlp_macos]
-    C -->|no| E{macOS ≥ 10.13?}
-    E -->|no| F[abort: clear message,<br/>state the floor and why]
-    E -->|yes| G{python3 ≥ 3.10 present?}
-    G -->|yes| H[fetch yt-dlp zipimport]
-    G -->|no| I[instruct: install Python 3.13<br/>from python.org, then re-run]
-    D --> J[verify SHA2-256SUMS]
-    H --> J
-    J --> K[fetch ffmpeg for arch]
-    K --> L[install into ~/.local/bin]
-    L --> M[add to PATH: .zprofile + .bash_profile]
-    M --> N[verify: ytdl --version]
+    A["curl -fsSL … | bash"] --> B["detect macOS version + arch"]
+    B --> C{"macOS &ge; 10.15?"}
+    C -->|no| F["abort: state the floor (10.15) and why"]
+    C -->|yes| D["fetch yt-dlp_macos + verify SHA2-256SUMS"]
+    D --> K["fetch ffmpeg for arch (martin-riedl, signed)"]
+    K --> Y["fetch ytdl_macos_&lt;arch&gt; from release + verify checksum"]
+    Y --> L["install into ~/.local/bin"]
+    L --> M["add to PATH: .zprofile + .bash_profile"]
+    M --> N["verify: ytdl --version"]
 ```
 
 Design commitments:
