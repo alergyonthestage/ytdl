@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -180,6 +181,26 @@ func TestLoadFileInvalidValueOnKnownKeyWarnsAndFallsThrough(t *testing.T) {
 	got, _ := Resolve(Partial{}, Partial{}, p, Env{})
 	if got.Format != DefaultFormat {
 		t.Errorf("resolved Format = %q, want default %q", got.Format, DefaultFormat)
+	}
+}
+
+// A raw value larger than bufio.Scanner's default 64 KiB token must still parse
+// (the buffer is widened), and must not discard later keys.
+func TestLoadFileLargeValue(t *testing.T) {
+	big := strings.Repeat("x", 200*1024)
+	path := writeConfig(t, "name_template = "+big+"\nformat = flac\n")
+	p, warns, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 0 {
+		t.Fatalf("unexpected warnings: %v", warns)
+	}
+	if p.NameTemplate == nil || *p.NameTemplate != big {
+		t.Errorf("large name_template not preserved (got len %d, want %d)", len(derefS(p.NameTemplate)), len(big))
+	}
+	if p.Format == nil || *p.Format != "flac" {
+		t.Errorf("key after the large line was dropped: %v", p.Format)
 	}
 }
 

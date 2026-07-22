@@ -127,8 +127,7 @@ func runDefault(o core.Options, w io.Writer) int {
 
 	saved, cleanup, err := tempFile("ytdl-saved-")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "✗ Errore file temporaneo: %v\n", err)
-		return 1
+		return tempFileError(err)
 	}
 	defer cleanup()
 	o.SavedFile = saved
@@ -154,15 +153,22 @@ func runDefault(o core.Options, w io.Writer) int {
 // runSilent produces no terminal output; on failure (or zero files) it writes
 // <title>.log to the output dir with the yt-dlp stderr (ytdl lines 282-308).
 func runSilent(o core.Options) int {
-	saved, cleanSaved, err1 := tempFile("ytdl-saved-")
-	title, cleanTitle, err2 := tempFile("ytdl-title-")
-	errlog, cleanErr, err3 := tempFile("ytdl-err-")
-	if err := errors.Join(err1, err2, err3); err != nil {
-		fmt.Fprintf(os.Stderr, "✗ Errore file temporaneo: %v\n", err)
-		return 1
+	// Register each cleanup immediately after its own successful creation, so a
+	// later failure still removes the temp files already made.
+	saved, cleanSaved, err := tempFile("ytdl-saved-")
+	if err != nil {
+		return tempFileError(err)
 	}
 	defer cleanSaved()
+	title, cleanTitle, err := tempFile("ytdl-title-")
+	if err != nil {
+		return tempFileError(err)
+	}
 	defer cleanTitle()
+	errlog, cleanErr, err := tempFile("ytdl-err-")
+	if err != nil {
+		return tempFileError(err)
+	}
 	defer cleanErr()
 
 	o.TitleFile = title
@@ -244,6 +250,10 @@ func Update() int {
 		fmt.Fprintln(os.Stderr, "✗ curl non disponibile: impossibile aggiornare.")
 		return 1
 	}
+	if _, err := exec.LookPath("bash"); err != nil {
+		fmt.Fprintln(os.Stderr, "✗ bash non disponibile: impossibile aggiornare.")
+		return 1
+	}
 
 	fmt.Println("▸ Aggiorno ytdl e yt-dlp…")
 	fmt.Println()
@@ -259,6 +269,7 @@ func Update() int {
 	curl.Stderr = os.Stderr
 
 	if err := sh.Start(); err != nil {
+		pipe.Close() // curl.Wait() never runs to close it; avoid leaking the fds
 		return updateFailed()
 	}
 	curlErr := curl.Run()
@@ -290,6 +301,11 @@ func runCode(cmd *exec.Cmd) int {
 			return code
 		}
 	}
+	return 1
+}
+
+func tempFileError(err error) int {
+	fmt.Fprintf(os.Stderr, "✗ Errore file temporaneo: %v\n", err)
 	return 1
 }
 
@@ -325,6 +341,10 @@ func readSavedPaths(path string) (first string, count int) {
 			first = line
 		}
 	}
+	if err := sc.Err(); err != nil {
+		// A truncated read would make the 1/N/0 report misleading; surface it.
+		fmt.Fprintf(os.Stderr, "! ytdl: lettura elenco file incompleta: %v\n", err)
+	}
 	return first, count
 }
 
@@ -349,7 +369,11 @@ func writeFailLog(o core.Options, titleFile, errlog string, rc int) {
 	if data, err := os.ReadFile(errlog); err == nil {
 		b.Write(data)
 	}
-	_ = os.WriteFile(dest, []byte(b.String()), 0o644)
+	// The .log is silent mode's only failure signal; if even that write fails,
+	// break silence on stderr so the user is not left with no indication at all.
+	if err := os.WriteFile(dest, []byte(b.String()), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "✗ ytdl: impossibile scrivere il log di errore %s: %v\n", dest, err)
+	}
 }
 
 // lastLine returns the file's last line, matching Bash `tail -n1`: a single

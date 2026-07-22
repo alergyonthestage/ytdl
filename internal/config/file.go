@@ -49,6 +49,9 @@ func LoadFile(path string) (Partial, []Warning, error) {
 	var p Partial
 	var warns []Warning
 	sc := bufio.NewScanner(f)
+	// Raw name_template/strip_* values have no length cap, so widen past the
+	// default 64 KiB to avoid ErrTooLong on a big regex line.
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	line := 0
 	for sc.Scan() {
 		line++
@@ -69,7 +72,10 @@ func LoadFile(path string) (Partial, []Warning, error) {
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return Partial{}, warns, err
+		// Bad content (an over-long line) or a mid-read error: keep whatever was
+		// parsed and warn, rather than discarding every key parsed so far.
+		warns = append(warns, Warning{Line: line + 1, Msg: fmt.Sprintf("lettura interrotta: %v", err)})
+		return p, warns, nil
 	}
 	return p, warns, nil
 }
