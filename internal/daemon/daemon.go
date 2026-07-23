@@ -81,10 +81,11 @@ func Serve(cfg Config) error {
 	defer release()
 
 	// Crash recovery: we hold the exclusive lock, so no live worker owns any
-	// running/ file — anything there is an orphan of a killed daemon.
-	if _, err := cfg.Spool.RequeueRunning(); err != nil {
-		return err
-	}
+	// running/ file — anything there is an orphan of a killed daemon. Best-effort:
+	// a file that fails to requeue (permission, cross-mount) must not stop us from
+	// draining the rest of the queue, matching the "never block on a best-effort
+	// step" philosophy the log store already follows.
+	_, _ = cfg.Spool.RequeueRunning()
 
 	drain(cfg)
 	return nil
@@ -97,34 +98,35 @@ func drain(cfg Config) {
 	if cfg.Concurrency > 0 {
 		sem = make(chan struct{}, cfg.Concurrency)
 	}
+	acquire := func() {
+		if sem != nil {
+			sem <- struct{}{}
+		}
+	}
+	release := func() {
+		if sem != nil {
+			<-sem
+		}
+	}
 	var wg sync.WaitGroup
 	var inflight int64
 
 	idleSince := time.Now()
 	for {
+		// Take a worker slot BEFORE claiming, so a job is only moved into running/
+		// once a slot is truly free — the pool bounds claims, not just executions,
+		// and `running/` never transiently exceeds the cap.
+		acquire()
 		c, err := cfg.Spool.ClaimNext()
-		if err != nil {
-			// A transient filesystem hiccup must not kill the daemon; back off and
-			// retry. Persistent failure just keeps the daemon alive until idle-exit
-			// (nothing gets drained, but nothing is lost either).
-			time.Sleep(cfg.PollInterval)
-			continue
-		}
-		if c != nil {
+		if err == nil && c != nil {
 			idleSince = time.Now()
 			atomic.AddInt64(&inflight, 1)
-			if sem != nil {
-				sem <- struct{}{} // acquire a slot (blocks the loop when the pool is full)
-			}
 			wg.Add(1)
 			go func(cl queue.Claim) {
 				defer wg.Done()
 				defer atomic.AddInt64(&inflight, -1)
-				if sem != nil {
-					defer func() { <-sem }()
-				}
-				rc := cfg.Run(cl.Job)
-				if rc == 0 {
+				defer release()
+				if runJobGuarded(cfg.Run, cl.Job) == 0 {
 					_ = cfg.Spool.MarkDone(cl.ID)
 				} else {
 					_ = cfg.Spool.MarkFailed(cl.ID)
@@ -133,20 +135,38 @@ func drain(cfg Config) {
 			continue
 		}
 
-		// Nothing claimable right now.
+		// No job claimed — the queue is empty, or ClaimNext hit a filesystem error.
+		// Release the slot we took and fall into idle handling. A ClaimNext error
+		// deliberately reaches this idle check (rather than a hot `continue`): a
+		// persistently-failing spool must NOT keep the daemon — and its exclusive
+		// lock — alive forever, which would make every later `ytdl -b` see
+		// ErrAlreadyRunning against a wedged incumbent. After IdleTimeout it exits,
+		// and a later invocation spawns a fresh daemon to retry.
+		release()
 		if atomic.LoadInt64(&inflight) > 0 {
 			idleSince = time.Now() // work is still in flight → not idle
 			time.Sleep(cfg.PollInterval)
 			continue
 		}
-		// Pending empty AND nothing in flight: the ClaimNext above was the final
-		// re-scan. Exit once we have been idle long enough.
 		if time.Since(idleSince) >= cfg.IdleTimeout {
 			break
 		}
 		time.Sleep(cfg.PollInterval)
 	}
 	wg.Wait()
+}
+
+// runJobGuarded runs one job and converts a panic in the injected runner into a
+// failure exit code, so a single misbehaving job cannot crash the whole daemon
+// (which would abandon every sibling download's yt-dlp child and strand their
+// spool entries in running/). The panicking job is marked failed, not retried.
+func runJobGuarded(run func(queue.Job) int, j queue.Job) (rc int) {
+	defer func() {
+		if r := recover(); r != nil {
+			rc = 1
+		}
+	}()
+	return run(j)
 }
 
 // acquireLock opens (creating) the lock file and takes an exclusive, non-blocking

@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -156,6 +158,60 @@ func TestServeAlreadyRunning(t *testing.T) {
 	err = Serve(fastCfg(sp, 2, func(queue.Job) int { return 0 }))
 	if !errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("Serve with a held lock = %v, want ErrAlreadyRunning", err)
+	}
+}
+
+// A panicking job must not take down the daemon: the pool survives, the other
+// jobs complete, and the panicking job is marked failed (C1).
+func TestServeIsolatesPanickingJob(t *testing.T) {
+	sp := queue.Open(t.TempDir())
+	for i := 0; i < 5; i++ {
+		if _, err := sp.Enqueue(queue.Job{URL: fmt.Sprintf("https://youtu.be/u%d", i), EnqueuedAt: time.Unix(int64(i), 0)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := Serve(fastCfg(sp, 2, func(j queue.Job) int {
+		if j.URL == "https://youtu.be/u2" {
+			panic("boom in a job")
+		}
+		return 0
+	}))
+	if err != nil {
+		t.Fatalf("Serve returned error (daemon should have survived the panic): %v", err)
+	}
+	if p, r, d, f := mustCounts(t, sp); p != 0 || r != 0 || d != 4 || f != 1 {
+		t.Errorf("counts = %d/%d/%d/%d, want 0/0/4/1 (panicker failed, rest done)", p, r, d, f)
+	}
+}
+
+// A persistently-failing ClaimNext must still let the daemon idle-exit, not wedge
+// it (and its exclusive lock) forever (C2). Forced by making pending/ unreadable.
+func TestServeIdleExitsOnPersistentClaimError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 000 does not block root")
+	}
+	sp := queue.Open(t.TempDir())
+	if err := sp.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sp.Enqueue(queue.Job{URL: "https://youtu.be/stuck", EnqueuedAt: time.Unix(1, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	pend := filepath.Join(sp.Root(), "pending")
+	if err := os.Chmod(pend, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(pend, 0o755) // restore so TempDir cleanup can remove it
+
+	done := make(chan error, 1)
+	go func() { done <- Serve(fastCfg(sp, 2, func(queue.Job) int { return 0 })) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Serve returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not idle-exit on a persistent ClaimNext error — daemon wedged")
 	}
 }
 
