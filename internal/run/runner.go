@@ -118,14 +118,61 @@ func Dispatch(o core.Options, stdout, stderr io.Writer) int {
 	}
 }
 
-// runDryRun previews filenames without downloading (ytdl lines 224-235). With
-// the shims absent in production, yt-dlp's own exit code propagates.
+// botCheckSignature marks YouTube's anti-bot challenge in yt-dlp's stderr
+// ("Sign in to confirm you're not a bot"). Matched on the prefix before the
+// apostrophe, which yt-dlp emits as a curly ’ (U+2019), not a straight quote.
+const botCheckSignature = "Sign in to confirm you"
+
+// runDryRun previews filenames without downloading (ytdl lines 224-235). Preview
+// is the one mode that runs yt-dlp with an effectively-simulate extraction (no
+// --no-simulate, no -x), so YouTube can challenge it independently of a download
+// that would succeed. Rather than tee yt-dlp's raw stderr, we capture it and, on
+// failure, print a mediated message (the bot-check gets a specific hint). The
+// printed filenames still stream to stdout; yt-dlp's own exit code propagates.
 func runDryRun(o core.Options, w io.Writer) int {
 	fmt.Fprintf(w, "▸ Anteprima (nessun download) — formato .%s\n", o.Settings.Format)
 	fmt.Fprintf(w, "▸ Destinazione: %s\n\n", o.Settings.OutputDir)
+	var errbuf capBuffer
 	cmd := exec.Command(ytDlp, core.BuildArgs(o)...)
-	cmd.Stdout, cmd.Stderr = w, os.Stderr
-	return runCode(cmd)
+	cmd.Stdout = w
+	cmd.Stderr = &errbuf
+	rc := runCode(cmd)
+	if rc == 0 {
+		// Preserve any notices yt-dlp emitted on a SUCCESSFUL preview (parity with
+		// the old raw tee); only a failure is mediated, to hide the bot-check dump.
+		os.Stderr.Write(errbuf.Bytes())
+	} else {
+		fmt.Fprint(os.Stderr, dryRunErrorMessage(errbuf.Bytes()))
+	}
+	return rc
+}
+
+// dryRunErrorMessage turns captured yt-dlp stderr into a legible preview-failure
+// message. The YouTube anti-bot challenge is recognised and reassures the user
+// that the real download usually still works; any other failure shows its last
+// stderr line rather than the full dump.
+func dryRunErrorMessage(stderr []byte) string {
+	s := string(stderr)
+	if strings.Contains(s, botCheckSignature) || strings.Contains(s, "not a bot") {
+		return "✗ Anteprima non disponibile: YouTube ha chiesto una verifica anti-bot per leggere i soli metadati.\n" +
+			"  Il download vero di solito funziona lo stesso — riprova senza -n.\n"
+	}
+	if last := lastNonEmptyLine(s); last != "" {
+		return fmt.Sprintf("✗ Anteprima non riuscita: %s\n", last)
+	}
+	return "✗ Anteprima non riuscita.\n"
+}
+
+// lastNonEmptyLine returns the last non-blank line of s (yt-dlp's final "ERROR:"
+// line is usually the useful one), trimmed; "" when s has no non-blank line.
+func lastNonEmptyLine(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if t := strings.TrimSpace(lines[i]); t != "" {
+			return t
+		}
+	}
+	return ""
 }
 
 // runVerbose downloads with full yt-dlp output (ytdl lines 256-267). The success
@@ -142,8 +189,8 @@ func runVerbose(o core.Options, w io.Writer) int {
 		fmt.Fprintf(w, "\n✓ Fatto → %s\n", o.Settings.OutputDir)
 	}
 	now := time.Now()
-	recordJob(o, "verbose", rc, success, errbuf.Bytes(), now)
-	maybeNotify(o, true, success, 0) // foreground; verbose has no saved-file count
+	recordJob(o, "verbose", "", rc, success, errbuf.Bytes(), now) // verbose has no saved-file capture → no title
+	maybeNotify(o, true, success, 0)                              // foreground; verbose has no saved-file count
 	return rc
 }
 
@@ -178,7 +225,7 @@ func runDefault(o core.Options, w io.Writer) int {
 	}
 	success := rc == 0 && count > 0
 	now := time.Now()
-	recordJob(o, "default", rc, success, errbuf.Bytes(), now)
+	recordJob(o, "default", titleFromPath(first), rc, success, errbuf.Bytes(), now)
 	maybeNotify(o, true, success, count) // foreground
 	return rc
 }
@@ -254,7 +301,11 @@ func runSilent(o core.Options) int {
 	success := rc == 0 && count > 0
 	now := time.Now()
 
-	recordJob(o, "silent", rc, success, readCapped(errlog, stderrCap), now)
+	// Title from the dedicated before_dl temp file (the "Artist - Track" contract,
+	// core.silentBeforeDL), NOT the saved filename — the latter depends on the
+	// user's name_template, the former does not. Empty on an early failure → the
+	// history falls back to the URL.
+	recordJob(o, "silent", lastLine(title), rc, success, readCapped(errlog, stderrCap), now)
 
 	if o.Settings.BreadcrumbOnFailure {
 		if o.Playlist {
@@ -448,22 +499,39 @@ func readSavedPaths(path string) (first string, count int) {
 	return first, count
 }
 
-// recordJob writes the central log-store record for a completed download and
-// then prunes expired records (U7). Both are best-effort — a logging failure
-// must never change the download's exit code — so errors are dropped. dry-run
-// and the background launcher do not call this (the background child, running
-// silent, records the real job).
-func recordJob(o core.Options, mode string, rc int, success bool, stderr []byte, now time.Time) {
-	logstore.Record(o.Settings.LogDir, logstore.Job{
+// recordJob writes the central log-store record for a completed download —
+// both the per-job .log (failure detail) and a structured history.jsonl line
+// (the durable history that `ytdl history`/`status` read) — then prunes expired
+// records (U7, ADR-0009). All best-effort: a logging failure must never change
+// the download's exit code, so errors are dropped. dry-run and the background
+// launcher do not call this (the background child, running silent, records the
+// real job). title is the resolved "Artist - Track" (empty on failure/verbose),
+// shown title-first in history.
+func recordJob(o core.Options, mode, title string, rc int, success bool, stderr []byte, now time.Time) {
+	j := logstore.Job{
 		URL:     o.URL,
+		Title:   title,
 		Mode:    mode,
 		Format:  o.Settings.Format,
 		RC:      rc,
 		Success: success,
 		Time:    now,
 		Stderr:  stderr,
-	})
+	}
+	logstore.Record(o.Settings.LogDir, j)
+	logstore.Append(o.Settings.LogDir, j)
 	logstore.Prune(o.Settings.LogDir, o.Settings.LogRetentionDays)
+}
+
+// titleFromPath derives a display title from a saved file path: its base name
+// without the extension ("…/Artist - Track.mp3" → "Artist - Track"). An empty
+// path (nothing saved) yields "", so a failure falls back to the URL in history.
+func titleFromPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	base := filepath.Base(p)
+	return strings.TrimSuffix(base, filepath.Ext(base))
 }
 
 // maybeNotify fires a completion banner per config (U6). It is gated by:

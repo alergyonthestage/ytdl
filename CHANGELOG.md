@@ -63,6 +63,41 @@ See [ADR-0007](docs/decisions/0007-cycle2b-queue-daemon.md).
 - Help text: the stale `<titolo>.log` wording is corrected and the new `queue`/
   `status` commands are documented.
 
+Cycle 2C — a UX pass over the CLI surface exposed by 2B-core. Runtime/CLI layer
+only; the yt-dlp argument vector and the golden parity tests stay byte-unchanged.
+See [ADR-0009](docs/decisions/0009-cycle2c-cli-ux.md) and the
+[CLI reference](docs/cli-reference.md).
+
+### Added
+
+- **`ytdl history [--failed] [--limit N]`** — the durable download history, from a
+  new structured `history.jsonl` in the log store: foreground *and* background
+  downloads, newest first, by track title (records now carry the title).
+- **TTY-aware colour** for `queue`/`status`/`history` (honours `NO_COLOR`; off when
+  the output is piped).
+
+### Changed
+
+- **`ytdl queue`** shows only *live* work (pending + running) with an empty-state
+  hint — no more lifetime completed/failed counts.
+- **`ytdl queue --watch`** redraws **in place** (region redraw + spinner) instead of
+  clearing the whole screen, **auto-exits** when the queue drains, and degrades to a
+  single snapshot when the output is piped.
+- **`ytdl status`** reports daemon liveness informationally and shows a **recent,
+  windowed** outcome summary from the log store (which includes foreground
+  downloads); every windowed count states its window ("ultimi N giorni").
+- **`ytdl -n`** (preview) failures are surfaced legibly — YouTube's anti-bot
+  challenge gets a clear hint — instead of dumping raw yt-dlp output.
+- The queue's terminal state (`done/`/`failed/`) is now **pruned by age**
+  (`log_retention_days`), fixing its previously unbounded growth; the durable
+  history lives in the log store.
+
+### Fixed
+
+- History reading tolerates a pathologically long or corrupt line (it no longer
+  loses newer records or blocks pruning), URLs/titles are truncated on rune
+  boundaries (valid UTF-8), and colour never splices into a track title.
+
 ## [2.0.0] — 2026-07-23
 
 A clean break from the Bash `1.x` line: ytdl is now a single compiled Go binary

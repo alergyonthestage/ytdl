@@ -163,7 +163,9 @@ flowchart TD
   final-rescan + next-invocation recovery is simpler and good enough for one user.
 - **launchd LaunchAgent (always-on daemon)** — rejected for now. A real service is
   premature before the GUI; it adds a plist to the installer and an always-running
-  process. Revisit in Cycle 3.
+  process. Revisit in Cycle 3. **Resolved by [ADR-0008](0008-daemon-lifecycle.md):
+  no always-on service — the daemon is long-lived but session-scoped (alive while a
+  GUI client is connected OR the queue has work; exits when both are false).**
 - **A locked/`declare -A`-style index file instead of maildir renames** — rejected.
   Atomic `rename` on one filesystem is the simplest correct primitive; an index
   file reintroduces the locking the spool exists to avoid.

@@ -18,6 +18,7 @@ golden parity reference.
 |---|---|
 | [go-engine.md](go-engine.md) | **As-built Go engine** (Cycle 1): package layout, the parity gate, build/test/release, deliberate divergences, Cycle 2 extension points |
 | [architecture.md](architecture.md) | As-built design of the original Bash script (now the golden reference): execution modes, metadata pipeline, dependencies |
+| [cli-reference.md](cli-reference.md) | **CLI surface reference** (Cycle 2C): design principles, command→action map, output conventions, spool-vs-log-store state model, and how to extend the CLI |
 | [improvements.md](improvements.md) | Findings from the initial analysis, plus the requested evolutions |
 | [distribution.md](distribution.md) | Constraints and design for shipping to non-developer macOS users |
 | [roadmap.md](roadmap.md) | Operational plan, phased, with status |
@@ -41,6 +42,10 @@ golden parity reference.
 | [0003](decisions/0003-engine-language-go.md) | Build the engine as a single Go binary | accepted |
 | [0004](decisions/0004-go-engine-package-layout.md) | Go engine package layout: reusable `internal/` core | accepted |
 | [0005](decisions/0005-macos-floor-and-single-engine.md) | Raise the macOS floor to 10.15; single Go engine, no Python | accepted |
+| [0006](decisions/0006-cycle2a-logs-breadcrumbs-notifications.md) | Cycle 2A: central logs, failure breadcrumbs, completion notifications | accepted |
+| [0007](decisions/0007-cycle2b-queue-daemon.md) | Cycle 2B-core: filesystem queue + on-demand `ytdld` daemon | accepted |
+| [0008](decisions/0008-daemon-lifecycle.md) | Daemon lifecycle: long-lived, session-scoped — no always-on service | accepted |
+| [0009](decisions/0009-cycle2c-cli-ux.md) | Cycle 2C: CLI UX pass (roles, count/history redesign, in-place watch) | accepted |
 
 ## Reading order
 

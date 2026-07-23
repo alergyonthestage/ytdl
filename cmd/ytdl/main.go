@@ -8,16 +8,24 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/alergyonthestage/ytdl/internal/cli"
 	"github.com/alergyonthestage/ytdl/internal/config"
 	"github.com/alergyonthestage/ytdl/internal/core"
 	"github.com/alergyonthestage/ytdl/internal/daemon"
+	"github.com/alergyonthestage/ytdl/internal/logstore"
 	"github.com/alergyonthestage/ytdl/internal/queue"
 	"github.com/alergyonthestage/ytdl/internal/run"
+	"github.com/alergyonthestage/ytdl/internal/term"
 )
+
+// colorStdout reports whether the inspection commands should colour their output
+// (a TTY, NO_COLOR unset). Computed at the edge; the cli renderers stay pure.
+func colorStdout() bool { return term.ColorEnabled(os.Stdout) }
 
 func main() { os.Exit(realMain(os.Args[1:])) }
 
@@ -57,6 +65,8 @@ func realMain(args []string) int {
 		return runQueueCmd(parsed.QueueWatch)
 	case cli.ActionStatus:
 		return runStatusCmd()
+	case cli.ActionHistory:
+		return runHistoryCmd(parsed)
 	}
 
 	// ActionRun. C1: a bad -f flag fails fast (unlike the config file, which
@@ -141,9 +151,10 @@ func runDaemon() int {
 	}
 	settings, _ := resolveWithFlags(config.Partial{})
 	err := daemon.Serve(daemon.Config{
-		Spool:       queue.Open(stateDir),
-		Concurrency: settings.Concurrency,
-		Run:         jobRunner,
+		Spool:         queue.Open(stateDir),
+		Concurrency:   settings.Concurrency,
+		Run:           jobRunner,
+		RetentionDays: settings.LogRetentionDays,
 	})
 	if err != nil && !errors.Is(err, daemon.ErrAlreadyRunning) {
 		return 1
@@ -159,10 +170,11 @@ func jobRunner(j queue.Job) int {
 	return run.Dispatch(o, io.Discard, io.Discard)
 }
 
-// runQueueCmd prints the queue once, or (with --watch) redraws it every second
-// until interrupted. It also resumes a stalled daemon (ADR-0007 §4): if there is
-// queued work but nobody draining it — the residual enqueue-vs-exit race, or a
-// crashed daemon — inspecting the queue starts a fresh one.
+// runQueueCmd prints the live queue once, or (with --watch on a TTY) redraws it
+// in place until the queue drains or the user interrupts. On a non-TTY stdout,
+// --watch degrades to a single snapshot — no ANSI, no loop — so piping stays
+// sane. It resumes a stalled daemon (ADR-0007 §4) and opportunistically prunes
+// the terminal spool + log store on read.
 func runQueueCmd(watch bool) int {
 	stateDir := config.StatePath()
 	if stateDir == "" {
@@ -170,26 +182,104 @@ func runQueueCmd(watch bool) int {
 		return 1
 	}
 	sp := queue.Open(stateDir)
-	if !watch {
-		snap, err := sp.List()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "✗ Impossibile leggere la coda: %v\n", err)
-			return 1
-		}
-		resumeIfStalled(sp, snap)
-		fmt.Print(cli.RenderQueue(snap))
-		return 0
+	settings, _ := resolveWithFlags(config.Partial{})
+	pruneStores(sp, settings)
+
+	if !watch || !term.IsTTY(os.Stdout) {
+		return printQueueOnce(sp)
 	}
-	for {
+	return watchQueue(sp)
+}
+
+// printQueueOnce reads and prints one queue snapshot — the non-watch path and the
+// non-TTY --watch fallback — resuming a stalled daemon.
+func printQueueOnce(sp *queue.Spool) int {
+	snap, err := sp.List()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "✗ Impossibile leggere la coda: %v\n", err)
+		return 1
+	}
+	resumeIfStalled(sp, snap)
+	fmt.Print(term.Colorize(cli.RenderQueue(snap), colorStdout()))
+	return 0
+}
+
+// watchQueue redraws the live queue in place (ADR-0009 §5): it rewrites only its
+// own region — cursor-up + clear-to-end — never clearing the whole screen or
+// polluting scrollback, advancing a spinner for liveness (and rewriting just the
+// spinner line while the queue is unchanged). It auto-exits when the queue drains
+// with a session summary, hides the cursor for the duration, and restores it on
+// every exit path including SIGINT.
+func watchQueue(sp *queue.Spool) int {
+	color := colorStdout()
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt)
+	defer signal.Stop(sig)
+
+	fmt.Print("\033[?25l")       // hide cursor
+	defer fmt.Print("\033[?25h") // restore it on any return
+
+	spin := []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	var lastContent string
+	var lastLines int // total lines drawn last frame (queue + spinner)
+	var baseDone, baseFailed int
+	haveBase, sawWork := false, false
+
+	for frame := 0; ; frame++ {
 		snap, err := sp.List()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "✗ Impossibile leggere la coda: %v\n", err)
+			fmt.Print("\033[?25h")
+			fmt.Fprintf(os.Stderr, "\n✗ Impossibile leggere la coda: %v\n", err)
 			return 1
 		}
 		resumeIfStalled(sp, snap)
-		fmt.Print("\033[H\033[2J") // home + clear screen
-		fmt.Print(cli.RenderQueue(snap))
-		time.Sleep(time.Second)
+		p, r, d, f := snap.Counts()
+		if !haveBase {
+			baseDone, baseFailed, haveBase = d, f, true
+		}
+		if p > 0 || r > 0 {
+			sawWork = true
+		}
+		content := cli.RenderQueue(snap)
+
+		// Auto-exit once the queue has drained: clear the region, print the final
+		// (empty) queue, and — if we actually watched work finish — a session summary.
+		if p == 0 && r == 0 {
+			if lastLines > 0 {
+				fmt.Printf("\033[%dA\033[0J", lastLines)
+			}
+			fmt.Print(term.Colorize(content, color))
+			if sawWork {
+				done, failed := max(0, d-baseDone), max(0, f-baseFailed) // floor: a concurrent prune could shrink the totals
+				fmt.Printf("✓ Coda evasa — in questa sessione: %d %s · %d %s\n",
+					done, cli.Plural(done, "completato", "completati"),
+					failed, cli.Plural(failed, "fallito", "falliti"))
+			}
+			return 0
+		}
+
+		spinnerLine := fmt.Sprintf("  %c aggiornamento · Ctrl-C per uscire\n", spin[frame%len(spin)])
+		switch {
+		case lastLines == 0:
+			fmt.Print(term.Colorize(content, color) + spinnerLine)
+		case content == lastContent:
+			fmt.Print("\033[1A\033[2K" + spinnerLine) // only the spinner changed
+		default:
+			fmt.Printf("\033[%dA\033[0J", lastLines)
+			fmt.Print(term.Colorize(content, color) + spinnerLine)
+		}
+		lastContent = content
+		lastLines = strings.Count(content, "\n") + 1
+
+		select {
+		case <-sig:
+			fmt.Print("\033[?25h\n^C interrotto.\n")
+			return 0
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -204,7 +294,9 @@ func resumeIfStalled(sp *queue.Spool, snap queue.Snapshot) {
 	}
 }
 
-// runStatusCmd prints a one-shot queue + daemon-liveness summary.
+// runStatusCmd prints a one-shot summary: daemon liveness (informational), the
+// live queue, and a recent windowed outcome tally from the log store (which
+// includes foreground downloads, unlike the background-only spool).
 func runStatusCmd() int {
 	stateDir := config.StatePath()
 	if stateDir == "" {
@@ -217,6 +309,61 @@ func runStatusCmd() int {
 		fmt.Fprintf(os.Stderr, "✗ Impossibile leggere la coda: %v\n", err)
 		return 1
 	}
-	fmt.Print(cli.RenderStatus(snap, daemon.IsRunning(sp.LockPath())))
+	settings, _ := resolveWithFlags(config.Partial{})
+	pruneStores(sp, settings)
+	recent := recentSummary(settings.LogDir, settings.LogRetentionDays)
+	fmt.Print(term.Colorize(cli.RenderStatus(snap, daemon.IsRunning(sp.LockPath()), recent, settings.LogRetentionDays), colorStdout()))
 	return 0
+}
+
+// runHistoryCmd prints the durable download history from the log store —
+// foreground and background alike — newest first, within the retention window.
+func runHistoryCmd(p *cli.Parsed) int {
+	settings, _ := resolveWithFlags(config.Partial{})
+	if settings.LogDir == "" {
+		fmt.Fprintln(os.Stderr, "✗ Impossibile individuare lo storico: $HOME non è impostata.")
+		return 1
+	}
+	_ = logstore.Prune(settings.LogDir, settings.LogRetentionDays) // keep the window honest
+	var since time.Time
+	if settings.LogRetentionDays > 0 {
+		since = time.Now().AddDate(0, 0, -settings.LogRetentionDays)
+	}
+	entries, err := logstore.Load(settings.LogDir, logstore.QueryOpts{
+		Since:      since,
+		Limit:      p.HistoryLimit,
+		OnlyFailed: p.HistoryFailed,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "✗ Impossibile leggere lo storico: %v\n", err)
+		return 1
+	}
+	fmt.Print(term.Colorize(cli.RenderHistory(entries, settings.LogRetentionDays), colorStdout()))
+	return 0
+}
+
+// recentSummary tallies success/failure from the log store within the retention
+// window (all-time when retention is keep-forever), for the `status` summary.
+func recentSummary(logDir string, retentionDays int) cli.RecentSummary {
+	var since time.Time
+	if retentionDays > 0 {
+		since = time.Now().AddDate(0, 0, -retentionDays)
+	}
+	entries, _ := logstore.Load(logDir, logstore.QueryOpts{Since: since})
+	var s cli.RecentSummary
+	for _, e := range entries {
+		if e.Success {
+			s.OK++
+		} else {
+			s.Failed++
+		}
+	}
+	return s
+}
+
+// pruneStores opportunistically ages out the terminal spool and the log store on
+// a read path, best-effort — a prune failure must never fail the command.
+func pruneStores(sp *queue.Spool, settings config.Settings) {
+	_ = sp.PruneTerminal(settings.LogRetentionDays)
+	_ = logstore.Prune(settings.LogDir, settings.LogRetentionDays)
 }

@@ -83,10 +83,11 @@ suo, anche se chiudi il Terminale.
 ytdl -b "https://youtube.com/playlist?list=YYYY"
 ```
 
-Attenzione: in questa modalità non vedi né avanzamento né errori. Se un brano
-fallisce, al posto del file audio trovi un file `.log` nella cartella di
-destinazione, con la spiegazione. Per controllare, guarda se ci sono file `.log`
-nella cartella.
+I download in background vengono messi **in coda** ed eseguiti alcuni alla volta,
+così non intasano la connessione. In questa modalità non vedi l'avanzamento nel
+Terminale, ma puoi controllare tutto con i comandi della sezione seguente. Se un
+brano fallisce, oltre alla cronologia trovi anche un file `.log` accanto al punto
+in cui sarebbe finito l'audio, con la spiegazione.
 
 ### Combinare le opzioni
 
@@ -97,6 +98,59 @@ ytdl -p -f flac -o ~/Desktop "https://youtube.com/playlist?list=YYYY"
 ```
 
 Playlist intera, in FLAC, sul Desktop.
+
+## Coda, stato e cronologia
+
+Quando scarichi in background (`-b`), tre comandi ti dicono cosa sta succedendo.
+
+```mermaid
+flowchart LR
+    B["ytdl -b URL"] --> Q["in coda"]
+    Q --> R["in corso"]
+    R --> OK["completato"]
+    R --> KO["fallito<br/>(.log accanto all'audio)"]
+    OK --> H["ytdl history"]
+    KO --> H
+```
+
+**Cosa c'è in coda adesso** — i download in attesa e in corso:
+
+```
+ytdl queue
+```
+
+Aggiungi `--watch` per vederli aggiornare dal vivo: la vista si ridisegna **sul
+posto** (niente muri di testo che si accumulano) e si chiude da sola quando la
+coda è finita. Premi Ctrl-C per uscire prima.
+
+```
+ytdl queue --watch
+```
+
+**Come va in generale** — se il servizio di download è attivo, più un riepilogo
+recente:
+
+```
+ytdl status
+```
+
+**Cosa ho scaricato** — la cronologia, i brani più recenti in cima. A differenza
+della coda, include **anche i download in primo piano**, non solo quelli in
+background:
+
+```
+ytdl history
+```
+
+Solo i falliti, oppure solo gli ultimi N:
+
+```
+ytdl history --failed
+ytdl history --limit 50
+```
+
+Il riepilogo di `status` e la cronologia coprono un periodo (di default gli ultimi
+30 giorni); l'etichetta accanto ai numeri te lo ricorda sempre.
 
 ## Cambiare la cartella di destinazione
 
@@ -160,3 +214,11 @@ ytdl --help
 | `--update` | Aggiorna ytdl e i suoi componenti |
 | `--version` | Mostra le versioni installate |
 | `--help` | Elenco completo delle opzioni |
+
+### Comandi della coda
+
+| Comando | Cosa fa |
+|---|---|
+| `ytdl queue [--watch]` | Download in attesa e in corso (con `--watch` si aggiorna dal vivo e si chiude a coda finita) |
+| `ytdl status` | Stato del servizio di download + riepilogo recente |
+| `ytdl history [--failed] [--limit N]` | Cronologia dei download, anche in primo piano |

@@ -19,8 +19,9 @@ OPZIONI
       --update        Aggiorna ytdl e yt-dlp all'ultima versione
 
 CODA
-  ytdl queue [--watch]   Elenca i download in attesa e in corso (--watch aggiorna)
-  ytdl status            Riepilogo della coda e stato del daemon
+  ytdl queue [--watch]                 Download in attesa e in corso (--watch aggiorna sul posto)
+  ytdl status                          Stato del daemon + riepilogo recente
+  ytdl history [--failed] [--limit N]  Storico dei download (anche in primo piano)
 
 AGGIORNAMENTI
   yt-dlp smette di funzionare quando YouTube cambia qualcosa: succede ogni
@@ -30,7 +31,7 @@ AGGIORNAMENTI
 ERRORI IN -s / -b
   Senza output non vedi i fallimenti: se un download fallisce viene lasciato un
   file .log (col dettaglio) nella cartella di output, accanto all'audio mancante.
-  Stato della coda:  ytdl queue  ·  riepilogo e storico:  ytdl status.
+  Coda:  ytdl queue  ·  storico completo:  ytdl history  ·  riepilogo:  ytdl status.
 
 NB: METTI SEMPRE L'URL TRA VIRGOLETTE. Contiene & che altrimenti la shell
     interpreta come "esegui in background" (es. ...&list=...&index=2).
@@ -65,4 +66,6 @@ const (
 	MsgMissingFormat    = "✗ Manca il formato (argomento di -f)."
 	MsgTooManyArguments = "✗ Troppi argomenti: accetto un solo URL (ho già %q)." // %q = first URL
 	MsgInvalidFormat    = "✗ Formato non valido: %s (ammessi: %s)."              // %s fmt, %s list
+	MsgMissingLimit     = "✗ Manca il numero (argomento di --limit)."
+	MsgInvalidLimit     = "✗ Limite non valido: %s (serve un intero non negativo)." // %s = the offending token
 )

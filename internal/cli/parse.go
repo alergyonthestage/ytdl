@@ -5,10 +5,14 @@ package cli
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/alergyonthestage/ytdl/internal/core"
 )
+
+// DefaultHistoryLimit caps `ytdl history` when no --limit is given.
+const DefaultHistoryLimit = 20
 
 // Action is what the parsed command line asks ytdl to do. Help, Version and
 // Update short-circuit during parsing (like the Bash `exit` inside the loop),
@@ -20,8 +24,9 @@ const (
 	ActionHelp
 	ActionVersion
 	ActionUpdate
-	ActionQueue  // `ytdl queue [--watch]` — inspect the queue
-	ActionStatus // `ytdl status` — queue + daemon summary
+	ActionQueue   // `ytdl queue [--watch]` — inspect the queue
+	ActionStatus  // `ytdl status` — queue + daemon summary
+	ActionHistory // `ytdl history [--failed] [--limit N]` — durable log
 )
 
 // Parsed is the result of parsing. When Action == ActionRun, RunMode, URL and
@@ -35,6 +40,10 @@ type Parsed struct {
 	Format     *string // -f/--format, nil if not given
 	Playlist   bool    // -p/--playlist seen
 	QueueWatch bool    // `queue --watch`: redraw on an interval
+
+	// History fields (valid when Action == ActionHistory).
+	HistoryFailed bool // --failed: only failures
+	HistoryLimit  int  // --limit N: cap the rows (DefaultHistoryLimit if unset)
 }
 
 // ParseError is a user-facing parse failure. Usage requests that the help text
@@ -66,6 +75,8 @@ func Parse(args []string) (*Parsed, error) {
 			return parseQueue(args[1:])
 		case "status":
 			return parseStatus(args[1:])
+		case "history":
+			return parseHistory(args[1:])
 		}
 	}
 
@@ -181,4 +192,30 @@ func parseStatus(rest []string) (*Parsed, error) {
 		return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, rest[0]), Usage: true}
 	}
 	return &Parsed{Action: ActionStatus}, nil
+}
+
+// parseHistory parses `history [--failed] [--limit N]`. --failed filters to
+// failures; --limit caps the rows (a non-negative integer). Unknown options
+// error with usage, like the other subcommands.
+func parseHistory(rest []string) (*Parsed, error) {
+	p := &Parsed{Action: ActionHistory, HistoryLimit: DefaultHistoryLimit}
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case "--failed":
+			p.HistoryFailed = true
+		case "--limit":
+			if i+1 >= len(rest) || rest[i+1] == "" {
+				return nil, &ParseError{Msg: MsgMissingLimit}
+			}
+			n, err := strconv.Atoi(rest[i+1])
+			if err != nil || n < 0 {
+				return nil, &ParseError{Msg: fmt.Sprintf(MsgInvalidLimit, rest[i+1])}
+			}
+			p.HistoryLimit = n
+			i++
+		default:
+			return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, rest[i]), Usage: true}
+		}
+	}
+	return p, nil
 }

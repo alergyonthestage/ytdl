@@ -216,6 +216,48 @@ func (s *Spool) RequeueRunning() (int, error) {
 	return n, firstErr
 }
 
+// PruneTerminal removes done/ and failed/ job files older than maxAgeDays (by
+// mtime), bounding the spool's terminal growth. The durable job history lives in
+// the log store, so terminal spool files are only recent operational state
+// (ADR-0009); this is the fix for their previously-unbounded accumulation.
+// maxAgeDays <= 0 keeps everything (no-op), matching the log store's
+// log_retention_days semantics. Best-effort: a vanished file or a per-file remove
+// error does not abort the sweep; the first error (if any) is returned.
+func (s *Spool) PruneTerminal(maxAgeDays int) error {
+	if maxAgeDays <= 0 {
+		return nil
+	}
+	cutoff := time.Now().AddDate(0, 0, -maxAgeDays)
+	var firstErr error
+	for _, st := range []State{Done, Failed} {
+		des, err := os.ReadDir(s.dir(st))
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		for _, de := range des {
+			if de.IsDir() || !strings.HasSuffix(de.Name(), ".json") {
+				continue
+			}
+			info, err := de.Info()
+			if err != nil {
+				continue // vanished between ReadDir and Info; ignore
+			}
+			if info.ModTime().Before(cutoff) {
+				if err := os.Remove(filepath.Join(s.dir(st), de.Name())); err != nil && firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+	}
+	return firstErr
+}
+
 // Entry is one job as seen by List: its id, state, and parsed spec. Job is the
 // zero value if the file could not be read (surfaced, never fatal).
 type Entry struct {
