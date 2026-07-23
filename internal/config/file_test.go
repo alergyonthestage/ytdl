@@ -184,6 +184,32 @@ func TestLoadFileInvalidValueOnKnownKeyWarnsAndFallsThrough(t *testing.T) {
 	}
 }
 
+// An empty output_dir value must warn and fall through to the default, not
+// override it with "" (which apply() would otherwise honour).
+func TestLoadFileEmptyOutputDirWarnsAndFallsThrough(t *testing.T) {
+	pinHome(t)
+	path := writeConfig(t, "output_dir = \nformat = flac\n")
+	p, warns, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 1 {
+		t.Fatalf("want 1 empty-output_dir warning, got %d: %v", len(warns), warns)
+	}
+	if p.OutputDir != nil {
+		t.Errorf("empty output_dir was kept: %q", *p.OutputDir)
+	}
+	// End-to-end: the empty value falls through to the built-in default dir.
+	got, _ := Resolve(Partial{}, Partial{}, p, Env{})
+	if got.OutputDir != Defaults().OutputDir {
+		t.Errorf("resolved OutputDir = %q, want default %q", got.OutputDir, Defaults().OutputDir)
+	}
+	// The later key must still be parsed.
+	if p.Format == nil || *p.Format != "flac" {
+		t.Errorf("key after empty output_dir was dropped: %v", p.Format)
+	}
+}
+
 // A raw value larger than bufio.Scanner's default 64 KiB token must still parse
 // (the buffer is widened), and must not discard later keys.
 func TestLoadFileLargeValue(t *testing.T) {

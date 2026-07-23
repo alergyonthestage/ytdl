@@ -43,10 +43,15 @@ type ParseError struct {
 func (e *ParseError) Error() string { return e.Msg }
 
 // Parse walks args left-to-right exactly like the Bash parser: -o/-f consume the
-// next token (error if absent); -h/-V/--update short-circuit immediately; `--`
-// takes the next single token as the URL and stops; an unknown -flag errors; a
+// next token (error if absent OR empty); -h/-V/--update short-circuit immediately;
+// `--` takes the next single token as the URL and stops; an unknown -flag errors; a
 // positional is the URL. Post-URL flags still parse. C3: a second positional is
 // rejected rather than silently overwriting the first.
+//
+// An empty argument to -o/-f is rejected exactly like a missing one, matching the
+// Bash `${2:?msg}` (colon) form, which fires on both "unset" and "null" — so
+// `ytdl -o "" URL` (e.g. an unset shell variable) fails fast with exit 1 rather
+// than silently resolving an empty output dir.
 func Parse(args []string) (*Parsed, error) {
 	p := &Parsed{}
 	var dry, background, verbose, silent, haveURL bool
@@ -56,14 +61,14 @@ func Parse(args []string) (*Parsed, error) {
 		a := args[i]
 		switch a {
 		case "-o", "--output":
-			if i+1 >= len(args) {
+			if i+1 >= len(args) || args[i+1] == "" {
 				return nil, &ParseError{Msg: MsgMissingOutputDir}
 			}
 			v := args[i+1]
 			p.OutputDir = &v
 			i += 2
 		case "-f", "--format":
-			if i+1 >= len(args) {
+			if i+1 >= len(args) || args[i+1] == "" {
 				return nil, &ParseError{Msg: MsgMissingFormat}
 			}
 			v := args[i+1]

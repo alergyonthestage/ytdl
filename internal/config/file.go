@@ -86,6 +86,12 @@ func LoadFile(path string) (Partial, []Warning, error) {
 func assign(p *Partial, key, value string, line int) *Warning {
 	switch key {
 	case "output_dir":
+		// An empty value (e.g. `output_dir =`) must not win over the built-in
+		// default: a non-nil *string, even pointing at "", would override it in
+		// apply(). Warn and ignore, mirroring the other keys' validation.
+		if value == "" {
+			return &Warning{Line: line, Msg: "empty output_dir; ignoring"}
+		}
 		v := expandHome(value)
 		p.OutputDir = &v
 	case "format":
