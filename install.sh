@@ -136,6 +136,17 @@ verify_checksum() {
   ok "Checksum verified ($name)"
 }
 
+# Our own release assets must carry a checksum entry: a name missing from
+# SHA2-256SUMS is a release.yml packaging bug, so hard-fail rather than fall
+# through verify_checksum's tolerant warn-and-skip (which is correct only for the
+# unpinned upstream yt-dlp release, whose SHA2-256SUMS we do not control).
+require_own_checksum() {
+  local name="$1" sums="$2"
+  awk -v n="$name" '$2 == n {found = 1} END {exit found ? 0 : 1}' "$sums" || fail \
+    "The release is missing a checksum for $name — refusing to install." \
+    "This is a packaging error in the ytdl release. Please report it."
+}
+
 # Extract a single named binary out of a downloaded zip, wherever it sits.
 extract_binary() {
   local zip="$1" name="$2" dest="$3" workdir found
@@ -235,12 +246,9 @@ install_ytdl() {
   download "$RELEASE_BASE/$asset" "$tmp"
   download "$RELEASE_BASE/SHA2-256SUMS" "$sums"
 
-  # Unlike yt-dlp (an unpinned upstream release), this is our own asset: a name
-  # missing from SHA2-256SUMS is a release.yml packaging bug, so hard-fail rather
-  # than fall through verify_checksum's tolerant warn-and-skip.
-  awk -v n="$asset" '$2 == n {found = 1} END {exit found ? 0 : 1}' "$sums" || fail \
-    "The release is missing a checksum for $asset — refusing to install." \
-    "This is a packaging error in the ytdl release. Please report it."
+  # This is our own asset (unlike the unpinned upstream yt-dlp): a missing
+  # checksum entry is a packaging bug, so hard-fail instead of warn-and-skip.
+  require_own_checksum "$asset" "$sums"
   verify_checksum "$tmp" "$asset" "$sums"
 
   # Replacing a running binary via rename is safe on macOS: the running process

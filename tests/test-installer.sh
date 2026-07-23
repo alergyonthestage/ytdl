@@ -134,5 +134,22 @@ printf '%s  some-other-file\n' "$real_hash" > "$sums"
 verify_checksum "$payload" "yt-dlp_macos" "$sums" >/dev/null 2>&1
 check "unlisted file warns but continues" "0" "$?"
 
+# ──────────────────────────────────────────────────────────────────
+#  Own-asset checksum hard-fail (install_ytdl)
+# ──────────────────────────────────────────────────────────────────
+# Our own ytdl binary is not upstream's unpinned asset: a missing checksum entry
+# must hard-fail, the opposite of verify_checksum's tolerant warn-and-continue.
+printf '\nOwn-asset checksum hard-fail\n'
+
+printf '%s  ytdl_macos_arm64\n' "$real_hash" > "$sums"
+require_own_checksum "ytdl_macos_arm64" "$sums" >/dev/null 2>&1
+check "present own-asset checksum passes" "0" "$?"
+
+# A name missing from SHA2-256SUMS is a packaging bug — require_own_checksum
+# calls fail (which exits), so run it in a subshell to capture the code.
+printf '%s  ytdl_macos_amd64\n' "$real_hash" > "$sums"
+( require_own_checksum "ytdl_macos_arm64" "$sums" >/dev/null 2>&1 )
+check "missing own-asset checksum hard-fails" "1" "$?"
+
 printf '\n%d passed, %d failed\n\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
