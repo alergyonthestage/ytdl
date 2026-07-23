@@ -9,7 +9,8 @@ out to yt-dlp/ffmpeg; the installer stays Bash and Python is not adopted. See
 [ADR-0003](decisions/0003-engine-language-go.md) for the rationale, and
 [go-engine.md](go-engine.md) for the as-built engine. The confirmed sequence is
 **foundations → backend integrations → robustness → GUI**, with the GUI last.
-**Cycle 1 (foundations, phase 3) is done**; next is Cycle 2 (backend, phase 4).
+**Cycle 1 (foundations, phase 3) is done and shipped as v2.0.0 (2026-07-23)**;
+next is Cycle 2 (backend, phase 4).
 
 ```mermaid
 flowchart LR
@@ -48,14 +49,16 @@ flowchart LR
 Documentation lives in [docs/](README.md); user-facing install instructions are
 in the top-level [README](../README.md).
 
-## Phase 1 — Distribution — `in progress` — **immediate priority**
+## Phase 1 — Distribution — `done`
 
 Goal: a user with no developer tooling installs `ytdl` by pasting one line, on
-any macOS from 10.13 up, and can keep it working over time.
+any macOS from 10.15 up, and can keep it working over time.
 
-Status: published and working. The one-liner installs cleanly on current macOS
-(Apple Silicon, verified on hardware). Two things remain before calling it done:
-a real end-to-end download, and a test of the legacy path on an old Intel Mac.
+Status: **done.** With **v2.0.0 released (2026-07-23)** the compiled-binary path is
+verified end to end on real hardware (Apple Silicon): one-liner install,
+checksum-verified binary, Gatekeeper launch, `ytdl --version`, and a real tagged
+download all confirmed. The legacy Intel/Python path was dropped by
+[ADR-0005](decisions/0005-macos-floor-and-single-engine.md).
 
 | # | Item | Status | Notes |
 |---|---|---|---|
@@ -69,7 +72,7 @@ a real end-to-end download, and a test of the legacy path on an old Intel Mac.
 | 1.8 | Guided path for macOS 10.13–10.14 (python.org 3.13) | done | Aborts with an explanation below 10.13 |
 | 1.9 | `ytdl --update` (updates yt-dlp **and** the script) | done | Re-runs the installer, single provisioning path ([U2](improvements.md)) |
 | 1.10 | Public GitHub repo, first release, documented one-liner | done | Published at `alergyonthestage/ytdl`; one-liner install confirmed working |
-| 1.11 | Real-hardware testing | in progress | Modern path verified on Apple Silicon (below); legacy path still pending |
+| 1.11 | Real-hardware testing | done | Compiled-binary path verified end to end on Apple Silicon at v2.0.0 (below); legacy path dropped (ADR-0005) |
 | 1.12 | Licence (PolyForm Strict 1.0.0) | done | Use permitted, redistribution and derivatives are not |
 | 1.13 | Italian user guides (install + usage) | done | [installazione](guida-installazione.md), [uso](guida-uso.md) |
 
@@ -83,36 +86,27 @@ a real end-to-end download, and a test of the legacy path on an old Intel Mac.
 **Definition of done:** a tester who has never opened Terminal completes the
 install unaided and downloads a track.
 
-### 1.11 — what is verified, what remains
+### 1.11 — hardware verification (closed at v2.0.0, 2026-07-23)
 
-**Verified on real hardware (2026-07-22, MacBook Pro, macOS 15.6, Apple Silicon):**
-the full modern path end to end — checksum verification, ffmpeg/ffprobe download
-and extraction from the martin-riedl arm64 zips, the signed ffmpeg actually
-running, PATH written to `.zprofile` and `.bash_profile`, and the final
-`ytdl --version` / `yt-dlp` / `ffmpeg` checks all passing.
+An earlier run (2026-07-22, macOS 15.6, Apple Silicon) verified the yt-dlp/ffmpeg
+provisioning end to end, but it predated the compiled-binary install path: the
+installer then fetched the Bash script, and `install_ytdl` — download the
+cross-compiled Go binary, hard-fail on a missing checksum, replace in place —
+landed ~6 h later (a gap surfaced by the Cycle 1 consolidation review).
 
-> **Scope caveat (Cycle 1 consolidation review, 2026-07-23):** that hardware run
-> predates the compiled-binary install path. At the time it was recorded the
-> installer still fetched the Bash `ytdl` script directly; the `install_ytdl`
-> function — which downloads the cross-compiled Go binary, hard-fails on a missing
-> checksum, and replaces the binary in place — landed ~6 hours later. So the
-> yt-dlp/ffmpeg provisioning is hardware-verified, but **`install_ytdl` running
-> against a real GitHub Release has not yet been exercised on a Mac**, including
-> whether the ad-hoc-signed (Go-linker, not `codesign`) cross-compiled binary
-> launches under Gatekeeper/AMFI. Closing this — run `install.sh` end to end
-> against a real (or pre-release) tag on an actual Mac — is the blocker to clear
-> before tagging `v2.0.0`. The release *mechanics* (asset names, ldflags version
-> wiring, checksum format, `--latest`/trigger/permissions, darwin cross-compile)
-> were statically verified in the same review and check out.
+**Closed at v2.0.0 (2026-07-23).** On Apple Silicon against the real release:
+`install.sh` fetched and checksum-verified `ytdl_macos_arm64`, the ad-hoc-signed
+(Go-linker, not `codesign`) binary **launched under Gatekeeper**, `ytdl --version`
+printed the tag, and a real "paste a URL, get a tagged file" download succeeded —
+the true definition of done, now met. The release mechanics (asset names, ldflags
+version wiring, checksum format, `--latest`/trigger/permissions, darwin
+cross-compile) were verified in the consolidation review that preceded the tag.
 
 **The legacy path is no longer a gap.** macOS 10.13–10.14 (Intel + python.org
 Python 3.13 + zipimport yt-dlp) was only ever checked on paper; rather than close
 that gap on old hardware, [ADR-0005](decisions/0005-macos-floor-and-single-engine.md)
 **drops** the legacy path (the Go engine needs 10.15+). No old-Intel-Mac testing is
 required.
-
-**A real download** has not been run yet either — installation succeeded, but the
-end-to-end "paste a URL, get a tagged file" test is the true definition of done.
 
 ### Lesson learned — the raw CDN cache
 
@@ -123,6 +117,19 @@ URL (`.../<sha>/install.sh`) bypasses it. `git ls-remote` and `codeload` are
 authoritative for what GitHub actually holds. Not worth engineering around —
 `--update` runs rarely and the window is minutes — but worth remembering when a
 fresh push appears not to have taken effect.
+
+### Lesson learned — the release workflow must reach the default branch first
+
+At v2.0.0 the tags were pushed **before** the branch was merged to `main`, so
+`release.yml` had never existed on the default branch. GitHub had not registered
+it (`/actions/workflows` → `total_count: 0`, zero runs), so the `v2.0.0` /
+`v2.0.0-rc1` tag pushes triggered nothing — no release, no assets, and
+`install.sh` correctly failed with a 404 on `releases/latest/download/…`. A tag
+push *can* run a workflow from a non-default-branch commit, but the workflow is
+only activated once it has reached the default branch. **Order that matters:**
+merge to `main` (registers the workflows; CI runs) → push a pre-release tag →
+smoke-test the install → tag the real version. The burned tags had to be deleted
+and recreated after the merge, since an already-fired tag push does not retrigger.
 
 ## Phase 2 — Live Bash fixes — `planned` (parallel, optional)
 
@@ -160,7 +167,8 @@ without regressions. This is "foundations" in the confirmed sequence.
 argv parity against the Bash `ytdl`; CI (`.github/workflows/`) and the single-path
 installer per [ADR-0005](decisions/0005-macos-floor-and-single-engine.md). Designed in
 [design-cycle1-core.md](design-cycle1-core.md) + [design-cycle1-remaining.md](design-cycle1-remaining.md).
-The first release tag `v2.0.0` triggers `release.yml`.
+**Released as v2.0.0 (2026-07-23)** after a consolidation review; `release.yml`
+cross-compiles and publishes the macOS binaries + `SHA2-256SUMS`.
 
 Useful config settings — the full list lives in [improvements.md](improvements.md#u4)
 (output dir, format, name template, background-by-default, concurrency, notify,
@@ -282,15 +290,25 @@ flowchart TD
 **Done:** the Go `ytdl` reproduces the Bash tool's behaviour byte-for-byte (goldens
 green + end-to-end argv checks), reads the config file, and installs through the
 updated installer. The crown-jewel metadata pipeline is pinned by the golden tests.
-**Not yet shipped:** the branch is unpushed (pushed from host); tagging `v2.0.0`
-triggers the release and makes the installer's `releases/latest` URLs resolve.
+
+**Consolidation & release (2026-07-23).** A pre-release adversarial review (3
+reviewers over parity/config, runtime, release/CI/installer) found and fixed, on
+branch `fix/cycle1/consolidation` (merged to `main`): an empty-`-o`/`-f` exit-code
+parity gap, the signal-death exit code (128+signal), an empty-`output_dir` config
+hole, plus CI hardening (darwin cross-compile + `-race`), a supported Go toolchain,
+the yt-dlp quarantine strip, and a test for the installer's checksum hard-fail.
+Deferred as non-regressions / Cycle-2: the `.log` collision (parity-inherited →
+central log store) and assorted minors. **Shipped as v2.0.0** — merged to `main`,
+CI green on GitHub, `release.yml` published the binaries, and the compiled-binary
+install + a real download are verified on Apple Silicon (see 1.11).
 
 ### Cycle 2 — Backend integrations (phase 4 + phase 5 hardening)
 
 - **Scope:** central persistent logs + retention; failure breadcrumb by hash(URL)
   + auto-cleanup; toggleable notifications; queue + `ytdld` daemon (spool, atomic
   transitions) + bounded concurrency + `status`/`cancel`/`retry`; hardening + tests.
-- **Entry:** Cycle 1 done (Go core + config exist).
+- **Entry:** Cycle 1 done **and shipped as v2.0.0**; base Cycle 2 off `main`
+  (branch `feat/backend/cycle2`, per git practice).
 - **Done when:** queued/background downloads run under a concurrency cap with
   inspectable status; logs persist centrally and auto-clean; notifications fire per
   config; test suite green.

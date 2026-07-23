@@ -3,7 +3,7 @@
 Notable changes to ytdl. The format follows [Keep a Changelog](https://keepachangelog.com/),
 and versions follow [Semantic Versioning](https://semver.org/).
 
-## [2.0.0] — unreleased
+## [2.0.0] — 2026-07-23
 
 A clean break from the Bash `1.x` line: ytdl is now a single compiled Go binary
 (one engine, thin front-ends), shipped through the same installer. Behaviour is at
@@ -32,6 +32,17 @@ parity with the Bash tool for valid inputs, verified by golden tests.
   of the raw Bash script.
 - **Minimum macOS raised to 10.15 Catalina**; the installer collapses to a single
   provisioning path ([ADR-0005](docs/decisions/0005-macos-floor-and-single-engine.md)).
+
+### Fixed
+
+- **Empty `-o`/`-f` argument fails fast** (exit 1), matching the Bash `${2:?}`
+  guard, instead of silently accepting an empty output dir / format.
+- **A signal-killed yt-dlp/ffmpeg now surfaces the shell's `128+signal` exit code**
+  (e.g. 137 for an OOM-kill) rather than a generic `1`.
+- An empty `output_dir` line in the config file now warns and falls through to the
+  default instead of overriding it with an empty path.
+- The installer strips the quarantine attribute from `yt-dlp` too, consistent with
+  `ffmpeg` and `ytdl`.
 
 ### Removed
 
