@@ -60,7 +60,7 @@ func TestRealMainStatusNoDaemon(t *testing.T) {
 	if rc != 0 {
 		t.Errorf("rc = %d, want 0", rc)
 	}
-	if !strings.Contains(out, "non attivo") {
+	if !strings.Contains(out, "inattivo") {
 		t.Errorf("status output should report the daemon as not running:\n%s", out)
 	}
 }

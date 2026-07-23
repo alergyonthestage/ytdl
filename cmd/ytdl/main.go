@@ -15,6 +15,7 @@ import (
 	"github.com/alergyonthestage/ytdl/internal/config"
 	"github.com/alergyonthestage/ytdl/internal/core"
 	"github.com/alergyonthestage/ytdl/internal/daemon"
+	"github.com/alergyonthestage/ytdl/internal/logstore"
 	"github.com/alergyonthestage/ytdl/internal/queue"
 	"github.com/alergyonthestage/ytdl/internal/run"
 )
@@ -205,7 +206,9 @@ func resumeIfStalled(sp *queue.Spool, snap queue.Snapshot) {
 	}
 }
 
-// runStatusCmd prints a one-shot queue + daemon-liveness summary.
+// runStatusCmd prints a one-shot summary: daemon liveness (informational), the
+// live queue, and a recent windowed outcome tally from the log store (which
+// includes foreground downloads, unlike the background-only spool).
 func runStatusCmd() int {
 	stateDir := config.StatePath()
 	if stateDir == "" {
@@ -218,6 +221,35 @@ func runStatusCmd() int {
 		fmt.Fprintf(os.Stderr, "✗ Impossibile leggere la coda: %v\n", err)
 		return 1
 	}
-	fmt.Print(cli.RenderStatus(snap, daemon.IsRunning(sp.LockPath())))
+	settings, _ := resolveWithFlags(config.Partial{})
+	pruneStores(sp, settings)
+	recent := recentSummary(settings.LogDir, settings.LogRetentionDays)
+	fmt.Print(cli.RenderStatus(snap, daemon.IsRunning(sp.LockPath()), recent, settings.LogRetentionDays))
 	return 0
+}
+
+// recentSummary tallies success/failure from the log store within the retention
+// window (all-time when retention is keep-forever), for the `status` summary.
+func recentSummary(logDir string, retentionDays int) cli.RecentSummary {
+	var since time.Time
+	if retentionDays > 0 {
+		since = time.Now().AddDate(0, 0, -retentionDays)
+	}
+	entries, _ := logstore.Load(logDir, logstore.QueryOpts{Since: since})
+	var s cli.RecentSummary
+	for _, e := range entries {
+		if e.Success {
+			s.OK++
+		} else {
+			s.Failed++
+		}
+	}
+	return s
+}
+
+// pruneStores opportunistically ages out the terminal spool and the log store on
+// a read path, best-effort — a prune failure must never fail the command.
+func pruneStores(sp *queue.Spool, settings config.Settings) {
+	_ = sp.PruneTerminal(settings.LogRetentionDays)
+	_ = logstore.Prune(settings.LogDir, settings.LogRetentionDays)
 }
