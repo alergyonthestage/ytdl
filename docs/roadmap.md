@@ -12,8 +12,10 @@ out to yt-dlp/ffmpeg; the installer stays Bash and Python is not adopted. See
 **Cycle 1 (foundations, phase 3) is done and shipped as v2.0.0 (2026-07-23)**;
 **Cycle 2A (backend logs + notifications, phase 4) is done and merged to `main`
 (2026-07-23; release pending)**; **Cycle 2B-core (queue + on-demand `ytdld` daemon)
-is done and merged to `main` (2026-07-23; release pending)**; next is Cycle 2B-plus
-(`cancel`/`retry` + phase-5 hardening).
+is done and merged to `main` (2026-07-23; release pending)**; **Cycle 2C (CLI UX
+pass — roles, count/history redesign, in-place `--watch`) is done and merged to
+`main` (2026-07-23; release pending)**; next is Cycle 2B-plus (`cancel`/`retry` +
+phase-5 hardening) and Cycle 3 (GUI, phase 6).
 
 ```mermaid
 flowchart LR
@@ -190,7 +192,7 @@ Cycle 2A (logs + notifications, done) and Cycle 2B (queue + daemon, planned).
 | 4.4 | System notification on completion, toggleable (`notify`, `notify_on`, …) | done (2A) | U6 |
 | 4.5 | Real queue + daemon (`ytdld`): filesystem spool with atomic state transitions | done (2B-core) | U5 |
 | 4.6 | Bounded concurrency (default cap 3; `unlimited` allowed but discouraged) | done (2B-core) | U5 |
-| 4.7 | Job status inspection: `ytdl queue [--watch]`, `status` (done 2B-core); `cancel`, `retry` (2B-plus) | partial | U5 |
+| 4.7 | Job inspection: `queue [--watch]`, `status`, `history`, in-place watch + count/history redesign (done 2B-core + 2C); `cancel`, `retry` (2B-plus) | partial | U5 |
 
 **Cycle 2A (done, merged to `main` 2026-07-23):** `internal/logstore`
 (central store + retention + breadcrumb + per-item playlist reconcile) and
@@ -371,8 +373,13 @@ daemon logging/diagnostics seam, and removing the now-unused `core.ReExecArgs` +
 - **Done when:** failed jobs can be retried and pending/running jobs cancelled from
   the CLI; hung/erroring downloads are bounded and surfaced; test suite green.
 
-**Cycle 2C — CLI UX pass — planned.** A dedicated polish of the command-line
-surface exposed by Cycle 2B-core, driven by real-use feedback (2026-07-23). Scope:
+**Cycle 2C — CLI UX pass — done, merged to `main` (2026-07-23).** A dedicated
+polish of the command-line surface exposed by Cycle 2B-core, driven by real-use
+feedback. Built as `internal/term` + the log-store `history.jsonl`/`Load` read-API
++ `queue.PruneTerminal`, with the `queue`/`status` redesign, the new `history`
+subcommand, and the in-place `--watch`; adversarially reviewed (3 reviewers; 1
+critical + 6 warnings, all real ones fixed). Parity preserved
+([ADR-0009](decisions/0009-cycle2c-cli-ux.md)). Release pending. Scope delivered:
 (1) `queue --watch` redraws its region **in place** instead of clearing the whole
 screen (which wiped the terminal and spammed scrollback); (2) the completion count
 is redesigned — `queue` shows only **live** work (pending/running), `status` shows
