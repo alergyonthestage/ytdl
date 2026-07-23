@@ -7,10 +7,17 @@
 package notify
 
 import (
+	"context"
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
+
+// osaTimeout bounds a single osascript call so a wedged notification can never
+// hang the caller — notably the detached background child, which runs unattended
+// under Setsid with no supervisor.
+const osaTimeout = 10 * time.Second
 
 // Notification is one completion event to surface.
 type Notification struct {
@@ -42,9 +49,12 @@ func (NopNotifier) Notify(Notification) {}
 // OsaNotifier delivers via `osascript -e 'display notification ...'`.
 type OsaNotifier struct{}
 
-// Notify implements Notifier, ignoring any osascript failure (best-effort).
+// Notify implements Notifier, ignoring any osascript failure (best-effort) and
+// bounding the call with a timeout so it can never hang the caller.
 func (OsaNotifier) Notify(n Notification) {
-	_ = exec.Command("osascript", "-e", osascript(n)).Run()
+	ctx, cancel := context.WithTimeout(context.Background(), osaTimeout)
+	defer cancel()
+	_ = exec.CommandContext(ctx, "osascript", "-e", osascript(n)).Run()
 }
 
 // osascript builds the AppleScript for n. Kept separate and pure so it is unit
@@ -58,8 +68,18 @@ func osascript(n Notification) string {
 }
 
 // escapeAS escapes a string for an AppleScript double-quoted literal: backslash
-// and double-quote are escaped; CR/LF become spaces so a multi-line yt-dlp
-// message cannot break the single-line -e script.
+// and double-quote are escaped; every line separator AppleScript recognises
+// (LF, CR, and the Unicode U+2028/U+2029) becomes a space, so a multi-line
+// value can never break the single-line -e script. Today only fixed strings
+// reach here, but this is the injection-defense seam for when a track title or
+// URL does (single-pass NewReplacer, so no double-escaping).
 func escapeAS(s string) string {
-	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", " ", "\r", " ").Replace(s)
+	return strings.NewReplacer(
+		`\`, `\\`,
+		`"`, `\"`,
+		"\n", " ",
+		"\r", " ",
+		"\u2028", " ", // U+2028 line separator
+		"\u2029", " ", // U+2029 paragraph separator
+	).Replace(s)
 }

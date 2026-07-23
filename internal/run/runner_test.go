@@ -305,6 +305,47 @@ func TestNotifyGating(t *testing.T) {
 		}
 	})
 
+	// notify_on=failure DOES fire on a real failure.
+	t.Run("notify_on=failure fires on failure", func(t *testing.T) {
+		fn := &fakeNotifier{}
+		withNotifier(t, fn)
+		t.Setenv("YTDLP_FAKE_NLINES", "0")
+		t.Setenv("YTDLP_FAKE_RC", "1")
+		o := runOptions(t, core.ModeSilent, out)
+		o.Settings.NotifyOn = "failure"
+		Dispatch(o, &bytes.Buffer{}, &bytes.Buffer{})
+		if len(fn.calls) != 1 || fn.calls[0].Success {
+			t.Fatalf("want one failure notification, got %+v", fn.calls)
+		}
+	})
+
+	// notify_on=success suppresses a failure notification (the mirror gate).
+	t.Run("notify_on=success skips failure", func(t *testing.T) {
+		fn := &fakeNotifier{}
+		withNotifier(t, fn)
+		t.Setenv("YTDLP_FAKE_NLINES", "0")
+		t.Setenv("YTDLP_FAKE_RC", "1")
+		o := runOptions(t, core.ModeSilent, out)
+		o.Settings.NotifyOn = "success"
+		Dispatch(o, &bytes.Buffer{}, &bytes.Buffer{})
+		if len(fn.calls) != 0 {
+			t.Errorf("failure should not notify with notify_on=success: %+v", fn.calls)
+		}
+	})
+
+	// Verbose (foreground) notifies when notify_foreground is on.
+	t.Run("verbose foreground notifies when enabled", func(t *testing.T) {
+		fn := &fakeNotifier{}
+		withNotifier(t, fn)
+		t.Setenv("YTDLP_FAKE_RC", "0")
+		o := runOptions(t, core.ModeVerbose, out)
+		o.Settings.NotifyForeground = true
+		Dispatch(o, &bytes.Buffer{}, &bytes.Buffer{})
+		if len(fn.calls) != 1 || !fn.calls[0].Success {
+			t.Errorf("verbose with notify_foreground should fire one success banner: %+v", fn.calls)
+		}
+	})
+
 	// Foreground default mode does not notify unless notify_foreground is on.
 	t.Run("foreground gated by notify_foreground", func(t *testing.T) {
 		t.Setenv("YTDLP_FAKE_NLINES", "1")

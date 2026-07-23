@@ -173,11 +173,22 @@ func TestStatePathXDGWins(t *testing.T) {
 
 func TestNotifyOnValidationFallsThrough(t *testing.T) {
 	t.Setenv("HOME", "/pinned-home")
-	// An invalid notify_on in the file falls through to the default.
-	file := Partial{NotifyOn: nil}
-	got, warns := Resolve(Partial{}, Partial{}, file, Env{})
-	if len(warns) != 0 {
-		t.Fatalf("unexpected warnings: %v", warns)
+	// End-to-end: an invalid notify_on in the config FILE is warned, dropped to
+	// nil, and falls through Resolve to the built-in default (not kept as "").
+	path := writeConfig(t, "notify_on = sometimes\n")
+	file, warns, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 1 {
+		t.Fatalf("want 1 invalid-notify_on warning, got %d: %v", len(warns), warns)
+	}
+	if file.NotifyOn != nil {
+		t.Fatalf("invalid notify_on was kept: %q", *file.NotifyOn)
+	}
+	got, rwarns := Resolve(Partial{}, Partial{}, file, Env{})
+	if len(rwarns) != 0 {
+		t.Fatalf("unexpected resolve warnings: %v", rwarns)
 	}
 	if got.NotifyOn != DefaultNotifyOn {
 		t.Errorf("NotifyOn = %q, want default %q", got.NotifyOn, DefaultNotifyOn)

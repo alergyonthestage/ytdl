@@ -27,6 +27,18 @@ func TestEscapeAS(t *testing.T) {
 	if !strings.Contains(got, `he said \"hi\" path\\x`) {
 		t.Errorf("escaping wrong: %q", got)
 	}
+
+	// Every recognised line separator (CR, LF, U+2028, U+2029) is flattened, so
+	// none can terminate the single-line AppleScript literal.
+	sep := osascript(Notification{Title: "ytdl", Body: "a\rb\nc\u2028d\u2029e"})
+	for _, bad := range []string{"\r", "\n", "\u2028", "\u2029"} {
+		if strings.Contains(sep, bad) {
+			t.Errorf("separator %q not flattened: %q", bad, sep)
+		}
+	}
+	if !strings.Contains(sep, "a b c d e") {
+		t.Errorf("separators not turned into spaces: %q", sep)
+	}
 }
 
 func TestDefaultPlatform(t *testing.T) {
