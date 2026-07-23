@@ -61,6 +61,49 @@ func waitFor(t *testing.T, cond func() bool, timeout time.Duration, what string)
 	t.Fatalf("timeout waiting for %s", what)
 }
 
+// The GUI must ship as one self-contained page: no CDN, no external stylesheet
+// or script, nothing to provision. Anything else would add a runtime dependency
+// the installer does not satisfy (ADR-0003) and break offline use.
+func TestIndexIsSelfContained(t *testing.T) {
+	srv, _, _ := newTestServer(t)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	body := string(raw)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if !strings.Contains(body, "<title>ytdl</title>") {
+		t.Error("index does not look like the GUI page")
+	}
+	for _, bad := range []string{`src="http`, `href="http`, `src='http`, `@import`, `<script src=`, `<link rel="stylesheet"`} {
+		if strings.Contains(body, bad) {
+			t.Errorf("index references an external resource (%q)", bad)
+		}
+	}
+}
+
+func TestUnknownPathIs404(t *testing.T) {
+	srv, _, _ := newTestServer(t)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/nope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
 func TestStateReflectsQueue(t *testing.T) {
 	srv, sp, _ := newTestServer(t)
 	s := config.Defaults()

@@ -20,11 +20,6 @@ const pollInterval = 1 * time.Second
 // historyLimit caps the recent-history list embedded in the state payload.
 const historyLimit = 25
 
-// placeholderIndex is served at "/" until the embedded SPA lands (commit 4). It
-// makes the API reachable and the server testable end-to-end on its own.
-const placeholderIndex = `<!doctype html><meta charset="utf-8"><title>ytdl</title>` +
-	`<p>ytdl GUI — interfaccia in arrivo.</p>`
-
 // ---- DTOs (JSON shapes; the engine types have no json tags) --------------
 
 type jobDTO struct {
@@ -192,7 +187,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	io.WriteString(w, placeholderIndex)
+	w.Write(indexHTML)
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
