@@ -12,7 +12,50 @@ import (
 	"github.com/alergyonthestage/ytdl/internal/core"
 	"github.com/alergyonthestage/ytdl/internal/logstore"
 	"github.com/alergyonthestage/ytdl/internal/notify"
+	"github.com/alergyonthestage/ytdl/internal/queue"
 )
+
+// TestBackgroundEnqueues verifies -b (ModeBackground) now enqueues to the spool
+// and asks the daemon to start, instead of the pre-2B unbounded Setsid detach.
+// spawnDaemon is stubbed so no real process is launched.
+func TestBackgroundEnqueues(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+	t.Setenv("HOME", dir)
+
+	spawned := 0
+	old := spawnDaemon
+	spawnDaemon = func() error { spawned++; return nil }
+	defer func() { spawnDaemon = old }()
+
+	s := config.Defaults()
+	s.OutputDir = filepath.Join(dir, "out")
+	o := core.Options{Mode: core.ModeBackground, URL: "https://youtu.be/BG", Settings: s, Playlist: true}
+
+	var out, errb bytes.Buffer
+	if rc := Dispatch(o, &out, &errb); rc != 0 {
+		t.Fatalf("rc = %d, want 0 (stderr: %s)", rc, errb.String())
+	}
+	if spawned != 1 {
+		t.Errorf("spawnDaemon called %d times, want 1", spawned)
+	}
+
+	sp := queue.Open(config.StatePath())
+	snap, err := sp.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, _, _, _ := snap.Counts(); p != 1 {
+		t.Fatalf("pending = %d, want 1 job enqueued", p)
+	}
+	got := snap.Pending[0].Job
+	if got.URL != "https://youtu.be/BG" || !got.Playlist {
+		t.Errorf("enqueued job = %+v, want the -b URL with playlist", got)
+	}
+	if !strings.Contains(out.String(), "accodato") {
+		t.Errorf("stdout should confirm the enqueue, got: %q", out.String())
+	}
+}
 
 // fakeYtDlp writes a fake yt-dlp (and ffmpeg) onto PATH. It distinguishes the
 // runner's --print-to-file sinks by their template (filepath vs id, plain title
