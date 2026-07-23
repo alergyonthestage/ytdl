@@ -32,7 +32,17 @@ jobs:
         run: go vet ./...
 
       - name: go test
-        run: go test ./...
+        run: go test -race ./...
+
+      # release.yml cross-compiles the macOS binaries from Linux; verify that
+      # still succeeds here so a darwin-only break (a linux-only import, a
+      # GOOS-specific syscall field) surfaces as a PR failure instead of a
+      # dangling-tag failure after the release tag is already pushed.
+      - name: cross-compile darwin (arm64 + amd64)
+        run: |
+          for arch in arm64 amd64; do
+            CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -o /dev/null ./cmd/ytdl
+          done
 
       # The installer's own logic (platform detection, asset selection, checksum
       # verification) is pure bash with no macOS-only deps, so it runs here too.
