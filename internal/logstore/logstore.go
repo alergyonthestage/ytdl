@@ -55,6 +55,7 @@ func NormalizeURL(raw string) string {
 // Job is one completed download, as recorded in the central store.
 type Job struct {
 	URL     string
+	Title   string // best-effort resolved "Artist - Track"; "" if unknown or failed
 	Mode    string // "default" | "verbose" | "silent" | "background"
 	Format  string
 	RC      int
@@ -129,6 +130,11 @@ func Prune(dir string, retentionDays int) error {
 				firstErr = err
 			}
 		}
+	}
+	// Also prune the structured history stream (history.jsonl) by record age, so
+	// the same retention governs both the per-job .log files and the history index.
+	if err := pruneHistory(dir, retentionDays); err != nil && firstErr == nil {
+		firstErr = err
 	}
 	return firstErr
 }
