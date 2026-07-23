@@ -92,15 +92,23 @@ open/closed.
 ### U7 — persistent logs & failure-log auto-cleanup
 
 Two levels: a **central persistent store** (`~/.local/state/ytdl/logs/`, every job,
-retained by age/count) and an **optional in-destination breadcrumb** on failure
-(off by default keeps the music folder clean). The maintainer's auto-cleanup rule —
-"a later successful download of the same URL into the same folder deletes the stale
-`.log`" — requires identifying which breadcrumb maps to which URL. Today the name
-derives from the *title* (fragile, C5) and does not encode the URL. Fix: name the
-breadcrumb after **hash(normalised URL)** (the URL is stable across retries, the
-title is not); on success, compute `hash(url)` and delete the matching breadcrumb.
-Playlists: one breadcrumb per failed item, keyed by item id; the item's success
-removes its own.
+retained by age) and an **in-destination breadcrumb** on failure. The maintainer's
+auto-cleanup rule — "a later successful download of the same URL into the same
+folder deletes the stale `.log`" — requires identifying which breadcrumb maps to
+which URL. The old name derived from the *title* (fragile, C5) and did not encode
+the URL. Fix: name the breadcrumb after **hash(normalised URL)** (the URL is stable
+across retries, the title is not); on success, compute `hash(url)` and delete the
+matching breadcrumb. Playlists: one breadcrumb per failed item, keyed by item id;
+the item's success removes its own.
+
+> **As built (Cycle 2A, [ADR-0006](decisions/0006-cycle2a-logs-breadcrumbs-notifications.md)):**
+> the breadcrumb ships **on by default** (opt-out `breadcrumb_on_failure=true`), not
+> off — auto-cleanup makes it self-limiting (the folder shows only *unresolved*
+> failures) and it is the CLI walk-away user's only in-place signal. Its name keeps a
+> readable title **plus** a `hash8` suffix, so it fixes the M2 title collision while
+> preserving at-a-glance discovery. Retention is by **age** (`log_retention_days`,
+> default 30; `0` = keep forever). The breadcrumb is scoped to silent/background
+> modes; foreground already shows the error live.
 
 ## Requested evolutions
 

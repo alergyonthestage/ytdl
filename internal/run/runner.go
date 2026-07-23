@@ -6,6 +6,7 @@ package run
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -18,11 +19,22 @@ import (
 
 	"github.com/alergyonthestage/ytdl/internal/buildinfo"
 	"github.com/alergyonthestage/ytdl/internal/core"
+	"github.com/alergyonthestage/ytdl/internal/logstore"
+	"github.com/alergyonthestage/ytdl/internal/notify"
 )
 
 // ytDlp and ffmpeg are the external tools ytdl drives.
 const ytDlp = "yt-dlp"
 const ffmpeg = "ffmpeg"
+
+// stderrCap bounds how much yt-dlp stderr is kept for the central log store, so
+// a pathological run cannot balloon a record (or memory) unbounded.
+const stderrCap = 256 * 1024
+
+// notifier is the completion-notification backend (U6). It is a package var so
+// tests can inject a capturing fake; production uses the platform default
+// (osascript on macOS, no-op elsewhere).
+var notifier notify.Notifier = notify.Default()
 
 // PrependLocalBin puts $HOME/.local/bin at the front of PATH if absent, so the
 // installer-provisioned yt-dlp/ffmpeg are found even when ytdl is launched from
@@ -111,12 +123,18 @@ func runDryRun(o core.Options, w io.Writer) int {
 // line prints only when yt-dlp succeeded (the Bash `set -e` aborts otherwise).
 func runVerbose(o core.Options, w io.Writer) int {
 	fmt.Fprintf(w, "▸ Scarico (.%s) → %s  [verbose]\n\n", o.Settings.Format, o.Settings.OutputDir)
+	var errbuf capBuffer
 	cmd := exec.Command(ytDlp, core.BuildArgs(o)...)
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = io.MultiWriter(os.Stderr, &errbuf)
 	rc := runCode(cmd)
-	if rc == 0 {
+	success := rc == 0
+	if success {
 		fmt.Fprintf(w, "\n✓ Fatto → %s\n", o.Settings.OutputDir)
 	}
+	now := time.Now()
+	recordJob(o, "verbose", rc, success, errbuf.Bytes(), now)
+	maybeNotify(o, true, success, 0) // foreground; verbose has no saved-file count
 	return rc
 }
 
@@ -132,8 +150,10 @@ func runDefault(o core.Options, w io.Writer) int {
 	defer cleanup()
 	o.SavedFile = saved
 
+	var errbuf capBuffer
 	cmd := exec.Command(ytDlp, core.BuildArgs(o)...)
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = io.MultiWriter(os.Stderr, &errbuf)
 	rc := runCode(cmd)
 
 	first, count := readSavedPaths(saved)
@@ -147,11 +167,18 @@ func runDefault(o core.Options, w io.Writer) int {
 		fmt.Fprintf(w, "✗ Nessun file scaricato (rc=%d).\n", rc)
 		fmt.Fprintf(w, "  (se l'URL conteneva &, controlla che fosse tra virgolette)\n")
 	}
+	success := rc == 0 && count > 0
+	now := time.Now()
+	recordJob(o, "default", rc, success, errbuf.Bytes(), now)
+	maybeNotify(o, true, success, count) // foreground
 	return rc
 }
 
-// runSilent produces no terminal output; on failure (or zero files) it writes
-// <title>.log to the output dir with the yt-dlp stderr (ytdl lines 282-308).
+// runSilent produces no terminal output. It records the job centrally and, on
+// failure, drops an in-destination breadcrumb (single, or one per failed
+// playlist item), keyed by a stable hash so a later success cleans it up (U7).
+// A completion notification fires per config (U6). It is also the mode the
+// background launcher re-executes into, so background inherits all of this.
 func runSilent(o core.Options) int {
 	// Register each cleanup immediately after its own successful creation, so a
 	// later failure still removes the temp files already made.
@@ -174,22 +201,67 @@ func runSilent(o core.Options) int {
 	o.TitleFile = title
 	o.SavedFile = saved
 
+	args := core.BuildArgs(o)
+
+	// Per-item playlist tracking (U7): append extra yt-dlp print sinks AFTER
+	// BuildArgs — pure runtime instrumentation, off the golden argv path — only
+	// when we will actually reconcile per-item breadcrumbs for a playlist.
+	trackItems := o.Settings.BreadcrumbOnFailure && o.Playlist
+	var attemptedFile, succeededFile string
+	if trackItems {
+		var c1, c2 func()
+		attemptedFile, c1, err = tempFile("ytdl-att-")
+		if err != nil {
+			return tempFileError(err)
+		}
+		defer c1()
+		succeededFile, c2, err = tempFile("ytdl-suc-")
+		if err != nil {
+			return tempFileError(err)
+		}
+		defer c2()
+		args = append(args,
+			"--print-to-file", logstore.AttemptedItemTemplate, attemptedFile,
+			"--print-to-file", logstore.SucceededItemTemplate, succeededFile)
+	}
+
 	ef, err := os.OpenFile(errlog, os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "✗ Errore file temporaneo: %v\n", err)
 		return 1
 	}
-	cmd := exec.Command(ytDlp, core.BuildArgs(o)...)
+	cmd := exec.Command(ytDlp, args...)
 	cmd.Stdout = nil // → /dev/null
 	cmd.Stderr = ef
 	rc := runCode(cmd)
 	ef.Close()
 
-	info, statErr := os.Stat(saved)
-	empty := statErr != nil || info.Size() == 0
-	if rc != 0 || empty {
-		writeFailLog(o, title, errlog, rc)
+	// "Success" means yt-dlp exited 0 AND actually saved a file. Count non-blank
+	// after_move lines once and reuse it for the record, the breadcrumb decision
+	// and the notification — consistent with default mode (an empty or
+	// blank-only saved list is a failure, matching the Bash tool's zero-files
+	// case, ytdl lines 290-293).
+	_, count := readSavedPaths(saved)
+	success := rc == 0 && count > 0
+	now := time.Now()
+
+	recordJob(o, "silent", rc, success, readCapped(errlog, stderrCap), now)
+
+	if o.Settings.BreadcrumbOnFailure {
+		if o.Playlist {
+			logstore.ReconcilePlaylist(o.Settings.OutputDir, o.URL, rc, now,
+				logstore.ParseAttempted(attemptedFile), logstore.ParseSucceededIDs(succeededFile))
+		} else {
+			key := logstore.Hash(logstore.NormalizeURL(o.URL))
+			if success {
+				logstore.RemoveBreadcrumb(o.Settings.OutputDir, key)
+			} else {
+				logstore.WriteBreadcrumb(o.Settings.OutputDir, lastLine(title), key, o.URL, rc, now)
+			}
+		}
 	}
+
+	maybeNotify(o, false, success, count) // silent/background: not gated on notify_foreground
 	return rc
 }
 
@@ -358,32 +430,87 @@ func readSavedPaths(path string) (first string, count int) {
 	return first, count
 }
 
-// writeFailLog writes the silent-mode failure log to <output>/<label>.log. The
-// label is the last before_dl line, sanitized (parity `tr '/:' '__'` plus the C5
-// hardening), with a timestamped fallback (ytdl lines 295-306).
-func writeFailLog(o core.Options, titleFile, errlog string, rc int) {
-	label := sanitizeLogName(lastLine(titleFile))
-	if label == "" {
-		label = "ytdl-failed-" + time.Now().Format("20060102-150405")
-	}
-	dest := filepath.Join(o.Settings.OutputDir, label+".log")
+// recordJob writes the central log-store record for a completed download and
+// then prunes expired records (U7). Both are best-effort — a logging failure
+// must never change the download's exit code — so errors are dropped. dry-run
+// and the background launcher do not call this (the background child, running
+// silent, records the real job).
+func recordJob(o core.Options, mode string, rc int, success bool, stderr []byte, now time.Time) {
+	logstore.Record(o.Settings.LogDir, logstore.Job{
+		URL:     o.URL,
+		Mode:    mode,
+		Format:  o.Settings.Format,
+		RC:      rc,
+		Success: success,
+		Time:    now,
+		Stderr:  stderr,
+	})
+	logstore.Prune(o.Settings.LogDir, o.Settings.LogRetentionDays)
+}
 
-	var b strings.Builder
-	fmt.Fprintln(&b, "ytdl — download FALLITO")
-	// _2 pads the day the way C's %e does; "Jan  2" would emit a double space
-	// before a two-digit day. (Bash `date` also prints a %Z zone Go omits here.)
-	fmt.Fprintf(&b, "data: %s\n", time.Now().Format("Mon Jan _2 15:04:05 2006"))
-	fmt.Fprintf(&b, "url:  %s\n", o.URL)
-	fmt.Fprintf(&b, "rc:   %d\n", rc)
-	fmt.Fprintln(&b, "----------------------------------------")
-	if data, err := os.ReadFile(errlog); err == nil {
-		b.Write(data)
+// maybeNotify fires a completion banner per config (U6). It is gated by:
+// notify (master switch), notify_on (success/failure/both), and — for the
+// foreground default/verbose modes — notify_foreground; silent/background are
+// never foreground-gated, since their completion is otherwise invisible.
+func maybeNotify(o core.Options, foreground, success bool, count int) {
+	s := o.Settings
+	if !s.Notify {
+		return
 	}
-	// The .log is silent mode's only failure signal; if even that write fails,
-	// break silence on stderr so the user is not left with no indication at all.
-	if err := os.WriteFile(dest, []byte(b.String()), 0o644); err != nil {
-		fmt.Fprintf(os.Stderr, "✗ ytdl: impossibile scrivere il log di errore %s: %v\n", dest, err)
+	if success && s.NotifyOn == "failure" {
+		return
 	}
+	if !success && s.NotifyOn == "success" {
+		return
+	}
+	if foreground && !s.NotifyForeground {
+		return
+	}
+	n := notify.Notification{Success: success, Title: "ytdl", Sound: s.NotifySound}
+	switch {
+	case !success:
+		n.Body = "✗ Download fallito"
+	case count == 1:
+		n.Body = "✓ 1 brano scaricato"
+	case count > 1:
+		n.Body = fmt.Sprintf("✓ %d brani scaricati", count)
+	default:
+		n.Body = "✓ Download completato"
+	}
+	notifier.Notify(n)
+}
+
+// capBuffer is an io.Writer that keeps at most stderrCap bytes but always
+// reports a full write, so teeing it alongside os.Stderr via io.MultiWriter
+// never truncates the live output.
+type capBuffer struct{ buf bytes.Buffer }
+
+func (c *capBuffer) Write(p []byte) (int, error) {
+	if room := stderrCap - c.buf.Len(); room > 0 {
+		if len(p) <= room {
+			c.buf.Write(p)
+		} else {
+			c.buf.Write(p[:room])
+		}
+	}
+	return len(p), nil
+}
+
+func (c *capBuffer) Bytes() []byte { return c.buf.Bytes() }
+
+// readCapped reads at most max bytes of the file at path (silent mode's captured
+// yt-dlp stderr), returning nil on any read error.
+func readCapped(path string, max int) []byte {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, int64(max)))
+	if err != nil {
+		return nil
+	}
+	return data
 }
 
 // lastLine returns the file's last line, matching Bash `tail -n1`: a single
@@ -398,24 +525,6 @@ func lastLine(path string) string {
 	s := strings.TrimSuffix(string(data), "\n")
 	lines := strings.Split(s, "\n")
 	return lines[len(lines)-1]
-}
-
-// sanitizeLogName maps the parity `/` and `:` to `_`, then (C5) replaces any
-// remaining filesystem-hostile characters, keeping the name readable.
-func sanitizeLogName(s string) string {
-	s = strings.NewReplacer("/", "_", ":", "_").Replace(s)
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r < 0x20: // control characters, incl. NUL and newline
-			b.WriteRune('_')
-		case strings.ContainsRune(`\*?"<>|`, r):
-			b.WriteRune('_')
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return strings.TrimLeft(strings.TrimSpace(b.String()), ".")
 }
 
 func envOr(key, def string) string {

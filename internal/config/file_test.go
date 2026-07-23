@@ -132,8 +132,10 @@ func TestLoadFileHomeExpansion(t *testing.T) {
 }
 
 func TestLoadFileUnknownKeyWarns(t *testing.T) {
-	// Future/GUI keys must warn-and-ignore, never brick an older binary.
-	path := writeConfig(t, "concurrency = 4\nnotify = true\nformat = mp3\n")
+	// Future/GUI keys must warn-and-ignore, never brick an older binary. These
+	// two stay out of the 2A whitelist (concurrency → 2B; overwrites would break
+	// golden parity, so it is excluded on purpose).
+	path := writeConfig(t, "concurrency = 4\noverwrites = true\nformat = mp3\n")
 	p, warns, err := LoadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -143,6 +145,68 @@ func TestLoadFileUnknownKeyWarns(t *testing.T) {
 	}
 	if p.Format == nil || *p.Format != "mp3" {
 		t.Errorf("the known key after unknown ones was dropped: %v", p.Format)
+	}
+}
+
+func TestLoadFileBackendKeys(t *testing.T) {
+	t.Setenv("HOME", "/home/tester")
+	path := writeConfig(t, `
+log_dir = ~/state/ytdl/logs
+log_retention_days = 7
+breadcrumb_on_failure = false
+notify = false
+notify_on = failure
+notify_foreground = true
+notify_sound = false
+`)
+	p, warns, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 0 {
+		t.Fatalf("unexpected warnings: %v", warns)
+	}
+	if p.LogDir == nil || *p.LogDir != "/home/tester/state/ytdl/logs" {
+		t.Errorf("LogDir = %v, want expanded ~/state/ytdl/logs", derefS(p.LogDir))
+	}
+	if p.LogRetentionDays == nil || *p.LogRetentionDays != 7 {
+		t.Errorf("LogRetentionDays = %v, want 7", p.LogRetentionDays)
+	}
+	if p.BreadcrumbOnFailure == nil || *p.BreadcrumbOnFailure {
+		t.Errorf("BreadcrumbOnFailure = %v, want false", p.BreadcrumbOnFailure)
+	}
+	if p.Notify == nil || *p.Notify {
+		t.Errorf("Notify = %v, want false", p.Notify)
+	}
+	if p.NotifyOn == nil || *p.NotifyOn != "failure" {
+		t.Errorf("NotifyOn = %v, want failure", derefS(p.NotifyOn))
+	}
+	if p.NotifyForeground == nil || !*p.NotifyForeground {
+		t.Errorf("NotifyForeground = %v, want true", p.NotifyForeground)
+	}
+	if p.NotifySound == nil || *p.NotifySound {
+		t.Errorf("NotifySound = %v, want false", p.NotifySound)
+	}
+}
+
+func TestLoadFileBackendInvalidValues(t *testing.T) {
+	// Invalid values on known keys warn and fall through (nil), never fatal.
+	path := writeConfig(t, "log_retention_days = -1\nlog_retention_days = x\nnotify_on = sometimes\nlog_dir = \n")
+	p, warns, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 4 {
+		t.Fatalf("want 4 invalid-value warnings, got %d: %v", len(warns), warns)
+	}
+	if p.LogRetentionDays != nil {
+		t.Errorf("invalid log_retention_days was kept: %v", *p.LogRetentionDays)
+	}
+	if p.NotifyOn != nil {
+		t.Errorf("invalid notify_on was kept: %v", *p.NotifyOn)
+	}
+	if p.LogDir != nil {
+		t.Errorf("empty log_dir was kept: %v", *p.LogDir)
 	}
 }
 

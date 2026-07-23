@@ -132,6 +132,69 @@ func TestValidFormat(t *testing.T) {
 	}
 }
 
+func TestBackendDefaults(t *testing.T) {
+	t.Setenv("HOME", "/pinned-home")
+	t.Setenv("XDG_STATE_HOME", "") // force the $HOME-based default
+	d := Defaults()
+	if d.LogDir != "/pinned-home/.local/state/ytdl/logs" {
+		t.Errorf("LogDir = %q, want /pinned-home/.local/state/ytdl/logs", d.LogDir)
+	}
+	if d.LogRetentionDays != DefaultLogRetentionDays {
+		t.Errorf("LogRetentionDays = %d, want %d", d.LogRetentionDays, DefaultLogRetentionDays)
+	}
+	if !d.BreadcrumbOnFailure {
+		t.Error("BreadcrumbOnFailure default = false, want true (opt-out)")
+	}
+	if !d.Notify {
+		t.Error("Notify default = false, want true")
+	}
+	if d.NotifyOn != DefaultNotifyOn {
+		t.Errorf("NotifyOn = %q, want %q", d.NotifyOn, DefaultNotifyOn)
+	}
+	if d.NotifyForeground {
+		t.Error("NotifyForeground default = true, want false (silent/background only)")
+	}
+	if !d.NotifySound {
+		t.Error("NotifySound default = false, want true")
+	}
+}
+
+func TestStatePathXDGWins(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "/xdg/state")
+	if got := StatePath(); got != "/xdg/state/ytdl" {
+		t.Errorf("StatePath() = %q, want /xdg/state/ytdl", got)
+	}
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("HOME", "/home/u")
+	if got := StatePath(); got != "/home/u/.local/state/ytdl" {
+		t.Errorf("StatePath() = %q, want /home/u/.local/state/ytdl", got)
+	}
+}
+
+func TestNotifyOnValidationFallsThrough(t *testing.T) {
+	t.Setenv("HOME", "/pinned-home")
+	// End-to-end: an invalid notify_on in the config FILE is warned, dropped to
+	// nil, and falls through Resolve to the built-in default (not kept as "").
+	path := writeConfig(t, "notify_on = sometimes\n")
+	file, warns, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 1 {
+		t.Fatalf("want 1 invalid-notify_on warning, got %d: %v", len(warns), warns)
+	}
+	if file.NotifyOn != nil {
+		t.Fatalf("invalid notify_on was kept: %q", *file.NotifyOn)
+	}
+	got, rwarns := Resolve(Partial{}, Partial{}, file, Env{})
+	if len(rwarns) != 0 {
+		t.Fatalf("unexpected resolve warnings: %v", rwarns)
+	}
+	if got.NotifyOn != DefaultNotifyOn {
+		t.Errorf("NotifyOn = %q, want default %q", got.NotifyOn, DefaultNotifyOn)
+	}
+}
+
 func TestBoolAndEmbedPrecedence(t *testing.T) {
 	pinHome(t)
 	file := Partial{EmbedThumbnail: bp(false), PlaylistDefault: bp(true)}

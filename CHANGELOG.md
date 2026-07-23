@@ -3,6 +3,37 @@
 Notable changes to ytdl. The format follows [Keep a Changelog](https://keepachangelog.com/),
 and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Cycle 2A — the first slice of the backend work (logs + notifications). All of it
+lives in the runtime layer and leaves the yt-dlp argument vector (and the golden
+parity tests) byte-unchanged. See
+[ADR-0006](docs/decisions/0006-cycle2a-logs-breadcrumbs-notifications.md).
+
+### Added
+
+- **Central log store** at `${XDG_STATE_HOME:-~/.local/state}/ytdl/logs/` — one
+  record per download (every job), with age-based retention
+  (`log_retention_days`, default 30; `0` keeps forever).
+- **In-destination failure breadcrumb** — a readable `"<title> — FALLITO.<hash8>.log"`
+  marker dropped next to the audio on failure and removed automatically on a later
+  success. Keyed by `hash(normalised URL)` (or per playlist-item id), so it fixes
+  the old title-collision hazard. On by default (`breadcrumb_on_failure`), scoped to
+  silent/background downloads.
+- **Completion notifications** (macOS `osascript`) — toggleable via `notify`,
+  `notify_on` (`failure|success|both`), `notify_foreground`, `notify_sound`. On by
+  default for silent/background, where completion is otherwise invisible; foreground
+  is opt-in. Best-effort and no-op off macOS.
+- Config keys backing the above: `log_dir`, `log_retention_days`,
+  `breadcrumb_on_failure`, `notify`, `notify_on`, `notify_foreground`,
+  `notify_sound`.
+
+### Changed
+
+- The always-on, title-derived `<title>.log` written next to the audio on
+  silent-mode failure is **replaced** by the central log store (always) plus the
+  opt-out breadcrumb — removing the title-collision and filename-fragility issues.
+
 ## [2.0.0] — 2026-07-23
 
 A clean break from the Bash `1.x` line: ytdl is now a single compiled Go binary
