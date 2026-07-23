@@ -19,7 +19,9 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22.x'
+          # Ship release binaries built with a currently-supported Go toolchain,
+          # not an EOL line with unpatched stdlib. go.mod keeps the 1.22 floor.
+          go-version: 'stable'
 
       - name: Cross-compile darwin/arm64 + darwin/amd64
         run: |

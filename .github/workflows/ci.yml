@@ -17,7 +17,10 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22.x'
+          # Build/test with a currently-supported Go line. go.mod still declares
+          # the 1.22 language floor; this only pins the toolchain that compiles it,
+          # keeping it off Go's EOL releases (and their unpatched stdlib).
+          go-version: 'stable'
 
       - name: gofmt
         run: |
