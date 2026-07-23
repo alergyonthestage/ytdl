@@ -141,9 +141,10 @@ func runDaemon() int {
 	}
 	settings, _ := resolveWithFlags(config.Partial{})
 	err := daemon.Serve(daemon.Config{
-		Spool:       queue.Open(stateDir),
-		Concurrency: settings.Concurrency,
-		Run:         jobRunner,
+		Spool:         queue.Open(stateDir),
+		Concurrency:   settings.Concurrency,
+		Run:           jobRunner,
+		RetentionDays: settings.LogRetentionDays,
 	})
 	if err != nil && !errors.Is(err, daemon.ErrAlreadyRunning) {
 		return 1

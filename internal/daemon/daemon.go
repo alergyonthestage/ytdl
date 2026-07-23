@@ -54,6 +54,9 @@ type Config struct {
 	// IdleTimeout / PollInterval default to the package constants when zero.
 	IdleTimeout  time.Duration
 	PollInterval time.Duration
+	// RetentionDays ages out terminal (done/failed) spool files at startup,
+	// reusing log_retention_days; <= 0 keeps everything (ADR-0009).
+	RetentionDays int
 }
 
 // Serve runs the drain loop until the queue is idle for IdleTimeout, then returns
@@ -86,6 +89,10 @@ func Serve(cfg Config) error {
 	// draining the rest of the queue, matching the "never block on a best-effort
 	// step" philosophy the log store already follows.
 	_, _ = cfg.Spool.RequeueRunning()
+
+	// Best-effort: age out old terminal spool files so done/failed do not grow
+	// unbounded across drain sessions. A prune failure must not stop draining.
+	_ = cfg.Spool.PruneTerminal(cfg.RetentionDays)
 
 	drain(cfg)
 	return nil
