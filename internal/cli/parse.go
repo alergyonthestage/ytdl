@@ -20,17 +20,21 @@ const (
 	ActionHelp
 	ActionVersion
 	ActionUpdate
+	ActionQueue  // `ytdl queue [--watch]` — inspect the queue
+	ActionStatus // `ytdl status` — queue + daemon summary
 )
 
 // Parsed is the result of parsing. When Action == ActionRun, RunMode, URL and
-// the flag pointers describe the download; otherwise only Action matters.
+// the flag pointers describe the download; for ActionQueue only QueueWatch is
+// meaningful; otherwise only Action matters.
 type Parsed struct {
-	Action    Action
-	RunMode   core.Mode // valid when Action == ActionRun
-	URL       string
-	OutputDir *string // -o/--output, nil if not given
-	Format    *string // -f/--format, nil if not given
-	Playlist  bool    // -p/--playlist seen
+	Action     Action
+	RunMode    core.Mode // valid when Action == ActionRun
+	URL        string
+	OutputDir  *string // -o/--output, nil if not given
+	Format     *string // -f/--format, nil if not given
+	Playlist   bool    // -p/--playlist seen
+	QueueWatch bool    // `queue --watch`: redraw on an interval
 }
 
 // ParseError is a user-facing parse failure. Usage requests that the help text
@@ -53,6 +57,18 @@ func (e *ParseError) Error() string { return e.Msg }
 // `ytdl -o "" URL` (e.g. an unset shell variable) fails fast with exit 1 rather
 // than silently resolving an empty output dir.
 func Parse(args []string) (*Parsed, error) {
+	// Subcommand dispatch: a reserved first token routes to the queue front-end
+	// instead of the download parser. A URL never collides with these keywords.
+	// The hidden `__daemon` role is intercepted by main before Parse is reached.
+	if len(args) > 0 {
+		switch args[0] {
+		case "queue":
+			return parseQueue(args[1:])
+		case "status":
+			return parseStatus(args[1:])
+		}
+	}
+
 	p := &Parsed{}
 	var dry, background, verbose, silent, haveURL bool
 
@@ -142,4 +158,27 @@ func Parse(args []string) (*Parsed, error) {
 	}
 	p.Action = ActionRun
 	return p, nil
+}
+
+// parseQueue parses `queue [--watch]`. The only accepted option is --watch/-w;
+// anything else is an unknown-option error (with usage), like the download parser.
+func parseQueue(rest []string) (*Parsed, error) {
+	p := &Parsed{Action: ActionQueue}
+	for _, a := range rest {
+		switch a {
+		case "--watch", "-w":
+			p.QueueWatch = true
+		default:
+			return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, a), Usage: true}
+		}
+	}
+	return p, nil
+}
+
+// parseStatus parses `status`, which takes no arguments in 2B-core.
+func parseStatus(rest []string) (*Parsed, error) {
+	if len(rest) > 0 {
+		return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, rest[0]), Usage: true}
+	}
+	return &Parsed{Action: ActionStatus}, nil
 }

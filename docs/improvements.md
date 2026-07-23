@@ -75,9 +75,20 @@ sourcing user-writable shell is an injection risk). Precedence:
 A filesystem spool under `~/.local/state/ytdl/queue/{pending,running,done,failed}/`,
 with **atomic `mv` state transitions** (maildir-style, no locks), driven by the Go
 daemon `ytdld`. The spool *is* the state, so both the CLI and the GUI inspect it
-directly. Default concurrency cap **2–3**: `unlimited` is allowed but discouraged
+directly. Default concurrency cap **3**: `unlimited` is allowed but discouraged
 because parallel connections invite YouTube throttling/429s and saturate bandwidth
-and ffmpeg CPU.
+and ffmpeg CPU (a resolved concurrency that is `unlimited` or well above the default
+draws an advisory warning).
+
+**Shipped in Cycle 2B-core** ([ADR-0007](decisions/0007-cycle2b-queue-daemon.md)):
+the daemon is **on-demand** — the same `ytdl` binary self-exec'd into a hidden
+`__daemon` role, holding an exclusive `flock` (single instance), draining under the
+cap, and idle-exiting when the queue empties; there is no always-on service or
+launchd agent (deferred to the GUI cycle). `ytdl -b` enqueues (superseding the old
+unbounded `Setsid` detach); `ytdl queue [--watch]` and `ytdl status` inspect the
+spool, and `ytdl queue` also restarts a stalled daemon. Deferred to **2B-plus**:
+`cancel`/`retry` (already just spool `mv`s), retries/backoff, a per-job timeout, and
+a daemon logging seam.
 
 ### U6 — completion notification
 

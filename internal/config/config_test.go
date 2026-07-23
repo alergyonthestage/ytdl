@@ -1,8 +1,32 @@
 package config
 
 import (
+	"strings"
 	"testing"
 )
+
+func ip(i int) *int { return &i }
+
+// Concurrency draws an advisory warning (not a hard cap) when it is unlimited or
+// well above the recommended default; the default and modest values stay quiet.
+func TestConcurrencyAdvisoryWarning(t *testing.T) {
+	pinHome(t)
+
+	if _, w := Resolve(Partial{}, Partial{}, Partial{}, Env{}); len(w) != 0 {
+		t.Fatalf("default concurrency (3) should not warn, got: %v", w)
+	}
+	if _, w := Resolve(Partial{Concurrency: ip(ConcurrencyAdvisoryThreshold)}, Partial{}, Partial{}, Env{}); len(w) != 0 {
+		t.Errorf("concurrency at the threshold should not warn, got: %v", w)
+	}
+	_, w := Resolve(Partial{Concurrency: ip(50)}, Partial{}, Partial{}, Env{})
+	if len(w) != 1 || !strings.Contains(w[0].Msg, "high") {
+		t.Errorf("high concurrency should draw one advisory, got: %v", w)
+	}
+	_, w = Resolve(Partial{Concurrency: ip(ConcurrencyUnlimited)}, Partial{}, Partial{}, Env{})
+	if len(w) != 1 || !strings.Contains(w[0].Msg, "unlimited") {
+		t.Errorf("unlimited concurrency should draw one advisory, got: %v", w)
+	}
+}
 
 func sp(s string) *string { return &s }
 func bp(b bool) *bool     { return &b }
@@ -156,6 +180,9 @@ func TestBackendDefaults(t *testing.T) {
 	}
 	if !d.NotifySound {
 		t.Error("NotifySound default = false, want true")
+	}
+	if d.Concurrency != DefaultConcurrency {
+		t.Errorf("Concurrency = %d, want %d", d.Concurrency, DefaultConcurrency)
 	}
 }
 

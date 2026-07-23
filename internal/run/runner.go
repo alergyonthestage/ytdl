@@ -1,7 +1,8 @@
 // Package run is ytdl's runtime layer: it executes yt-dlp, manages temp files,
-// writes the silent-mode failure log, detaches background downloads, and checks
-// dependencies — the behaviours the pure argv goldens do not cover. All
-// user-facing runtime strings live here, verbatim from the Bash ytdl.
+// writes the silent-mode failure log, enqueues background downloads to the
+// on-demand daemon, and checks dependencies — the behaviours the pure argv
+// goldens do not cover. All user-facing runtime strings live here, verbatim from
+// the Bash ytdl.
 package run
 
 import (
@@ -18,9 +19,12 @@ import (
 	"time"
 
 	"github.com/alergyonthestage/ytdl/internal/buildinfo"
+	"github.com/alergyonthestage/ytdl/internal/config"
 	"github.com/alergyonthestage/ytdl/internal/core"
+	"github.com/alergyonthestage/ytdl/internal/daemon"
 	"github.com/alergyonthestage/ytdl/internal/logstore"
 	"github.com/alergyonthestage/ytdl/internal/notify"
+	"github.com/alergyonthestage/ytdl/internal/queue"
 )
 
 // ytDlp and ffmpeg are the external tools ytdl drives.
@@ -35,6 +39,11 @@ const stderrCap = 256 * 1024
 // tests can inject a capturing fake; production uses the platform default
 // (osascript on macOS, no-op elsewhere).
 var notifier notify.Notifier = notify.Default()
+
+// spawnDaemon starts the on-demand queue daemon (Cycle 2B). It is a package var
+// so tests can stub the self-exec, which would otherwise launch a real detached
+// process from the test binary.
+var spawnDaemon = daemon.Spawn
 
 // PrependLocalBin puts $HOME/.local/bin at the front of PATH if absent, so the
 // installer-provisioned yt-dlp/ffmpeg are found even when ytdl is launched from
@@ -265,32 +274,41 @@ func runSilent(o core.Options) int {
 	return rc
 }
 
-// runBackground re-executes ytdl in silent mode, detached from the terminal, and
-// returns immediately (ytdl lines 245-253). Uses Setsid + /dev/null stdio — the
-// `nohup … &` equivalent.
+// runBackground enqueues the download onto the filesystem spool and ensures the
+// on-demand daemon is running to drain it under the concurrency cap, then returns
+// immediately (Cycle 2B, ADR-0007). It supersedes the pre-2B unbounded Setsid
+// re-exec: five `ytdl -b` now share one queue instead of spawning five
+// simultaneous downloads (U5). The queued job runs in silent mode, so it inherits
+// the central log store, failure breadcrumb and completion notification.
 func runBackground(o core.Options, stdout, stderr io.Writer) int {
-	self, err := os.Executable()
-	if err != nil {
-		fmt.Fprintf(stderr, "✗ Impossibile determinare il percorso di ytdl: %v\n", err)
+	stateDir := config.StatePath()
+	if stateDir == "" {
+		fmt.Fprintln(stderr, "✗ Impossibile individuare la coda: $HOME non è impostata.")
 		return 1
 	}
-	argv := core.ReExecArgs(o, self) // [self, -s, -f, FMT, -o, DIR, (-p), URL]
-	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if devnull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0); err == nil {
-		defer devnull.Close()
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = devnull, devnull, devnull
-	}
-	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(stderr, "✗ Impossibile avviare in background: %v\n", err)
+	sp := queue.Open(stateDir)
+	if _, err := sp.Enqueue(queue.Job{URL: o.URL, Playlist: o.Playlist, Settings: o.Settings}); err != nil {
+		fmt.Fprintf(stderr, "✗ Impossibile accodare il download: %v\n", err)
 		return 1
 	}
-	pid := cmd.Process.Pid
-	_ = cmd.Process.Release() // detach: don't wait for the child
+	if err := spawnDaemon(); err != nil {
+		// The job is safely queued; a later `ytdl -b` / `ytdl queue` will start a
+		// daemon to drain it. Warn but do not fail — the download is not lost.
+		fmt.Fprintf(stderr, "! Accodato, ma non ho potuto avviare il daemon: %v\n", err)
+		fmt.Fprintln(stderr, "  Verrà ripreso al prossimo `ytdl -b`; controlla con `ytdl queue`.")
+	}
 
-	fmt.Fprintf(stdout, "▸ Avviato in background (PID %d).\n", pid)
+	// Report jobs not yet terminal (pending + running), so the count stays truthful
+	// even if an already-warm daemon claimed this job before we read the spool. On
+	// a List error, omit the count rather than print a misleading "0".
+	if snap, err := sp.List(); err == nil {
+		p, r, _, _ := snap.Counts()
+		fmt.Fprintf(stdout, "▸ Download accodato (%d in coda).\n", p+r)
+	} else {
+		fmt.Fprintln(stdout, "▸ Download accodato.")
+	}
 	fmt.Fprintf(stdout, "  Audio → %s\n", o.Settings.OutputDir)
-	fmt.Fprintf(stdout, "  Se un download fallisce, troverai <titolo>.log nella stessa cartella.\n")
+	fmt.Fprintf(stdout, "  Stato: ytdl queue   ·   se fallisce, troverai un file .log accanto all'audio.\n")
 	return 0
 }
 

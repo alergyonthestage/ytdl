@@ -12,11 +12,15 @@ OPZIONI
   -f, --format FMT    Formato audio: mp3|flac|m4a|opus|wav   (default: mp3)
   -n, --dry-run       Mostra i nomi file risultanti SENZA scaricare
   -s, --silent        Nessun output (per lanciarlo in background con &)
-  -b, --background    Esegui in background e torna subito (implica -s)
+  -b, --background    Accoda ed esegui in background sotto il limite di concorrenza
   -v, --verbose       Mostra tutto l'output di yt-dlp (per debug)
   -h, --help          Questo messaggio
   -V, --version       Mostra la versione di ytdl e yt-dlp
       --update        Aggiorna ytdl e yt-dlp all'ultima versione
+
+CODA
+  ytdl queue [--watch]   Elenca i download in attesa e in corso (--watch aggiorna)
+  ytdl status            Riepilogo della coda e stato del daemon
 
 AGGIORNAMENTI
   yt-dlp smette di funzionare quando YouTube cambia qualcosa: succede ogni
@@ -24,9 +28,9 @@ AGGIORNAMENTI
        ytdl --update
 
 ERRORI IN -s / -b
-  Senza output non vedi i fallimenti: se un download fallisce viene scritto
-  "<titolo>.log" (col dettaglio) nella cartella di output, al posto del file
-  audio. Controllo a posteriori:  ls *.log  nella cartella.
+  Senza output non vedi i fallimenti: se un download fallisce viene lasciato un
+  file .log (col dettaglio) nella cartella di output, accanto all'audio mancante.
+  Stato della coda:  ytdl queue  ·  riepilogo e storico:  ytdl status.
 
 NB: METTI SEMPRE L'URL TRA VIRGOLETTE. Contiene & che altrimenti la shell
     interpreta come "esegui in background" (es. ...&list=...&index=2).
@@ -40,7 +44,7 @@ ESEMPI
   ytdl -p "https://youtube.com/playlist?list=YYYY"    # playlist intera
   ytdl -f flac -o ~/Desktop "https://youtu.be/XXXX"   # FLAC sul Desktop
   ytdl -n "https://youtu.be/XXXX"                     # anteprima dei nomi
-  ytdl -b "https://youtu.be/XXXX"                     # in background, torna subito
+  ytdl -b "https://youtu.be/XXXX"                     # accoda in background
 
 COSA FA AL TITOLO
   • Se ci sono metadati strutturati (YT Music / Topic) usa SEMPRE quelli:

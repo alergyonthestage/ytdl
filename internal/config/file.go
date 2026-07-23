@@ -194,6 +194,12 @@ func assign(p *Partial, key, value string, line int) *Warning {
 			return &Warning{Line: line, Msg: fmt.Sprintf("invalid notify_sound %q (want true|false); ignoring", value)}
 		}
 		p.NotifySound = &b
+	case "concurrency":
+		n, ok := parseConcurrency(value)
+		if !ok {
+			return &Warning{Line: line, Msg: fmt.Sprintf("invalid concurrency %q (want %s); ignoring", value, ConcurrencyList)}
+		}
+		p.Concurrency = &n
 	default:
 		return &Warning{Line: line, Msg: fmt.Sprintf("unknown key %q; ignoring", key)}
 	}
@@ -221,6 +227,25 @@ func expandHome(v string) string {
 func parseNonNegInt(v string) (int, bool) {
 	n, err := strconv.Atoi(v)
 	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+// ConcurrencyList is the human-readable accepted-value hint for the
+// `concurrency` key, for warning messages.
+const ConcurrencyList = "unlimited or a positive integer"
+
+// parseConcurrency accepts the keyword "unlimited" (→ ConcurrencyUnlimited) or a
+// base-10 positive integer (≥1). Zero and negatives are rejected: "unlimited" is
+// the only way to ask for no cap, so a bare `concurrency = 0` is a mistake, not a
+// synonym for it.
+func parseConcurrency(v string) (int, bool) {
+	if strings.EqualFold(v, "unlimited") {
+		return ConcurrencyUnlimited, true
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
 		return 0, false
 	}
 	return n, true

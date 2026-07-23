@@ -11,7 +11,9 @@ out to yt-dlp/ffmpeg; the installer stays Bash and Python is not adopted. See
 **foundations → backend integrations → robustness → GUI**, with the GUI last.
 **Cycle 1 (foundations, phase 3) is done and shipped as v2.0.0 (2026-07-23)**;
 **Cycle 2A (backend logs + notifications, phase 4) is done and merged to `main`
-(2026-07-23; release pending)**; next is Cycle 2B (queue + `ytdld` daemon).
+(2026-07-23; release pending)**; **Cycle 2B-core (queue + on-demand `ytdld` daemon)
+is done and merged to `main` (2026-07-23; release pending)**; next is Cycle 2B-plus
+(`cancel`/`retry` + phase-5 hardening).
 
 ```mermaid
 flowchart LR
@@ -186,9 +188,9 @@ Cycle 2A (logs + notifications, done) and Cycle 2B (queue + daemon, planned).
 | 4.2 | In-destination failure breadcrumb, keyed by **hash(URL)** / item id | done (2A) | U7 |
 | 4.3 | Auto-cleanup: a successful download removes the stale breadcrumb for that URL | done (2A) | U7 |
 | 4.4 | System notification on completion, toggleable (`notify`, `notify_on`, …) | done (2A) | U6 |
-| 4.5 | Real queue + daemon (`ytdld`): filesystem spool with atomic state transitions | planned (2B) | U5 |
-| 4.6 | Bounded concurrency (default cap 2–3; `unlimited` allowed but discouraged) | planned (2B) | U5 |
-| 4.7 | Job status inspection: `ytdl queue [--watch]`, `status`, `cancel`, `retry` | planned (2B) | U5 |
+| 4.5 | Real queue + daemon (`ytdld`): filesystem spool with atomic state transitions | done (2B-core) | U5 |
+| 4.6 | Bounded concurrency (default cap 3; `unlimited` allowed but discouraged) | done (2B-core) | U5 |
+| 4.7 | Job status inspection: `ytdl queue [--watch]`, `status` (done 2B-core); `cancel`, `retry` (2B-plus) | partial | U5 |
 
 **Cycle 2A (done, merged to `main` 2026-07-23):** `internal/logstore`
 (central store + retention + breadcrumb + per-item playlist reconcile) and
@@ -196,6 +198,18 @@ Cycle 2A (logs + notifications, done) and Cycle 2B (queue + daemon, planned).
 keys added. `core.BuildArgs` and the goldens are byte-unchanged (parity preserved).
 Decisions in [ADR-0006](decisions/0006-cycle2a-logs-breadcrumbs-notifications.md).
 Release pending (no tag yet).
+
+**Cycle 2B-core (done, merged to `main` 2026-07-23):** `internal/queue` (lock-free
+maildir spool, atomic `mv` transitions) and `internal/daemon` (on-demand `ytdld`:
+`flock` single-instance, bounded worker pool, crash recovery, idle-exit), plus the
+`concurrency` config key, the `queue`/`status` subcommands, and `-b` rewritten to
+enqueue (superseding the unbounded `Setsid` detach). The daemon is the same `ytdl`
+binary self-exec'd into a hidden `__daemon` role — no always-on service. Queued
+jobs run in silent mode, inheriting the 2A store/breadcrumb/notify. `core.BuildArgs`
+and the goldens are byte-unchanged (parity preserved). Adversarially reviewed (3
+reviewers; the real findings — per-job panic isolation, escaping a persistent-error
+daemon wedge, best-effort recovery, `queue`-resumes-a-stalled-daemon — fixed).
+Decisions in [ADR-0007](decisions/0007-cycle2b-queue-daemon.md). Release pending.
 
 ## Phase 5 — Robustness & tests (Go) — `planned`
 
@@ -325,16 +339,32 @@ breadcrumb cleanup vs. glob metacharacters in the output folder — found and fi
 suite green under `-race`. See [ADR-0006](decisions/0006-cycle2a-logs-breadcrumbs-notifications.md).
 Release pending (no tag yet).
 
-**Cycle 2B — queue + daemon — planned.** Real queue + `ytdld` daemon (filesystem
-spool, atomic `mv` transitions) + bounded concurrency + `ytdl queue`/`status`/
-`cancel`/`retry`, plus phase-5 hardening + tests. Reuses the 2A primitives (the
-central store as job history; `NormalizeURL`/`Hash` as stable job identity).
+**Cycle 2B-core — queue + on-demand daemon — done, merged to `main` (2026-07-23).**
+Filesystem spool (`internal/queue`, atomic `mv` transitions) drained by an on-demand
+`ytdld` daemon (`internal/daemon`: `flock` single-instance, bounded worker pool,
+crash recovery, idle-exit), the `concurrency` config key (default 3; `unlimited`
+draws an advisory warning), `ytdl queue [--watch]`/`status`, and `-b` rewritten to
+enqueue. The daemon is the same `ytdl` binary self-exec'd into a hidden `__daemon`
+role (no always-on service — deferred to the GUI cycle). Reuses the 2A primitives
+(the central store as job history; `NormalizeURL`/`Hash` as stable job identity;
+queued jobs run silent, inheriting store/breadcrumb/notify). Parity preserved
+(`core.BuildArgs`/goldens byte-unchanged). Adversarially reviewed (3 reviewers).
+See [ADR-0007](decisions/0007-cycle2b-queue-daemon.md). Release pending.
 
-- **Entry:** Cycle 1 done **and shipped as v2.0.0**; Cycle 2A done **and merged to
-  `main`**. Base 2B off the latest `main` (per git practice).
+- **Entry:** Cycle 1 shipped as v2.0.0; Cycle 2A merged to `main`. Based off the
+  latest `main`.
 - **Done when:** queued/background downloads run under a concurrency cap with
-  inspectable status; logs persist centrally and auto-clean; notifications fire per
-  config; test suite green.
+  inspectable status. ✓
+
+**Cycle 2B-plus — queue completion + hardening — planned.** `ytdl cancel`/`retry`
+(already just spool `mv` transitions), phase-5 hardening (retries/backoff,
+YouTube rate-limit handling, a per-job execution timeout for hung downloads), a
+daemon logging/diagnostics seam, and removing the now-unused `core.ReExecArgs` +
+`background-*` goldens (retained in 2B-core to keep the parity gate byte-identical).
+
+- **Entry:** Cycle 2B-core merged to `main`. Base off the latest `main`.
+- **Done when:** failed jobs can be retried and pending/running jobs cancelled from
+  the CLI; hung/erroring downloads are bounded and surfaced; test suite green.
 
 ### Cycle 3 — GUI (phase 6)
 
