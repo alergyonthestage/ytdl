@@ -18,7 +18,12 @@ import (
 	"github.com/alergyonthestage/ytdl/internal/logstore"
 	"github.com/alergyonthestage/ytdl/internal/queue"
 	"github.com/alergyonthestage/ytdl/internal/run"
+	"github.com/alergyonthestage/ytdl/internal/term"
 )
+
+// colorStdout reports whether the inspection commands should colour their output
+// (a TTY, NO_COLOR unset). Computed at the edge; the cli renderers stay pure.
+func colorStdout() bool { return term.ColorEnabled(os.Stdout) }
 
 func main() { os.Exit(realMain(os.Args[1:])) }
 
@@ -181,7 +186,7 @@ func runQueueCmd(watch bool) int {
 			return 1
 		}
 		resumeIfStalled(sp, snap)
-		fmt.Print(cli.RenderQueue(snap))
+		fmt.Print(term.Colorize(cli.RenderQueue(snap), colorStdout()))
 		return 0
 	}
 	for {
@@ -226,7 +231,7 @@ func runStatusCmd() int {
 	settings, _ := resolveWithFlags(config.Partial{})
 	pruneStores(sp, settings)
 	recent := recentSummary(settings.LogDir, settings.LogRetentionDays)
-	fmt.Print(cli.RenderStatus(snap, daemon.IsRunning(sp.LockPath()), recent, settings.LogRetentionDays))
+	fmt.Print(term.Colorize(cli.RenderStatus(snap, daemon.IsRunning(sp.LockPath()), recent, settings.LogRetentionDays), colorStdout()))
 	return 0
 }
 
@@ -252,7 +257,7 @@ func runHistoryCmd(p *cli.Parsed) int {
 		fmt.Fprintf(os.Stderr, "✗ Impossibile leggere lo storico: %v\n", err)
 		return 1
 	}
-	fmt.Print(cli.RenderHistory(entries, settings.LogRetentionDays))
+	fmt.Print(term.Colorize(cli.RenderHistory(entries, settings.LogRetentionDays), colorStdout()))
 	return 0
 }
 
