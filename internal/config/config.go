@@ -22,12 +22,28 @@ type Settings struct {
 	StripTags       string // default: StripTags
 	EmbedThumbnail  bool   // default: true
 	EmbedMetadata   bool   // default: true
+
+	// Cycle 2A backend settings (logs, breadcrumb, notifications). None of these
+	// are read by core.BuildArgs, so they never affect the yt-dlp argv or the
+	// golden parity — they drive the runtime layer only.
+	LogDir              string // default: StatePath()/logs ("" if $HOME unresolvable)
+	LogRetentionDays    int    // default: 30 (0 = keep forever)
+	BreadcrumbOnFailure bool   // default: true
+	Notify              bool   // default: true
+	NotifyOn            string // default: "both" (failure|success|both)
+	NotifyForeground    bool   // default: false (notify only silent/background)
+	NotifySound         bool   // default: true
 }
 
 // Defaults copied verbatim from the Bash ytdl (lines 31-41, 196).
 const (
 	DefaultFormat       = "mp3"
 	DefaultAudioQuality = "0"
+
+	// DefaultLogRetentionDays is the central log store's age cap; 0 keeps forever.
+	DefaultLogRetentionDays = 30
+	// DefaultNotifyOn is the default set of completion events that notify.
+	DefaultNotifyOn = "both"
 
 	// NameTemplate is the filename template with yt-dlp first-present fallback
 	// chains: artist -> creator -> xartist -> uploader, and track -> xtrack ->
@@ -54,6 +70,15 @@ func ValidFormat(f string) bool { return validFormats[f] }
 // FormatList is the human-readable supported-format list, for error messages.
 const FormatList = "mp3|flac|m4a|opus|wav"
 
+// validNotifyOnValues is the whitelist for the `notify_on` key.
+var validNotifyOnValues = map[string]bool{"failure": true, "success": true, "both": true}
+
+// ValidNotifyOn reports whether v is an accepted notify_on value.
+func ValidNotifyOn(v string) bool { return validNotifyOnValues[v] }
+
+// NotifyOnList is the human-readable notify_on list, for error messages.
+const NotifyOnList = "failure|success|both"
+
 // Defaults returns the built-in settings. The output directory is
 // $HOME/Music/ytdl, matching the Bash tool; callers that need a placeholder
 // (golden tests) overwrite OutputDir afterwards.
@@ -68,6 +93,14 @@ func Defaults() Settings {
 		StripTags:       StripTags,
 		EmbedThumbnail:  true,
 		EmbedMetadata:   true,
+
+		LogDir:              defaultLogDir(),
+		LogRetentionDays:    DefaultLogRetentionDays,
+		BreadcrumbOnFailure: true,
+		Notify:              true,
+		NotifyOn:            DefaultNotifyOn,
+		NotifyForeground:    false,
+		NotifySound:         true,
 	}
 }
 
@@ -77,6 +110,17 @@ func defaultOutputDir() string {
 		home = ""
 	}
 	return filepath.Join(home, "Music", "ytdl")
+}
+
+// defaultLogDir is the central log store: StatePath()/logs. If the state base
+// cannot be determined ($HOME unresolvable and no $XDG_STATE_HOME) it is "",
+// and the runner skips central logging (best-effort).
+func defaultLogDir() string {
+	base := StatePath()
+	if base == "" {
+		return ""
+	}
+	return filepath.Join(base, "logs")
 }
 
 // Partial carries one optional value per Settings field. A nil pointer means
@@ -92,6 +136,14 @@ type Partial struct {
 	StripTags       *string
 	EmbedThumbnail  *bool
 	EmbedMetadata   *bool
+
+	LogDir              *string
+	LogRetentionDays    *int
+	BreadcrumbOnFailure *bool
+	Notify              *bool
+	NotifyOn            *string
+	NotifyForeground    *bool
+	NotifySound         *bool
 }
 
 // Env is the environment layer. For parity with the Bash tool only
@@ -163,6 +215,27 @@ func apply(s *Settings, p Partial) {
 	if p.EmbedMetadata != nil {
 		s.EmbedMetadata = *p.EmbedMetadata
 	}
+	if p.LogDir != nil {
+		s.LogDir = *p.LogDir
+	}
+	if p.LogRetentionDays != nil {
+		s.LogRetentionDays = *p.LogRetentionDays
+	}
+	if p.BreadcrumbOnFailure != nil {
+		s.BreadcrumbOnFailure = *p.BreadcrumbOnFailure
+	}
+	if p.Notify != nil {
+		s.Notify = *p.Notify
+	}
+	if p.NotifyOn != nil {
+		s.NotifyOn = *p.NotifyOn
+	}
+	if p.NotifyForeground != nil {
+		s.NotifyForeground = *p.NotifyForeground
+	}
+	if p.NotifySound != nil {
+		s.NotifySound = *p.NotifySound
+	}
 }
 
 func applyEnv(s *Settings, env Env) {
@@ -180,6 +253,12 @@ func validate(s Settings) []Warning {
 	}
 	if !validAudioQuality(s.AudioQuality) {
 		w = append(w, Warning{Msg: fmt.Sprintf("resolved audio_quality %q is not 0-9", s.AudioQuality)})
+	}
+	if !ValidNotifyOn(s.NotifyOn) {
+		w = append(w, Warning{Msg: fmt.Sprintf("resolved notify_on %q is not one of %s", s.NotifyOn, NotifyOnList)})
+	}
+	if s.LogRetentionDays < 0 {
+		w = append(w, Warning{Msg: fmt.Sprintf("resolved log_retention_days %d is negative", s.LogRetentionDays)})
 	}
 	return w
 }

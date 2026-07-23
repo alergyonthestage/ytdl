@@ -132,6 +132,58 @@ func TestValidFormat(t *testing.T) {
 	}
 }
 
+func TestBackendDefaults(t *testing.T) {
+	t.Setenv("HOME", "/pinned-home")
+	t.Setenv("XDG_STATE_HOME", "") // force the $HOME-based default
+	d := Defaults()
+	if d.LogDir != "/pinned-home/.local/state/ytdl/logs" {
+		t.Errorf("LogDir = %q, want /pinned-home/.local/state/ytdl/logs", d.LogDir)
+	}
+	if d.LogRetentionDays != DefaultLogRetentionDays {
+		t.Errorf("LogRetentionDays = %d, want %d", d.LogRetentionDays, DefaultLogRetentionDays)
+	}
+	if !d.BreadcrumbOnFailure {
+		t.Error("BreadcrumbOnFailure default = false, want true (opt-out)")
+	}
+	if !d.Notify {
+		t.Error("Notify default = false, want true")
+	}
+	if d.NotifyOn != DefaultNotifyOn {
+		t.Errorf("NotifyOn = %q, want %q", d.NotifyOn, DefaultNotifyOn)
+	}
+	if d.NotifyForeground {
+		t.Error("NotifyForeground default = true, want false (silent/background only)")
+	}
+	if !d.NotifySound {
+		t.Error("NotifySound default = false, want true")
+	}
+}
+
+func TestStatePathXDGWins(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "/xdg/state")
+	if got := StatePath(); got != "/xdg/state/ytdl" {
+		t.Errorf("StatePath() = %q, want /xdg/state/ytdl", got)
+	}
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("HOME", "/home/u")
+	if got := StatePath(); got != "/home/u/.local/state/ytdl" {
+		t.Errorf("StatePath() = %q, want /home/u/.local/state/ytdl", got)
+	}
+}
+
+func TestNotifyOnValidationFallsThrough(t *testing.T) {
+	t.Setenv("HOME", "/pinned-home")
+	// An invalid notify_on in the file falls through to the default.
+	file := Partial{NotifyOn: nil}
+	got, warns := Resolve(Partial{}, Partial{}, file, Env{})
+	if len(warns) != 0 {
+		t.Fatalf("unexpected warnings: %v", warns)
+	}
+	if got.NotifyOn != DefaultNotifyOn {
+		t.Errorf("NotifyOn = %q, want default %q", got.NotifyOn, DefaultNotifyOn)
+	}
+}
+
 func TestBoolAndEmbedPrecedence(t *testing.T) {
 	pinHome(t)
 	file := Partial{EmbedThumbnail: bp(false), PlaylistDefault: bp(true)}

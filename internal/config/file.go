@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -19,6 +20,22 @@ func ConfigPath() string {
 		base = home + "/.config"
 	}
 	return base + "/ytdl/config"
+}
+
+// StatePath returns ytdl's base state directory:
+// ${XDG_STATE_HOME:-$HOME/.local/state}/ytdl. It returns "" when neither
+// $XDG_STATE_HOME nor $HOME is resolvable, in which case the central log store
+// is skipped (best-effort — a download itself already fails fast without $HOME).
+func StatePath() string {
+	base := os.Getenv("XDG_STATE_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		base = home + "/.local/state"
+	}
+	return base + "/ytdl"
 }
 
 // LoadFile parses the config file at path into a Partial. It is read-if-present:
@@ -133,6 +150,50 @@ func assign(p *Partial, key, value string, line int) *Warning {
 			return &Warning{Line: line, Msg: fmt.Sprintf("invalid embed_metadata %q (want true|false); ignoring", value)}
 		}
 		p.EmbedMetadata = &b
+	case "log_dir":
+		// Like output_dir, an empty value must not win over the default via a
+		// non-nil pointer to "".
+		if value == "" {
+			return &Warning{Line: line, Msg: "empty log_dir; ignoring"}
+		}
+		v := expandHome(value)
+		p.LogDir = &v
+	case "log_retention_days":
+		n, ok := parseNonNegInt(value)
+		if !ok {
+			return &Warning{Line: line, Msg: fmt.Sprintf("invalid log_retention_days %q (want a non-negative integer); ignoring", value)}
+		}
+		p.LogRetentionDays = &n
+	case "breadcrumb_on_failure":
+		b, ok := parseBool(value)
+		if !ok {
+			return &Warning{Line: line, Msg: fmt.Sprintf("invalid breadcrumb_on_failure %q (want true|false); ignoring", value)}
+		}
+		p.BreadcrumbOnFailure = &b
+	case "notify":
+		b, ok := parseBool(value)
+		if !ok {
+			return &Warning{Line: line, Msg: fmt.Sprintf("invalid notify %q (want true|false); ignoring", value)}
+		}
+		p.Notify = &b
+	case "notify_on":
+		if !ValidNotifyOn(value) {
+			return &Warning{Line: line, Msg: fmt.Sprintf("invalid notify_on %q (want %s); ignoring", value, NotifyOnList)}
+		}
+		v := value
+		p.NotifyOn = &v
+	case "notify_foreground":
+		b, ok := parseBool(value)
+		if !ok {
+			return &Warning{Line: line, Msg: fmt.Sprintf("invalid notify_foreground %q (want true|false); ignoring", value)}
+		}
+		p.NotifyForeground = &b
+	case "notify_sound":
+		b, ok := parseBool(value)
+		if !ok {
+			return &Warning{Line: line, Msg: fmt.Sprintf("invalid notify_sound %q (want true|false); ignoring", value)}
+		}
+		p.NotifySound = &b
 	default:
 		return &Warning{Line: line, Msg: fmt.Sprintf("unknown key %q; ignoring", key)}
 	}
@@ -154,6 +215,15 @@ func expandHome(v string) string {
 		}
 	}
 	return v
+}
+
+// parseNonNegInt accepts a base-10 non-negative integer and nothing else.
+func parseNonNegInt(v string) (int, bool) {
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
 }
 
 // parseBool accepts true|false case-insensitively and nothing else.
