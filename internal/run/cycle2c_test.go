@@ -3,12 +3,68 @@ package run
 import (
 	"bytes"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/alergyonthestage/ytdl/internal/core"
 	"github.com/alergyonthestage/ytdl/internal/logstore"
 )
+
+// writeFakeYtDlp puts a minimal yt-dlp/ffmpeg (the given script) on PATH — used
+// by the dry-run tests, which need control over stderr and the exit code rather
+// than the richer print-to-file fake.
+func writeFakeYtDlp(t *testing.T, script string) {
+	t.Helper()
+	bin := t.TempDir()
+	for _, name := range []string{"yt-dlp", "ffmpeg"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// captureStderr runs fn with os.Stderr redirected to a pipe and returns what was
+// written. Not parallel-safe (mutates the global os.Stderr).
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	fn()
+	w.Close()
+	os.Stderr = old
+	out, _ := io.ReadAll(r)
+	return string(out)
+}
+
+func TestDryRunSuccessPreservesStderr(t *testing.T) {
+	writeFakeYtDlp(t, "#!/usr/bin/env bash\necho 'una nota' 1>&2\nexit 0\n")
+	o := runOptions(t, core.ModeDryRun, t.TempDir())
+	var buf bytes.Buffer
+	got := captureStderr(t, func() { Dispatch(o, &buf, &buf) })
+	if !strings.Contains(got, "una nota") {
+		t.Errorf("a successful preview must not swallow yt-dlp stderr; got %q", got)
+	}
+}
+
+func TestDryRunFailureMediated(t *testing.T) {
+	writeFakeYtDlp(t, "#!/usr/bin/env bash\nprintf 'ERROR: Sign in to confirm you are not a bot\\n' 1>&2\nexit 1\n")
+	o := runOptions(t, core.ModeDryRun, t.TempDir())
+	var buf bytes.Buffer
+	got := captureStderr(t, func() { Dispatch(o, &buf, &buf) })
+	if !strings.Contains(got, "verifica anti-bot") {
+		t.Errorf("a bot-check preview failure must be mediated; got %q", got)
+	}
+	if strings.Contains(got, "ERROR: Sign in") {
+		t.Errorf("the raw yt-dlp error must be hidden on failure; got %q", got)
+	}
+}
 
 func TestDryRunErrorMessage(t *testing.T) {
 	// The YouTube anti-bot challenge gets a specific, reassuring message.

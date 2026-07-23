@@ -137,7 +137,11 @@ func runDryRun(o core.Options, w io.Writer) int {
 	cmd.Stdout = w
 	cmd.Stderr = &errbuf
 	rc := runCode(cmd)
-	if rc != 0 {
+	if rc == 0 {
+		// Preserve any notices yt-dlp emitted on a SUCCESSFUL preview (parity with
+		// the old raw tee); only a failure is mediated, to hide the bot-check dump.
+		os.Stderr.Write(errbuf.Bytes())
+	} else {
 		fmt.Fprint(os.Stderr, dryRunErrorMessage(errbuf.Bytes()))
 	}
 	return rc
