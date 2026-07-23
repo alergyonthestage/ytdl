@@ -221,7 +221,12 @@ edge cases, retries/backoff, YouTube rate-limit handling, and a real test suite
 
 A GUI for non-developer users. It is a **front-end over the Go engine** (config +
 queue + runner already built), not a reimplementation. Runtime is settled by
-ADR-0003: a web UI served by the Go daemon.
+ADR-0003: a web UI served by the Go daemon. Its **lifecycle** is settled by
+[ADR-0008](decisions/0008-daemon-lifecycle.md): the daemon is **long-lived but
+session-scoped, not always-on** — it lives while a GUI client is connected OR the
+queue has work, and exits only when the GUI is closed AND the queue is drained
+(the CLI-only path is the no-GUI special case). No `launchd` always-on service is
+installed by default.
 
 | # | Item | Notes |
 |---|---|---|
@@ -365,6 +370,27 @@ daemon logging/diagnostics seam, and removing the now-unused `core.ReExecArgs` +
 - **Entry:** Cycle 2B-core merged to `main`. Base off the latest `main`.
 - **Done when:** failed jobs can be retried and pending/running jobs cancelled from
   the CLI; hung/erroring downloads are bounded and surfaced; test suite green.
+
+**Cycle 2C — CLI UX pass — planned.** A dedicated polish of the command-line
+surface exposed by Cycle 2B-core, driven by real-use feedback (2026-07-23). Scope:
+(1) `queue --watch` redraws its region **in place** instead of clearing the whole
+screen (which wiped the terminal and spammed scrollback); (2) the completion count
+is redesigned — `queue` shows only **live** work (pending/running), `status` shows
+the daemon (informationally) plus a **recent** summary, and a new `ytdl history`
+reads the **log store** (which, unlike the spool, also records foreground
+downloads and already has timestamps + age retention), with the spool's
+`done/`/`failed/` pruned to fix their unbounded growth; (3) `-n` (preview) failures
+are surfaced **legibly** rather than dumping raw yt-dlp output; (4) cross-cutting:
+distinct `queue`/`status`/`history` roles, TTY-aware restrained colour (off when
+piped), empty-state hints. Designed **daemon-lifecycle-agnostic**
+([ADR-0008](decisions/0008-daemon-lifecycle.md)) so it stays correct across the
+Cycle 3 daemon.
+
+- **Entry:** Cycle 2B-core merged to `main`. Separate from 2B-plus; coordinate on
+  the shared spool (2C prunes `done/`/`failed/`; 2B-plus reads `failed/` for retry).
+- **Done when:** `--watch` updates in place; `queue`/`status`/`history` have
+  distinct, truthful semantics; the spool no longer leaks terminal jobs; `-n`
+  failures read cleanly; suite green.
 
 ### Cycle 3 — GUI (phase 6)
 
