@@ -27,6 +27,7 @@ const (
 	ActionQueue   // `ytdl queue [--watch]` — inspect the queue
 	ActionStatus  // `ytdl status` — queue + daemon summary
 	ActionHistory // `ytdl history [--failed] [--limit N]` — durable log
+	ActionGUI     // `ytdl gui` — open the local web interface (Cycle 3)
 )
 
 // Parsed is the result of parsing. When Action == ActionRun, RunMode, URL and
@@ -77,6 +78,8 @@ func Parse(args []string) (*Parsed, error) {
 			return parseStatus(args[1:])
 		case "history":
 			return parseHistory(args[1:])
+		case "gui":
+			return parseGUI(args[1:])
 		}
 	}
 
@@ -187,6 +190,15 @@ func parseQueue(rest []string) (*Parsed, error) {
 }
 
 // parseStatus parses `status`, which takes no arguments in 2B-core.
+// parseGUI accepts `ytdl gui` with no options: the interface itself is where
+// every setting lives, so the command only has to open it.
+func parseGUI(rest []string) (*Parsed, error) {
+	if len(rest) > 0 {
+		return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, rest[0]), Usage: true}
+	}
+	return &Parsed{Action: ActionGUI}, nil
+}
+
 func parseStatus(rest []string) (*Parsed, error) {
 	if len(rest) > 0 {
 		return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, rest[0]), Usage: true}
