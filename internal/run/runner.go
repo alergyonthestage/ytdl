@@ -235,7 +235,28 @@ func runDefault(o core.Options, w io.Writer) int {
 // playlist item), keyed by a stable hash so a later success cleans it up (U7).
 // A completion notification fires per config (U6). It is also the mode the
 // background launcher re-executes into, so background inherits all of this.
-func runSilent(o core.Options) int {
+func runSilent(o core.Options) int { return runSilentSink(o, nil) }
+
+// RunQueued executes a queued job in silent mode with optional live-progress
+// capture — the daemon's execution entry point when serving the web GUI (Cycle
+// 3). With a non-nil sink, yt-dlp is asked to emit machine-parseable progress
+// (appended AFTER core.BuildArgs, off the golden argv path) and every update is
+// forwarded to sink for SSE streaming, while the failure .log stays free of
+// progress lines. A nil sink is exactly runSilent — byte-identical behaviour —
+// so a CLI-spawned daemon with no GUI connected pays nothing. It performs the
+// pre-download mkdir that Dispatch does for the interactive silent mode.
+func RunQueued(o core.Options, sink ProgressSink) int {
+	if err := os.MkdirAll(o.Settings.OutputDir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "✗ Impossibile creare la cartella %s: %v\n", o.Settings.OutputDir, err)
+		return 1
+	}
+	return runSilentSink(o, sink)
+}
+
+// runSilentSink is runSilent's body, parameterised by an optional progress sink.
+// A nil sink is the interactive `ytdl -s` path (no progress args; yt-dlp stderr
+// goes straight to the failure log, unchanged); a non-nil sink is the GUI path.
+func runSilentSink(o core.Options, sink ProgressSink) int {
 	// Register each cleanup immediately after its own successful creation, so a
 	// later failure still removes the temp files already made.
 	saved, cleanSaved, err := tempFile("ytdl-saved-")
@@ -281,6 +302,14 @@ func runSilent(o core.Options) int {
 			"--print-to-file", logstore.SucceededItemTemplate, succeededFile)
 	}
 
+	// Live-progress capture (GUI): ask yt-dlp for machine-parseable progress on
+	// stderr, appended after BuildArgs so the golden argv is untouched. The
+	// progressStderr splitter routes those lines to the sink and everything else
+	// to the failure log, keeping the .log identical to a no-progress run.
+	if sink != nil {
+		args = append(args, progressArgs()...)
+	}
+
 	ef, err := os.OpenFile(errlog, os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "✗ Errore file temporaneo: %v\n", err)
@@ -288,8 +317,17 @@ func runSilent(o core.Options) int {
 	}
 	cmd := exec.Command(ytDlp, args...)
 	cmd.Stdout = nil // → /dev/null
-	cmd.Stderr = ef
+	var pw *progressStderr
+	if sink != nil {
+		pw = newProgressStderr(ef, sink)
+		cmd.Stderr = pw
+	} else {
+		cmd.Stderr = ef
+	}
 	rc := runCode(cmd)
+	if pw != nil {
+		pw.Flush() // route any buffered trailing (non-progress) line to the .log
+	}
 	ef.Close()
 
 	// "Success" means yt-dlp exited 0 AND actually saved a file. Count non-blank

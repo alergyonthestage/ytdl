@@ -151,6 +151,12 @@ if [ -n "$sucfile" ] && [ -n "$YTDLP_FAKE_SUCCEEDED" ]; then
   IFS=',' read -ra sids <<< "$YTDLP_FAKE_SUCCEEDED"
   for id in "${sids[@]}"; do printf '%s\n' "$id" >> "$sucfile"; done
 fi
+if [ -n "$YTDLP_FAKE_PROGRESS" ]; then
+  printf '@@YTDLP-PROGRESS@@\tdownloading\t 10.0%%\t1.00MiB/s\t00:10\tArtist - Track\n' >&2
+  printf '@@YTDLP-PROGRESS@@\tdownloading\t 55.5%%\t2.00MiB/s\t00:05\tArtist - Track\n' >&2
+  printf '@@YTDLP-PROGRESS@@\tfinished\t100.0%%\t\t\tArtist - Track\n' >&2
+  printf 'a genuine stderr warning\n' >&2
+fi
 exit "${YTDLP_FAKE_RC:-0}"
 `
 	for _, name := range []string{"yt-dlp", "ffmpeg"} {
