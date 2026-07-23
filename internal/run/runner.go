@@ -298,11 +298,15 @@ func runBackground(o core.Options, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "  Verrà ripreso al prossimo `ytdl -b`; controlla con `ytdl queue`.")
 	}
 
-	pending := 0
+	// Report jobs not yet terminal (pending + running), so the count stays truthful
+	// even if an already-warm daemon claimed this job before we read the spool. On
+	// a List error, omit the count rather than print a misleading "0".
 	if snap, err := sp.List(); err == nil {
-		pending, _, _, _ = snap.Counts()
+		p, r, _, _ := snap.Counts()
+		fmt.Fprintf(stdout, "▸ Download accodato (%d in coda).\n", p+r)
+	} else {
+		fmt.Fprintln(stdout, "▸ Download accodato.")
 	}
-	fmt.Fprintf(stdout, "▸ Download accodato (%d in attesa).\n", pending)
 	fmt.Fprintf(stdout, "  Audio → %s\n", o.Settings.OutputDir)
 	fmt.Fprintf(stdout, "  Stato: ytdl queue   ·   se fallisce, troverai un file .log accanto all'audio.\n")
 	return 0

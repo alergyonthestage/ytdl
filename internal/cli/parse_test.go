@@ -160,6 +160,19 @@ func TestParseSubcommands(t *testing.T) {
 			t.Fatalf("status extra: err = %v, want a usage ParseError", err)
 		}
 	})
+	// `--` is the escape hatch for a URL literally named like a subcommand: it
+	// routes to the download path, not the queue front-end.
+	t.Run("-- escapes subcommand keywords", func(t *testing.T) {
+		for _, kw := range []string{"queue", "status"} {
+			p, err := Parse([]string{"--", kw})
+			if err != nil {
+				t.Fatalf("-- %s: %v", kw, err)
+			}
+			if p.Action != ActionRun || p.URL != kw {
+				t.Errorf("-- %s: action=%d url=%q, want ActionRun url=%q", kw, p.Action, p.URL, kw)
+			}
+		}
+	})
 }
 
 func TestParseErrors(t *testing.T) {

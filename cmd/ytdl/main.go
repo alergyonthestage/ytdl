@@ -160,7 +160,9 @@ func jobRunner(j queue.Job) int {
 }
 
 // runQueueCmd prints the queue once, or (with --watch) redraws it every second
-// until interrupted.
+// until interrupted. It also resumes a stalled daemon (ADR-0007 §4): if there is
+// queued work but nobody draining it — the residual enqueue-vs-exit race, or a
+// crashed daemon — inspecting the queue starts a fresh one.
 func runQueueCmd(watch bool) int {
 	stateDir := config.StatePath()
 	if stateDir == "" {
@@ -174,6 +176,7 @@ func runQueueCmd(watch bool) int {
 			fmt.Fprintf(os.Stderr, "✗ Impossibile leggere la coda: %v\n", err)
 			return 1
 		}
+		resumeIfStalled(sp, snap)
 		fmt.Print(cli.RenderQueue(snap))
 		return 0
 	}
@@ -183,9 +186,21 @@ func runQueueCmd(watch bool) int {
 			fmt.Fprintf(os.Stderr, "✗ Impossibile leggere la coda: %v\n", err)
 			return 1
 		}
+		resumeIfStalled(sp, snap)
 		fmt.Print("\033[H\033[2J") // home + clear screen
 		fmt.Print(cli.RenderQueue(snap))
 		time.Sleep(time.Second)
+	}
+}
+
+// resumeIfStalled starts a daemon when the spool holds un-terminal work
+// (pending or orphaned-running) but none is draining. Spawn is idempotent, so a
+// harmless double-start is impossible; the IsRunning probe just avoids the churn
+// of a spawn-then-immediately-exit when a daemon is already live.
+func resumeIfStalled(sp *queue.Spool, snap queue.Snapshot) {
+	p, r, _, _ := snap.Counts()
+	if p+r > 0 && !daemon.IsRunning(sp.LockPath()) {
+		_ = daemon.Spawn()
 	}
 }
 
