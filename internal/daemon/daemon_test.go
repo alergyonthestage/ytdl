@@ -168,6 +168,31 @@ func TestServeRejectsNilConfig(t *testing.T) {
 	}
 }
 
+func TestIsRunning(t *testing.T) {
+	sp := queue.Open(t.TempDir())
+	if err := sp.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	if IsRunning(sp.LockPath()) {
+		t.Error("IsRunning = true with no daemon, want false")
+	}
+
+	lf, err := os.OpenFile(sp.LockPath(), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("could not take the lock: %v", err)
+	}
+	defer func() {
+		_ = syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
+		_ = lf.Close()
+	}()
+	if !IsRunning(sp.LockPath()) {
+		t.Error("IsRunning = false while the lock is held, want true")
+	}
+}
+
 func mustCounts(t *testing.T, sp *queue.Spool) (pending, running, done, failed int) {
 	t.Helper()
 	snap, err := sp.List()

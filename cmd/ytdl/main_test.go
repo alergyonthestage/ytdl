@@ -5,7 +5,65 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/alergyonthestage/ytdl/internal/config"
+	"github.com/alergyonthestage/ytdl/internal/queue"
 )
+
+// captureStdout runs fn with os.Stdout redirected to a pipe and returns what was
+// written. Not parallel-safe (mutates the global os.Stdout).
+func captureStdout(t *testing.T, fn func() int) (int, string) {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	rc := fn()
+	w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	return rc, string(out)
+}
+
+// The `queue` subcommand reads the same spool the enqueue path writes: an
+// enqueued job shows up in `ytdl queue`, exercising StatePath -> queue.Open ->
+// RenderQueue end to end.
+func TestRealMainQueueListsEnqueued(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+	t.Setenv("HOME", dir)
+
+	sp := queue.Open(config.StatePath())
+	if _, err := sp.Enqueue(queue.Job{URL: "https://youtu.be/MAIN", EnqueuedAt: time.Unix(1, 0)}); err != nil {
+		t.Fatal(err)
+	}
+
+	rc, out := captureStdout(t, func() int { return realMain([]string{"queue"}) })
+	if rc != 0 {
+		t.Errorf("rc = %d, want 0", rc)
+	}
+	if !strings.Contains(out, "https://youtu.be/MAIN") {
+		t.Errorf("queue output missing the enqueued job:\n%s", out)
+	}
+}
+
+// `status` reports the daemon as not running when none holds the lock.
+func TestRealMainStatusNoDaemon(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+	t.Setenv("HOME", dir)
+
+	rc, out := captureStdout(t, func() int { return realMain([]string{"status"}) })
+	if rc != 0 {
+		t.Errorf("rc = %d, want 0", rc)
+	}
+	if !strings.Contains(out, "non attivo") {
+		t.Errorf("status output should report the daemon as not running:\n%s", out)
+	}
+}
 
 // captureStderr runs fn with os.Stderr redirected to a pipe and returns what was
 // written. Not parallel-safe (mutates the global os.Stderr).

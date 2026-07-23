@@ -116,6 +116,52 @@ func TestParsePostURLFlags(t *testing.T) {
 	}
 }
 
+func TestParseSubcommands(t *testing.T) {
+	t.Run("queue", func(t *testing.T) {
+		p, err := Parse([]string{"queue"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Action != ActionQueue || p.QueueWatch {
+			t.Errorf("got %+v, want ActionQueue without watch", p)
+		}
+	})
+	t.Run("queue --watch / -w", func(t *testing.T) {
+		for _, a := range []string{"--watch", "-w"} {
+			p, err := Parse([]string{"queue", a})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.Action != ActionQueue || !p.QueueWatch {
+				t.Errorf("%s: got %+v, want ActionQueue with watch", a, p)
+			}
+		}
+	})
+	t.Run("queue unknown option", func(t *testing.T) {
+		_, err := Parse([]string{"queue", "--bogus"})
+		var pe *ParseError
+		if !errors.As(err, &pe) || !pe.Usage {
+			t.Fatalf("queue --bogus: err = %v, want a usage ParseError", err)
+		}
+	})
+	t.Run("status", func(t *testing.T) {
+		p, err := Parse([]string{"status"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Action != ActionStatus {
+			t.Errorf("got %+v, want ActionStatus", p)
+		}
+	})
+	t.Run("status takes no args", func(t *testing.T) {
+		_, err := Parse([]string{"status", "extra"})
+		var pe *ParseError
+		if !errors.As(err, &pe) || !pe.Usage {
+			t.Fatalf("status extra: err = %v, want a usage ParseError", err)
+		}
+	})
+}
+
 func TestParseErrors(t *testing.T) {
 	cases := []struct {
 		name  string

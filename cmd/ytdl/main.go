@@ -6,12 +6,16 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/alergyonthestage/ytdl/internal/cli"
 	"github.com/alergyonthestage/ytdl/internal/config"
 	"github.com/alergyonthestage/ytdl/internal/core"
+	"github.com/alergyonthestage/ytdl/internal/daemon"
+	"github.com/alergyonthestage/ytdl/internal/queue"
 	"github.com/alergyonthestage/ytdl/internal/run"
 )
 
@@ -22,6 +26,13 @@ func realMain(args []string) int {
 	// PATH (Finder, an app, a never-reopened Terminal) — done first, like the
 	// Bash tool, so it applies to every action.
 	run.PrependLocalBin()
+
+	// The hidden daemon role is intercepted before the user-facing parser: it is
+	// the queue drainer the enqueue path self-exec's into, not a command a user
+	// types (absent from --help).
+	if len(args) > 0 && args[0] == daemon.DaemonSubcommand {
+		return runDaemon()
+	}
 
 	parsed, err := cli.Parse(args)
 	if err != nil {
@@ -42,6 +53,10 @@ func realMain(args []string) int {
 		return run.ShowVersion(os.Stdout)
 	case cli.ActionUpdate:
 		return run.Update()
+	case cli.ActionQueue:
+		return runQueueCmd(parsed.QueueWatch)
+	case cli.ActionStatus:
+		return runStatusCmd()
 	}
 
 	// ActionRun. C1: a bad -f flag fails fast (unlike the config file, which
@@ -89,8 +104,13 @@ func realMain(args []string) int {
 // resolveSettings builds the layer Partials and resolves them. The session layer
 // is empty in Cycle 1; the env layer honours only $YTDL_OUT_DIR.
 func resolveSettings(parsed *cli.Parsed) (config.Settings, []config.Warning) {
-	flags := config.Partial{OutputDir: parsed.OutputDir, Format: parsed.Format}
+	return resolveWithFlags(config.Partial{OutputDir: parsed.OutputDir, Format: parsed.Format})
+}
 
+// resolveWithFlags overlays the config file and env onto the given flag layer. The
+// daemon calls it with an empty flag layer (it only needs the config-file values,
+// notably concurrency).
+func resolveWithFlags(flags config.Partial) (config.Settings, []config.Warning) {
 	var file config.Partial
 	var warns []config.Warning
 	if path := config.ConfigPath(); path != "" {
@@ -107,4 +127,81 @@ func resolveSettings(parsed *cli.Parsed) (config.Settings, []config.Warning) {
 	settings, rwarns := config.Resolve(flags, config.Partial{}, file, env)
 	warns = append(warns, rwarns...)
 	return settings, warns
+}
+
+// runDaemon is the hidden __daemon role: drain the queue under the configured
+// concurrency cap, then idle-exit. It runs detached with /dev/null stdio, so it
+// prints nothing; per-job logs/notifications flow through the same silent-mode
+// path a CLI download uses. ErrAlreadyRunning is a clean exit (another daemon is
+// already draining).
+func runDaemon() int {
+	stateDir := config.StatePath()
+	if stateDir == "" {
+		return 1
+	}
+	settings, _ := resolveWithFlags(config.Partial{})
+	err := daemon.Serve(daemon.Config{
+		Spool:       queue.Open(stateDir),
+		Concurrency: settings.Concurrency,
+		Run:         jobRunner,
+	})
+	if err != nil && !errors.Is(err, daemon.ErrAlreadyRunning) {
+		return 1
+	}
+	return 0
+}
+
+// jobRunner executes one queued job through the shared runtime layer in silent
+// mode — the same core.BuildArgs, log store, breadcrumb and notification wiring
+// as an interactive `ytdl -s`, so queued downloads behave identically.
+func jobRunner(j queue.Job) int {
+	o := core.Options{Mode: core.ModeSilent, URL: j.URL, Settings: j.Settings, Playlist: j.Playlist}
+	return run.Dispatch(o, io.Discard, io.Discard)
+}
+
+// runQueueCmd prints the queue once, or (with --watch) redraws it every second
+// until interrupted.
+func runQueueCmd(watch bool) int {
+	stateDir := config.StatePath()
+	if stateDir == "" {
+		fmt.Fprintln(os.Stderr, "✗ Impossibile individuare la coda: $HOME non è impostata.")
+		return 1
+	}
+	sp := queue.Open(stateDir)
+	if !watch {
+		snap, err := sp.List()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "✗ Impossibile leggere la coda: %v\n", err)
+			return 1
+		}
+		fmt.Print(cli.RenderQueue(snap))
+		return 0
+	}
+	for {
+		snap, err := sp.List()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "✗ Impossibile leggere la coda: %v\n", err)
+			return 1
+		}
+		fmt.Print("\033[H\033[2J") // home + clear screen
+		fmt.Print(cli.RenderQueue(snap))
+		time.Sleep(time.Second)
+	}
+}
+
+// runStatusCmd prints a one-shot queue + daemon-liveness summary.
+func runStatusCmd() int {
+	stateDir := config.StatePath()
+	if stateDir == "" {
+		fmt.Fprintln(os.Stderr, "✗ Impossibile individuare la coda: $HOME non è impostata.")
+		return 1
+	}
+	sp := queue.Open(stateDir)
+	snap, err := sp.List()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "✗ Impossibile leggere la coda: %v\n", err)
+		return 1
+	}
+	fmt.Print(cli.RenderStatus(snap, daemon.IsRunning(sp.LockPath())))
+	return 0
 }

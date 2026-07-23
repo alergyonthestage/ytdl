@@ -18,6 +18,10 @@ OPZIONI
   -V, --version       Mostra la versione di ytdl e yt-dlp
       --update        Aggiorna ytdl e yt-dlp all'ultima versione
 
+CODA
+  ytdl queue [--watch]   Elenca i download in attesa e in corso (--watch aggiorna)
+  ytdl status            Riepilogo della coda e stato del daemon
+
 AGGIORNAMENTI
   yt-dlp smette di funzionare quando YouTube cambia qualcosa: succede ogni
   pochi mesi. Se i download iniziano a fallire, la prima cosa da provare è:

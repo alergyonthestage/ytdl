@@ -170,6 +170,25 @@ func acquireLock(path string) (func(), error) {
 	}, nil
 }
 
+// IsRunning reports whether a daemon currently holds the lock, by probing it: it
+// tries the same exclusive non-blocking flock and, if it succeeds, immediately
+// releases (no daemon was running). A contended lock means a daemon is live. The
+// probe holds the lock only for the microseconds between acquire and release; the
+// tiny chance of a concurrent daemon spawn seeing that as "busy" is the same
+// documented residual race the next invocation recovers (ADR-0007 §4).
+func IsRunning(lockPath string) bool {
+	lf, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return false // can't tell; report not-running rather than block status
+	}
+	defer lf.Close()
+	if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return errors.Is(err, syscall.EWOULDBLOCK)
+	}
+	_ = syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
+	return false
+}
+
 // Spawn self-exec's the current binary into the hidden __daemon subcommand,
 // detached from the terminal (Setsid + /dev/null stdio) and released so the
 // parent does not wait. It is idempotent: a duplicate daemon exits immediately on
