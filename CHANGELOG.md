@@ -34,6 +34,35 @@ parity tests) byte-unchanged. See
   silent-mode failure is **replaced** by the central log store (always) plus the
   opt-out breadcrumb — removing the title-collision and filename-fragility issues.
 
+Cycle 2B-core — the queue + on-demand daemon slice of the backend work. Runtime
+layer only; the yt-dlp argument vector and golden parity tests stay byte-unchanged.
+See [ADR-0007](docs/decisions/0007-cycle2b-queue-daemon.md).
+
+### Added
+
+- **Download queue** — a lock-free filesystem spool at
+  `${XDG_STATE_HOME:-~/.local/state}/ytdl/queue/{pending,running,done,failed}/` with
+  atomic `mv` state transitions (maildir-style, no locks).
+- **On-demand `ytdld` daemon** — the same `ytdl` binary self-exec'd into a hidden
+  `__daemon` role, holding an exclusive `flock` (single instance), draining the
+  queue under a bounded worker pool, recovering jobs stranded by a killed daemon,
+  and idle-exiting when the queue empties. No always-on service.
+- **`ytdl queue [--watch]`** and **`ytdl status`** — inspect pending/running/done/
+  failed jobs and daemon liveness; `ytdl queue` also restarts a stalled daemon.
+- **`concurrency` config key** — parallel-download cap (default 3; `unlimited` is
+  allowed but discouraged, and an aggressive value draws an advisory warning that
+  YouTube may throttle many parallel downloads).
+
+### Changed
+
+- **`-b`/`--background` now enqueues** onto the queue and lets the daemon run it
+  under the concurrency cap, superseding the previous unbounded `Setsid` detach
+  (five `ytdl -b` no longer start five simultaneous downloads). Queued downloads
+  run in silent mode, so they still get the 2A log store, breadcrumb and
+  notification.
+- Help text: the stale `<titolo>.log` wording is corrected and the new `queue`/
+  `status` commands are documented.
+
 ## [2.0.0] — 2026-07-23
 
 A clean break from the Bash `1.x` line: ytdl is now a single compiled Go binary
