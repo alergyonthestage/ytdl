@@ -40,7 +40,8 @@ type QueryOpts struct {
 // file if needed. Best-effort like Record: a dir of "" is a no-op and the caller
 // may ignore the error. Concurrent appends from several processes (a foreground
 // ytdl and daemon workers) are safe: each record is a single small O_APPEND
-// write, which POSIX does not interleave.
+// write, which the kernel does not interleave on a local filesystem (verified by
+// a concurrent stress test).
 func Append(dir string, j Job) error {
 	if dir == "" {
 		return nil
@@ -85,13 +86,7 @@ func Load(dir string, opts QueryOpts) ([]Entry, error) {
 	defer f.Close()
 
 	var out []Entry
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if len(line) == 0 {
-			continue
-		}
+	for _, line := range readLines(f) {
 		var e Entry
 		if err := json.Unmarshal(line, &e); err != nil {
 			continue // skip a malformed line
@@ -103,9 +98,6 @@ func Load(dir string, opts QueryOpts) ([]Entry, error) {
 			continue
 		}
 		out = append(out, e)
-	}
-	if err := sc.Err(); err != nil {
-		return out, err
 	}
 	// Newest first; stable so equal timestamps keep their append order.
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Time.After(out[j].Time) })
@@ -138,26 +130,15 @@ func pruneHistory(dir string, retentionDays int) error {
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
 	var kept [][]byte
 	dropped := 0
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if len(line) == 0 {
-			continue
-		}
+	for _, line := range readLines(f) {
 		var e Entry
 		if err := json.Unmarshal(line, &e); err == nil && e.Time.Before(cutoff) {
 			dropped++
 			continue
 		}
-		cp := make([]byte, len(line))
-		copy(cp, line)
-		kept = append(kept, cp)
+		kept = append(kept, line) // in-window or malformed: keep verbatim
 	}
 	f.Close()
-	if err := sc.Err(); err != nil {
-		return err
-	}
 	if dropped == 0 {
 		return nil // nothing expired; don't rewrite (and don't needlessly race an append)
 	}
@@ -181,4 +162,31 @@ func pruneHistory(dir string, retentionDays int) error {
 		return err
 	}
 	return os.Rename(tmpName, path)
+}
+
+// readLines reads f line by line with a bufio.Reader (deliberately NOT a
+// bufio.Scanner): a Scanner aborts the whole read on a single token longer than
+// its buffer, which would make one pathological line permanently break `ytdl
+// history` AND block pruneHistory's self-repair. ReadBytes has no such cap — an
+// oversize line comes back like any other, to be JSON-parsed and, if malformed,
+// skipped. Each returned line has its trailing newline stripped; empty lines are
+// dropped. A read error just stops the scan with whatever was read so far.
+func readLines(f *os.File) [][]byte {
+	var lines [][]byte
+	br := bufio.NewReader(f)
+	for {
+		line, err := br.ReadBytes('\n')
+		if n := len(line); n > 0 {
+			if line[n-1] == '\n' {
+				line = line[:n-1]
+			}
+			if len(line) > 0 {
+				lines = append(lines, line) // ReadBytes returns a fresh slice each call
+			}
+		}
+		if err != nil {
+			break // io.EOF (incl. a final newline-less line, already handled above) or a read error
+		}
+	}
+	return lines
 }

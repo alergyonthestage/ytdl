@@ -293,11 +293,15 @@ func runSilent(o core.Options) int {
 	// and the notification — consistent with default mode (an empty or
 	// blank-only saved list is a failure, matching the Bash tool's zero-files
 	// case, ytdl lines 290-293).
-	first, count := readSavedPaths(saved)
+	_, count := readSavedPaths(saved)
 	success := rc == 0 && count > 0
 	now := time.Now()
 
-	recordJob(o, "silent", titleFromPath(first), rc, success, readCapped(errlog, stderrCap), now)
+	// Title from the dedicated before_dl temp file (the "Artist - Track" contract,
+	// core.silentBeforeDL), NOT the saved filename — the latter depends on the
+	// user's name_template, the former does not. Empty on an early failure → the
+	// history falls back to the URL.
+	recordJob(o, "silent", lastLine(title), rc, success, readCapped(errlog, stderrCap), now)
 
 	if o.Settings.BreadcrumbOnFailure {
 		if o.Playlist {

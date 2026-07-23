@@ -3,6 +3,7 @@ package logstore
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -145,6 +146,31 @@ func TestPruneHistoryZeroRetentionKeepsAll(t *testing.T) {
 	got, _ := Load(dir, QueryOpts{})
 	if len(got) != 1 {
 		t.Fatalf("retention 0 must keep everything, got %d", len(got))
+	}
+}
+
+// TestLoadSurvivesOversizeLine guards the fix for the review's CRITICAL: a single
+// line larger than any fixed scanner buffer must not abort the read (losing every
+// record after it) nor block pruning's self-repair.
+func TestLoadSurvivesOversizeLine(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, historyFile)
+	huge := strings.Repeat("x", 2*1024*1024) // 2 MB, far over any buffer
+	valid := `{"time":"2026-07-23T20:00:00Z","url":"u","title":"survivor","mode":"silent","format":"mp3","rc":0,"success":true}`
+	if err := os.WriteFile(path, []byte(huge+"\n"+valid+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Load(dir, QueryOpts{})
+	if err != nil {
+		t.Fatalf("Load errored on an oversize line: %v", err)
+	}
+	if len(got) != 1 || got[0].Title != "survivor" {
+		t.Fatalf("the record AFTER an oversize line was lost: got %+v", got)
+	}
+	// Pruning must also survive the oversize line (self-repair is not blocked).
+	if err := Prune(dir, 1); err != nil {
+		t.Errorf("Prune errored on an oversize line: %v", err)
 	}
 }
 

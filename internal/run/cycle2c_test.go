@@ -2,6 +2,7 @@ package run
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 
@@ -93,5 +94,35 @@ func TestDefaultDownloadAppendsHistory(t *testing.T) {
 	e := entries[0]
 	if !e.Success || e.Mode != "default" || e.Title != "track1" || e.URL != o.URL {
 		t.Errorf("history entry = %+v, want success default title=track1 url=%s", e, o.URL)
+	}
+}
+
+// TestSilentHistoryTitleFromBeforeDL guards the review fix: silent/background
+// mode must take the history title from the dedicated before_dl temp file (the
+// "Artist - Track" contract), not the saved filename (which depends on the user's
+// name_template). The fake yt-dlp writes YTDLP_FAKE_TITLE to the before_dl sink
+// and "track1.mp3" as the saved file — the title must be the former.
+func TestSilentHistoryTitleFromBeforeDL(t *testing.T) {
+	fakeYtDlp(t)
+	out := t.TempDir()
+	t.Setenv("YTDLP_FAKE_DIR", out)
+	t.Setenv("YTDLP_FAKE_NLINES", "1")
+	t.Setenv("YTDLP_FAKE_RC", "0")
+	t.Setenv("YTDLP_FAKE_TITLE", "Custom Artist - Custom Track")
+
+	o := runOptions(t, core.ModeSilent, out)
+	if rc := Dispatch(o, io.Discard, io.Discard); rc != 0 {
+		t.Fatalf("rc = %d, want 0", rc)
+	}
+
+	entries, err := logstore.Load(o.Settings.LogDir, logstore.QueryOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("history has %d entries, want 1", len(entries))
+	}
+	if entries[0].Title != "Custom Artist - Custom Track" {
+		t.Errorf("silent title = %q, want the before_dl title (not the filename)", entries[0].Title)
 	}
 }
