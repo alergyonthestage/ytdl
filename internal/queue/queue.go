@@ -5,7 +5,7 @@
 //
 //	<stateDir>/queue/
 //	├── tmp/       staging — written here, then renamed into pending/ (atomic publish)
-//	├── pending/   <nanos>-<hash8>-<uniq>.json   (FIFO by name)
+//	├── pending/   <nanos>-<hash16>-<uniq>.json  (FIFO by name)
 //	├── running/   claimed jobs
 //	├── done/      terminal: succeeded
 //	├── failed/    terminal: failed
@@ -95,8 +95,12 @@ func (s *Spool) EnsureDirs() error {
 // the JSON is written to a unique tmp/ file, then os.Rename'd into pending/, so a
 // reader (List, ClaimNext) never observes a half-written job. EnqueuedAt is
 // stamped now if the caller left it zero; its nanoseconds give the FIFO filename
-// prefix, and a per-file unique suffix from the staging name prevents any
-// same-nanosecond overwrite.
+// prefix, and a per-file unique suffix from the staging name makes a
+// same-nanosecond, same-URL collision effectively impossible.
+//
+// FIFO ordering assumes a non-negative UnixNano (post-1970), which every
+// production caller satisfies (Enqueue stamps time.Now, or a real enqueue time);
+// a pre-epoch EnqueuedAt would sort wrongly under the zero-padded prefix.
 func (s *Spool) Enqueue(j Job) (string, error) {
 	if err := s.EnsureDirs(); err != nil {
 		return "", err
@@ -127,7 +131,9 @@ func (s *Spool) Enqueue(j Job) (string, error) {
 	}
 
 	// uniq is the random middle of the CreateTemp name ("job-<uniq>.tmp"); carrying
-	// it into the id guarantees uniqueness without a racy exists-check.
+	// it into the id avoids a racy exists-check. os.Rename would silently replace
+	// a colliding destination, but a collision needs the same nanosecond AND hash
+	// AND the same 32-bit random suffix — negligible in practice for one user.
 	uniq := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(tmpName), "job-"), ".tmp")
 	id := fmt.Sprintf("%020d-%s-%s", j.EnqueuedAt.UnixNano(), logstore.Hash(logstore.NormalizeURL(j.URL)), uniq)
 	if err := os.Rename(tmpName, filepath.Join(s.dir(Pending), id+".json")); err != nil {
@@ -193,6 +199,13 @@ func (s *Spool) RequeueRunning() (int, error) {
 	var firstErr error
 	for _, id := range ids {
 		if err := os.Rename(filepath.Join(s.dir(Running), id+".json"), filepath.Join(s.dir(Pending), id+".json")); err != nil {
+			// A vanished file (already moved on — e.g. a worker finished it) is
+			// benign, exactly as in ClaimNext: skip it, don't report it. This keeps
+			// requeue correct-by-construction even if a future caller ever runs it
+			// alongside live workers, not just safe by the current call order.
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
 			if firstErr == nil {
 				firstErr = err
 			}
