@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -45,7 +47,7 @@ func realMain(args []string) int {
 	// the queue drainer the enqueue path self-exec's into, not a command a user
 	// types (absent from --help).
 	if len(args) > 0 && args[0] == daemon.DaemonSubcommand {
-		return runDaemon()
+		return runDaemon(args[1:])
 	}
 
 	parsed, err := cli.Parse(args)
@@ -147,47 +149,138 @@ func resolveWithFlags(flags config.Partial) (config.Settings, []config.Warning) 
 	return settings, warns
 }
 
-// runDaemon is the hidden __daemon role: serve the web GUI and drain the queue
-// under the configured concurrency cap, then exit once the queue is drained AND
-// no GUI client is connected (ADR-0008). It runs detached with /dev/null stdio,
-// so it prints nothing; per-job logs/notifications flow through the same
-// silent-mode path a CLI download uses. ErrAlreadyRunning is a clean exit
-// (another daemon is already draining and serving).
-func runDaemon() int {
+// runDaemon is the hidden __daemon role: drain the queue under the configured
+// concurrency cap and, when spawned with --gui, also serve the web interface.
+// It exits once the queue is drained AND no GUI client is connected (ADR-0008).
+// It runs detached with /dev/null stdio, so it prints nothing; per-job
+// logs/notifications flow through the same silent-mode path a CLI download uses.
+// ErrAlreadyRunning is a clean exit (another daemon owns the queue).
+//
+// The GUI is opt-in per spawn: a daemon started by `ytdl -b` stays headless and
+// opens no listening socket, so the CLI-only path keeps its pre-Cycle-3 surface.
+func runDaemon(daemonArgs []string) int {
 	stateDir := config.StatePath()
 	if stateDir == "" {
 		return 1
 	}
+	gui := false
+	for _, a := range daemonArgs {
+		if a == daemon.GUIFlag {
+			gui = true
+		}
+	}
+
 	settings, _ := resolveWithFlags(config.Partial{})
 	sp := queue.Open(stateDir)
-
-	// The GUI is best-effort: if the port is busy (typically because another
-	// daemon already serves it, in which case Serve below returns
-	// ErrAlreadyRunning anyway) the daemon still drains the queue headlessly.
-	srv, stopWeb := startWebUI(sp, settings)
-	defer stopWeb()
-
 	cfg := daemon.Config{
 		Spool:         sp,
 		Concurrency:   settings.Concurrency,
-		Run:           jobRunner(srv),
 		RetentionDays: settings.LogRetentionDays,
 	}
-	if srv != nil {
+
+	var srv *webui.Server
+	if gui {
+		token, err := newGUIToken()
+		if err != nil {
+			return 1
+		}
+		srv = webui.New(webui.Deps{
+			Spool:         sp,
+			ConfigPath:    config.ConfigPath(),
+			Resolve:       resolveWithFlags,
+			LogDir:        settings.LogDir,
+			RetentionDays: settings.LogRetentionDays,
+			// Honest liveness: this process may be serving the UI while a headless
+			// daemon spawned by `ytdl -b` still owns the queue.
+			DaemonRunning: func() bool { return daemon.IsRunning(sp.LockPath()) },
+			Token:         token,
+		})
 		cfg.LiveClients = srv.HasClients
+		// Set explicitly (Serve would only default its own copy) because serveGUI
+		// reads it too, to decide how long to keep retrying the queue lock.
+		cfg.FirstClientGrace = daemon.DefaultFirstClientGrace
+		cfg.Run = jobRunner(srv)
+
+		// The user asked for the interface, so THIS process owns the port and
+		// serves immediately — publishing the token first, so `ytdl gui` can read
+		// it the moment the port answers.
+		_ = writeGUIToken(guiTokenPath(stateDir), token)
+		defer os.Remove(guiTokenPath(stateDir))
+		stopWeb := startWebUI(srv)
+		defer stopWeb()
+
+		return serveGUI(cfg, srv)
 	}
+
+	cfg.Run = jobRunner(nil) // headless: no GUI, so no progress sink
 	if err := daemon.Serve(cfg); err != nil && !errors.Is(err, daemon.ErrAlreadyRunning) {
 		return 1
 	}
 	return 0
 }
 
+// serveGUI runs the interface and takes over the queue when it can.
+//
+// Port ownership and queue ownership are separate: a headless daemon spawned by
+// an earlier `ytdl -b` may already hold the queue lock. Rather than give up —
+// which would make `ytdl gui` fail for as long as that daemon drains — we keep
+// serving the UI (enqueue, queue, history and settings all work through the
+// shared spool and config; only live progress needs queue ownership) and retry
+// the lock until the incumbent idle-exits, then start draining ourselves.
+//
+// We stop retrying once no client is connected and the first-client grace has
+// passed, so an unused GUI daemon does not linger (ADR-0008: no idle process).
+func serveGUI(cfg daemon.Config, srv *webui.Server) int {
+	started := time.Now()
+	for {
+		err := daemon.Serve(cfg)
+		if err == nil {
+			return 0 // we owned the queue and idle-exited per ADR-0008
+		}
+		if !errors.Is(err, daemon.ErrAlreadyRunning) {
+			return 1
+		}
+		if !srv.HasClients() && time.Since(started) > cfg.FirstClientGrace {
+			return 0
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+// guiTokenPath is the 0600 file a GUI daemon publishes its session token in, for
+// `ytdl gui` to hand to the browser. It never leaves the user's state dir.
+func guiTokenPath(stateDir string) string { return filepath.Join(stateDir, "gui.token") }
+
+func newGUIToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func writeGUIToken(path, token string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(token), 0o600)
+}
+
+func readGUIToken(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
 // jobRunner builds the daemon's per-job executor: one queued job through the
 // shared runtime layer in silent mode — the same core.BuildArgs, log store,
 // breadcrumb and notification wiring as an interactive `ytdl -s`, so queued
 // downloads behave identically. When the GUI is being served, each job also gets
-// a progress sink keyed by its spool id, so the browser can draw a live bar; with
-// no GUI the sink is nil and execution is exactly as before.
+// a progress sink keyed by its spool id, so the browser can draw a live bar. A
+// headless daemon (every `ytdl -b`) passes a nil srv, so the sink is nil, no
+// progress flags are added and execution is byte-for-byte the pre-GUI path.
 func jobRunner(srv *webui.Server) func(queue.Claim) int {
 	return func(cl queue.Claim) int {
 		j := cl.Job
@@ -208,27 +301,23 @@ func jobRunner(srv *webui.Server) func(queue.Claim) int {
 	}
 }
 
-// startWebUI binds the loopback GUI port and serves the interface, returning the
-// server (nil when the bind failed) and a shutdown func. Binding is what makes a
-// single GUI owner: only one process can hold the port, so a second daemon
-// silently runs headless.
-func startWebUI(sp *queue.Spool, settings config.Settings) (*webui.Server, func()) {
+// startWebUI binds the loopback GUI port and serves the interface, returning a
+// shutdown func. It runs from daemon.AfterLock, so the caller already owns the
+// queue. A bind failure is non-fatal: the daemon simply drains headlessly.
+func startWebUI(srv *webui.Server) func() {
 	ln, err := net.Listen("tcp", guiAddr())
 	if err != nil {
-		return nil, func() {}
+		return func() {}
 	}
-	srv := webui.New(webui.Deps{
-		Spool:         sp,
-		ConfigPath:    config.ConfigPath(),
-		Resolve:       resolveWithFlags,
-		LogDir:        settings.LogDir,
-		RetentionDays: settings.LogRetentionDays,
-		// We are the daemon, so from the GUI's point of view the engine is up.
-		DaemonRunning: func() bool { return true },
-	})
-	hs := &http.Server{Handler: srv.Handler()}
+	hs := &http.Server{
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 16,
+		// No WriteTimeout on purpose: SSE responses are long-lived by design.
+	}
 	go hs.Serve(ln)
-	return srv, func() {
+	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_ = hs.Shutdown(ctx)
@@ -243,60 +332,88 @@ func guiPort() int {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
 			return n
 		}
+		// The daemon is silent by design, but a user who set the variable and got
+		// the default port anyway deserves to know why.
+		fmt.Fprintf(os.Stderr, "! YTDL_GUI_PORT=%q non è una porta valida; uso %d.\n", v, webui.DefaultPort)
 	}
 	return webui.DefaultPort
 }
 
 func guiAddr() string { return net.JoinHostPort("127.0.0.1", strconv.Itoa(guiPort())) }
 
-// runGUICmd opens the web interface: it starts the daemon if nothing is serving
-// yet, waits for the port to accept, then hands the URL to the browser. The URL
-// is always printed, so the user can open it manually if the launcher fails.
+// runGUICmd opens the web interface: it starts a GUI-serving daemon if nothing
+// of ours is listening yet, waits for it, then hands the browser a URL carrying
+// the session token. The URL is always printed, so the user can open it manually.
 func runGUICmd() int {
-	if config.StatePath() == "" {
+	stateDir := config.StatePath()
+	if stateDir == "" {
 		fmt.Fprintln(os.Stderr, "✗ Impossibile individuare la coda: $HOME non è impostata.")
 		return 1
 	}
 	addr := guiAddr()
-	url := "http://" + addr + "/"
 
-	if !guiReachable(addr) {
-		if err := daemon.Spawn(); err != nil {
+	listening, ours := guiProbe(addr)
+	if listening && !ours {
+		// Someone else holds the port. Without this check we would send the
+		// browser to a stranger's server and report success while never starting
+		// the engine at all.
+		fmt.Fprintf(os.Stderr, "✗ La porta %d è occupata da un altro programma.\n", guiPort())
+		fmt.Fprintln(os.Stderr, "  Scegli un'altra porta, per esempio:")
+		fmt.Fprintln(os.Stderr, "      YTDL_GUI_PORT=8790 ytdl gui")
+		return 1
+	}
+	if !listening {
+		if err := daemon.SpawnGUI(); err != nil {
 			fmt.Fprintf(os.Stderr, "✗ Impossibile avviare il motore: %v\n", err)
 			return 1
 		}
-		if !waitForGUI(addr, 5*time.Second) {
+		if !waitForGUI(addr, 10*time.Second) {
 			fmt.Fprintln(os.Stderr, "✗ Il motore non ha aperto l'interfaccia in tempo.")
-			fmt.Fprintf(os.Stderr, "  Riprova, oppure apri manualmente %s\n", url)
+			fmt.Fprintln(os.Stderr, "  Riprova con `ytdl gui`.")
 			return 1
 		}
 	}
 
-	fmt.Printf("▸ Interfaccia ytdl su %s\n", url)
-	if err := openBrowser(url); err != nil {
-		fmt.Println("  Aprila nel browser (non sono riuscito a farlo da solo).")
+	url := "http://" + addr + "/"
+	if token := readGUIToken(guiTokenPath(stateDir)); token != "" {
+		url += "?t=" + token
 	}
-	fmt.Println("  Resta aperta finché la usi; il motore si chiude da solo quando")
-	fmt.Println("  chiudi la pagina e la coda è vuota.")
+
+	fmt.Printf("▸ Interfaccia ytdl su http://%s/\n", addr)
+	if err := openBrowser(url); err != nil {
+		fmt.Println("  Non sono riuscito ad aprire il browser da solo; apri questo indirizzo:")
+		fmt.Printf("      %s\n", url)
+	}
+	fmt.Println("  Il motore resta attivo finché la pagina è aperta; si chiude da solo")
+	fmt.Println("  quando la chiudi e la coda è vuota.")
 	return 0
 }
 
-// guiReachable reports whether something already accepts on the GUI port.
-func guiReachable(addr string) bool {
+// guiProbe reports whether anything accepts on addr and whether it is a ytdl
+// GUI, identified by the marker header every response carries. Distinguishing
+// the two is what stops `ytdl gui` from pointing the browser at an unrelated
+// program that merely happens to hold the port.
+func guiProbe(addr string) (listening, isYtdl bool) {
 	c, err := net.DialTimeout("tcp", addr, 250*time.Millisecond)
 	if err != nil {
-		return false
+		return false, false
 	}
 	c.Close()
-	return true
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://" + addr + "/")
+	if err != nil {
+		return true, false
+	}
+	defer resp.Body.Close()
+	return true, resp.Header.Get(webui.MarkerHeader) != ""
 }
 
-// waitForGUI polls the port until it accepts or the deadline passes — the daemon
-// is spawned detached, so there is no process to wait on.
+// waitForGUI polls until OUR interface answers or the deadline passes — the
+// daemon is spawned detached, so there is no process to wait on.
 func waitForGUI(addr string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if guiReachable(addr) {
+		if _, ours := guiProbe(addr); ours {
 			return true
 		}
 		time.Sleep(50 * time.Millisecond)

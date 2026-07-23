@@ -109,9 +109,17 @@ func parseProgressLine(line string) (ProgressEvent, bool) {
 	if total < 0 {
 		total = parseNum(f[4]) // fall back to the estimate when the size is unknown
 	}
+	status := strings.TrimSpace(f[1])
+	percent := percentOf(downloaded, total)
+	// A very fast download reports downloaded_bytes as NA on its final frame
+	// (observed with yt-dlp 2026.07.04), which would leave the bar showing
+	// "unknown" on a job that has in fact completed. "finished" IS 100%.
+	if percent < 0 && status == "finished" {
+		percent = 100
+	}
 	return ProgressEvent{
-		Status:  strings.TrimSpace(f[1]),
-		Percent: percentOf(downloaded, total),
+		Status:  status,
+		Percent: percent,
 		Speed:   formatSpeed(parseNum(f[5])),
 		ETA:     formatETA(parseNum(f[6])),
 		Title:   decodeJSONString(f[7]),

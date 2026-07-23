@@ -14,9 +14,11 @@
 package webui
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -47,6 +49,19 @@ type Deps struct {
 	// DaemonRunning reports queue-daemon liveness for the status panel
 	// (informational, per ADR-0008). Optional; nil is treated as "unknown/false".
 	DaemonRunning func() bool
+	// Token is the per-session secret that authorises API access. `ytdl gui`
+	// reads it from a 0600 file and opens the page with ?t=<token>, which sets a
+	// SameSite=Strict cookie; every /api/ route then requires it.
+	//
+	// It is what makes the local API safe. A loopback bind and a Host check stop
+	// DNS rebinding but NOT ordinary CSRF: any page the user visits can POST to
+	// http://127.0.0.1:<port>/ and the browser supplies the right Host itself.
+	// Without a token, such a page could enqueue arbitrary yt-dlp arguments and
+	// keep the daemon alive indefinitely. A SameSite=Strict cookie is not sent on
+	// cross-site requests, and the token file is unreadable by other local users.
+	//
+	// An empty Token disables the check — for tests only; production always sets it.
+	Token string
 }
 
 // Progress is one running job's live-progress snapshot, streamed to the browser
@@ -74,16 +89,108 @@ type Server struct {
 func New(d Deps) *Server { return &Server{deps: d, hub: newHub()} }
 
 // Handler returns the GUI's HTTP handler: the SPA at "/", the JSON API under
-// "/api/", and the SSE stream at "/api/events", all behind a loopback Host guard.
+// "/api/", and the SSE stream at "/api/events". Every request passes the loopback
+// Host guard; every /api/ request additionally needs the session token and a
+// same-origin-looking request (see guardAPI).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
-	mux.HandleFunc("/api/state", s.handleState)
-	mux.HandleFunc("/api/downloads", s.handleDownloads)
-	mux.HandleFunc("/api/events", s.handleEvents)
-	mux.HandleFunc("/api/settings", s.handleSettings)
-	mux.HandleFunc("/api/session", s.handleSession)
-	return s.guardLocalHost(mux)
+	api := http.NewServeMux()
+	api.HandleFunc("/api/state", s.handleState)
+	api.HandleFunc("/api/downloads", s.handleDownloads)
+	api.HandleFunc("/api/events", s.handleEvents)
+	api.HandleFunc("/api/settings", s.handleSettings)
+	api.HandleFunc("/api/session", s.handleSession)
+	mux.Handle("/api/", s.guardAPI(api))
+	return s.securityHeaders(s.guardLocalHost(mux))
+}
+
+// tokenCookie is the name of the SameSite=Strict cookie carrying the session
+// token once the page has been opened with ?t=<token>.
+const tokenCookie = "ytdl_session"
+
+// tokenHeader lets a non-browser client (curl, a test) present the token
+// directly instead of via the cookie.
+const tokenHeader = "X-Ytdl-Token"
+
+// guardAPI authorises API access. Three independent layers, because each covers
+// a case the others do not:
+//
+//  1. the session token (cookie or header) — the primary gate; a cross-site page
+//     cannot read it, and another local user cannot read the 0600 token file;
+//  2. Origin — rejected when present and not loopback, so a cross-site fetch is
+//     refused even if a token ever leaked into a URL;
+//  3. Content-Type: application/json on writes — this is what stops a plain
+//     <form> or a text/plain fetch, the two CORS-"simple" shapes that get no
+//     preflight and would otherwise reach the handler unannounced.
+func (s *Server) guardAPI(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); origin != "" && !localOrigin(origin) {
+			writeErr(w, http.StatusForbidden, "richiesta da un'origine esterna")
+			return
+		}
+		if !s.tokenOK(r) {
+			writeErr(w, http.StatusUnauthorized, "sessione non autorizzata: riapri l'interfaccia con `ytdl gui`")
+			return
+		}
+		if r.Method == http.MethodPost || r.Method == http.MethodPut {
+			if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+				writeErr(w, http.StatusUnsupportedMediaType, "richiesto Content-Type: application/json")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// tokenOK reports whether the request carries the session token. An empty
+// configured token disables the check (tests only).
+func (s *Server) tokenOK(r *http.Request) bool {
+	if s.deps.Token == "" {
+		return true
+	}
+	if v := r.Header.Get(tokenHeader); v != "" {
+		return s.tokenMatches(v)
+	}
+	if c, err := r.Cookie(tokenCookie); err == nil {
+		return s.tokenMatches(c.Value)
+	}
+	return false
+}
+
+// tokenMatches compares a presented value with the session token in constant
+// time, so a local attacker cannot recover it byte-by-byte through timing.
+func (s *Server) tokenMatches(v string) bool {
+	return s.deps.Token != "" &&
+		subtle.ConstantTimeCompare([]byte(v), []byte(s.deps.Token)) == 1
+}
+
+// localOrigin reports whether an Origin header is one of ours.
+func localOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return false
+	}
+	return localHost(u.Host)
+}
+
+// MarkerHeader identifies a response as coming from a ytdl GUI. `ytdl gui` uses
+// it to tell "our server is already up" from "some unrelated program holds the
+// port", instead of assuming a successful TCP connect means the GUI is there.
+const MarkerHeader = "X-Ytdl-Gui"
+
+// securityHeaders locks the page down: it is entirely self-contained, so a CSP
+// that forbids every external origin costs nothing and blocks a whole class of
+// injection consequences.
+func (s *Server) securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(MarkerHeader, "1")
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // HasClients reports whether any GUI client holds a live SSE connection — the
@@ -126,11 +233,16 @@ func localHost(host string) bool {
 		h = hh
 	}
 	h = strings.TrimPrefix(strings.TrimSuffix(h, "]"), "[")
-	switch h {
-	case "", "localhost", "127.0.0.1", "::1":
+	// Host is case-insensitive and may carry a fully-qualified trailing dot.
+	h = strings.ToLower(strings.TrimSuffix(h, "."))
+	if h == "" || h == "localhost" {
+		// "" covers HTTP/1.0 and synthetic test requests; Go rejects an HTTP/1.1
+		// request with no Host before it ever reaches a handler.
 		return true
 	}
-	return false
+	// Accept the whole loopback range (127.0.0.0/8, ::1, ::ffff:127.0.0.1), not
+	// just 127.0.0.1, and reject anything that is not a literal IP.
+	return net.ParseIP(h).IsLoopback()
 }
 
 func (s *Server) sessionOut() string {

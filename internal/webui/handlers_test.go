@@ -238,6 +238,7 @@ func TestSettingsRejectsInvalid(t *testing.T) {
 
 	buf, _ := json.Marshal(dto)
 	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/settings", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
 	putResp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -255,6 +256,7 @@ func TestSessionOverrideUsedForDownloads(t *testing.T) {
 
 	sessDir := t.TempDir()
 	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/session", strings.NewReader(`{"outputDir":"`+sessDir+`"}`))
+	req.Header.Set("Content-Type", "application/json")
 	r, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)

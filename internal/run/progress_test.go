@@ -347,3 +347,20 @@ func TestRunQueuedNilSinkAddsNoProgressArgs(t *testing.T) {
 		t.Errorf("--progress (%d) must come after --no-progress (%d)", prog, noProg)
 	}
 }
+
+// A very fast download reports downloaded_bytes as NA on its final frame; the
+// bar must still land on 100% rather than "unknown".
+func TestFinishedWithoutBytesIsFullyComplete(t *testing.T) {
+	ev, ok := parseProgressLine(line("finished", "NA", "NA", "NA", "NA", "NA", `"T"`))
+	if !ok {
+		t.Fatal("line should parse")
+	}
+	if ev.Percent != 100 {
+		t.Errorf("percent = %v, want 100 for a finished download", ev.Percent)
+	}
+	// An unknown percent while still downloading must stay unknown, not 100.
+	dl, _ := parseProgressLine(line("downloading", "NA", "NA", "NA", "NA", "NA", `"T"`))
+	if dl.Percent != -1 {
+		t.Errorf("downloading percent = %v, want -1 when the size is unknown", dl.Percent)
+	}
+}

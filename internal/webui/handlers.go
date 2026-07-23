@@ -2,10 +2,13 @@ package webui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/alergyonthestage/ytdl/internal/config"
@@ -186,8 +189,53 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeErr(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	// `ytdl gui` opens the page with ?t=<token>. Exchange it for a
+	// SameSite=Strict cookie — which a cross-site page can never cause the
+	// browser to send — then redirect to drop the secret from the address bar,
+	// the history and any Referer.
+	if t := r.URL.Query().Get("t"); t != "" && s.tokenMatches(t) {
+		http.SetCookie(w, &http.Cookie{
+			Name: tokenCookie, Value: s.deps.Token, Path: "/",
+			HttpOnly: true, SameSite: http.SameSiteStrictMode,
+		})
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(indexHTML)
+}
+
+// validateDownloadURL rejects anything that is not a plain http(s) URL. This is
+// a security boundary, not a nicety: core.BuildArgs appends the URL as the LAST
+// argv element with no "--" separator, and is frozen byte-for-byte by the parity
+// gate, so a value starting with "-" reaches yt-dlp as an OPTION. Real examples
+// an attacker would reach for: --update-to=<repo>@<tag> makes yt-dlp replace its
+// own binary from an arbitrary GitHub repo, and --config-locations=<file> loads
+// arbitrary options (including --exec) from a planted file. The CLI path is not
+// exposed the same way — its flag parser rejects a leading "-" first.
+func validateDownloadURL(raw string) (string, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return "", errors.New("url mancante")
+	}
+	if strings.HasPrefix(v, "-") {
+		return "", errors.New("url non valido: non può iniziare con '-'")
+	}
+	u, err := url.Parse(v)
+	if err != nil {
+		return "", errors.New("url non valido")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", errors.New("url non valido: sono ammessi solo http e https")
+	}
+	if u.Host == "" {
+		return "", errors.New("url non valido: manca il dominio")
+	}
+	return v, nil
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
@@ -244,8 +292,9 @@ func (s *Server) handleDownloads(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "corpo JSON non valido")
 		return
 	}
-	if req.URL == "" {
-		writeErr(w, http.StatusBadRequest, "url mancante")
+	cleanURL, err := validateDownloadURL(req.URL)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	settings, err := s.settingsForRun(req.Format, req.OutputDir)
@@ -253,7 +302,7 @@ func (s *Server) handleDownloads(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	id, err := s.deps.Spool.Enqueue(queue.Job{URL: req.URL, Playlist: req.Playlist, Settings: settings})
+	id, err := s.deps.Spool.Enqueue(queue.Job{URL: cleanURL, Playlist: req.Playlist, Settings: settings})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "impossibile accodare: "+err.Error())
 		return
@@ -320,8 +369,17 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 // validateSettings rejects values the settings editor must not persist, before
 // they reach config.Save. It mirrors the config layer's own validation.
 func validateSettings(s config.Settings) error {
-	if s.OutputDir == "" {
-		return fmt.Errorf("output_dir obbligatorio")
+	if strings.TrimSpace(s.OutputDir) == "" {
+		// A whitespace-only value would be written, then trimmed to "" on reload
+		// and ignored with a warning — the GUI would report success while the
+		// value silently snapped back to the default.
+		return errors.New("la cartella di destinazione è obbligatoria")
+	}
+	if strings.TrimSpace(s.NameTemplate) == "" {
+		// An empty name_template is a VALID config value that overrides the
+		// built-in default, and yields "-o <dir>/.%(ext)s": every download becomes
+		// the same hidden file, each overwriting the last. Silent data loss.
+		return errors.New("il template del nome file è obbligatorio")
 	}
 	if !config.ValidFormat(s.Format) {
 		return fmt.Errorf("formato non valido: %s (ammessi %s)", s.Format, config.FormatList)

@@ -124,7 +124,13 @@ details[open] > summary { margin-bottom: .9rem; }
         </div>
         <div class="row">
           <div class="field"><label for="s_audioQuality">Qualità audio (0 = migliore)</label><select id="s_audioQuality"></select></div>
-          <div class="field"><label for="s_concurrency">Download in parallelo (0 = senza limite)</label><input id="s_concurrency" type="number" min="0"></div>
+          <div class="field">
+            <label for="s_concurrency">Download in parallelo</label>
+            <input id="s_concurrency" type="number" min="1">
+            <div class="checks" style="margin-top:.35rem">
+              <label><input type="checkbox" id="s_noLimit"> senza limite (sconsigliato)</label>
+            </div>
+          </div>
         </div>
         <div class="field"><label for="s_nameTemplate">Template del nome file</label><input id="s_nameTemplate"></div>
         <div class="row">
@@ -157,6 +163,8 @@ details[open] > summary { margin-bottom: .9rem; }
 const $ = (id) => document.getElementById(id);
 const FORMATS = ["mp3", "flac", "m4a", "opus", "wav"];
 const NOTIFY_ON = { both: "sempre", success: "solo successo", failure: "solo errore" };
+// Mirrors config.DefaultConcurrency: the fallback when the field is left blank.
+const DEFAULT_CONCURRENCY = 3;
 
 // Live state: the last queue frame plus per-job progress, keyed by spool id.
 let counts = { pending: 0, running: 0, done: 0, failed: 0 };
@@ -187,7 +195,9 @@ function renderJobs() {
   } else {
     rEl.innerHTML = running.map((j) => {
       const p = progress.get(j.id);
-      const pct = p && p.percent >= 0 ? p.percent : 0;
+      // The only value interpolated into an attribute rather than through esc():
+      // force it numeric so it can never carry markup, whatever the API sends.
+      const pct = Math.max(0, Math.min(100, Number(p && p.percent) || 0));
       const title = p && p.title ? p.title : j.url;
       let line = p ? (p.status === "processing" ? "elaborazione…" :
         [p.percent >= 0 ? p.percent.toFixed(1) + "%" : null, p.speed, p.eta ? "ETA " + p.eta : null]
@@ -303,6 +313,11 @@ const SETTING_IDS = ["outputDir", "format", "audioQuality", "playlistDefault", "
   "breadcrumbOnFailure", "notify", "notifyOn", "notifyForeground", "notifySound", "concurrency"];
 
 function fillSettings(s) {
+  // concurrency 0 means "no cap"; show it as an explicit choice rather than as a
+  // number, so an empty box can never silently mean unlimited.
+  $("s_noLimit").checked = s.concurrency === 0;
+  $("s_concurrency").value = s.concurrency === 0 ? "" : s.concurrency;
+  $("s_concurrency").disabled = s.concurrency === 0;
   fillSelect($("s_format"), FORMATS, s.format);
   fillSelect($("s_audioQuality"), ["0","1","2","3","4","5","6","7","8","9"], s.audioQuality);
   fillSelect($("s_notifyOn"), Object.keys(NOTIFY_ON), s.notifyOn, NOTIFY_ON);
@@ -317,14 +332,26 @@ function fillSettings(s) {
 function readSettings() {
   const out = {};
   for (const k of SETTING_IDS) {
+    if (k === "concurrency") continue; // handled explicitly below
     const el = $("s_" + k);
     if (!el) continue;
     if (el.type === "checkbox") out[k] = el.checked;
     else if (el.type === "number") out[k] = parseInt(el.value, 10) || 0;
     else out[k] = el.value;
   }
+  // 0 = unlimited, and only when the user ticked the box on purpose. An empty or
+  // unparseable field keeps the recommended default instead.
+  const n = parseInt($("s_concurrency").value, 10);
+  out.concurrency = $("s_noLimit").checked ? 0 : (n >= 1 ? n : DEFAULT_CONCURRENCY);
   return out;
 }
+
+$("s_noLimit").addEventListener("change", () => {
+  $("s_concurrency").disabled = $("s_noLimit").checked;
+  if (!$("s_noLimit").checked && !$("s_concurrency").value) {
+    $("s_concurrency").value = DEFAULT_CONCURRENCY;
+  }
+});
 
 async function loadSettings() {
   const r = await fetch("/api/settings");

@@ -153,3 +153,107 @@ func TestSavePreservesRegexTemplates(t *testing.T) {
 			got.StripBrackets, got.StripTags, want.StripBrackets, want.StripTags)
 	}
 }
+
+// Save must refuse anything LoadFile would drop on reload: otherwise a settings
+// editor reports success while the value silently snaps back to a default (and
+// the daemon's warning goes to /dev/null).
+func TestSaveRejectsValuesThatWouldNotReload(t *testing.T) {
+	dir := t.TempDir()
+	cases := map[string]func(*Settings){
+		"empty format":             func(s *Settings) { s.Format = "" },
+		"invalid format":           func(s *Settings) { s.Format = "mkv" },
+		"empty notify_on":          func(s *Settings) { s.NotifyOn = "" },
+		"invalid audio_quality":    func(s *Settings) { s.AudioQuality = "12" },
+		"negative retention":       func(s *Settings) { s.LogRetentionDays = -5 },
+		"negative concurrency":     func(s *Settings) { s.Concurrency = -1 },
+		"empty output_dir":         func(s *Settings) { s.OutputDir = "" },
+		"empty name_template":      func(s *Settings) { s.NameTemplate = "" },
+		"padded name_template":     func(s *Settings) { s.NameTemplate = "  %(title)s  " },
+		"padded strip_tags":        func(s *Settings) { s.StripTags = `\s*\(x\) ` },
+		"newline in name_template": func(s *Settings) { s.NameTemplate = "a\nnotify = false" },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := sampleSettings(dir)
+			mutate(&s)
+			path := filepath.Join(t.TempDir(), "config")
+			if err := Save(path, s); err == nil {
+				t.Errorf("Save accepted %s", name)
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Error("a rejected Save must not write the file")
+			}
+		})
+	}
+}
+
+// A path under $HOME is written back ~-relative, so a config saved from the GUI
+// stays portable, and still resolves to the same absolute path on reload.
+func TestSaveContractsHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(t.TempDir(), "config")
+
+	want := sampleSettings(home)
+	want.OutputDir = filepath.Join(home, "Music", "ytdl")
+	want.LogDir = filepath.Join(home, ".local", "state", "ytdl", "logs")
+	if err := Save(path, want); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "output_dir = ~/Music/ytdl") {
+		t.Errorf("output_dir not contracted to ~:\n%s", data)
+	}
+	got, warns := resolveFile(t, path)
+	if len(warns) != 0 {
+		t.Errorf("unexpected warnings: %v", warns)
+	}
+	if got.OutputDir != want.OutputDir || got.LogDir != want.LogDir {
+		t.Errorf("~ round-trip broken:\n got=(%q,%q)\nwant=(%q,%q)",
+			got.OutputDir, got.LogDir, want.OutputDir, want.LogDir)
+	}
+}
+
+// A symlinked config (a dotfiles repo) must be followed, not replaced with a
+// regular file — otherwise the user's real config silently stops being updated.
+func TestSaveFollowsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real-config")
+	if err := os.WriteFile(real, []byte("format = wav\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "config")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	s := sampleSettings(dir)
+	s.Format = "flac"
+	if err := Save(link, s); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Error("Save replaced the symlink with a regular file")
+	}
+	data, _ := os.ReadFile(real)
+	if !strings.Contains(string(data), "format = flac") {
+		t.Errorf("the symlink target was not updated:\n%s", data)
+	}
+	// A deliberately restrictive mode must survive a save.
+	if got := fi2Mode(t, real); got != 0o600 {
+		t.Errorf("mode = %o, want 0600 preserved", got)
+	}
+}
+
+func fi2Mode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fi.Mode().Perm()
+}
