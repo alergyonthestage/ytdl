@@ -42,21 +42,34 @@ func WriteBreadcrumb(outDir, title, key, srcURL string, rc int, when time.Time) 
 	return os.WriteFile(path, []byte(b.String()), 0o644)
 }
 
-// RemoveBreadcrumb deletes any breadcrumb in outDir keyed by key. It matches
-// "*.<key>.log" and, defensively, removes only files whose first line is the
-// breadcrumb marker — so a same-shaped user file is never touched. A missing
-// file or directory is not an error.
+// RemoveBreadcrumb deletes any breadcrumb in outDir keyed by key. It scans the
+// directory for names ending in ".<key>.log" and, defensively, removes only
+// files whose first line is the breadcrumb marker — so a same-shaped user file
+// is never touched. A missing directory is not an error.
+//
+// It deliberately does NOT use filepath.Glob: Glob treats the whole joined path
+// as a pattern, so an output folder whose name contains glob metacharacters
+// (e.g. "80s Hits [Remastered]") would make the pattern match nothing and
+// silently break U7 auto-cleanup. os.ReadDir + a literal suffix match is immune.
 func RemoveBreadcrumb(outDir, key string) error {
-	matches, err := filepath.Glob(filepath.Join(outDir, "*"+breadcrumbSuffix(key)))
+	entries, err := os.ReadDir(outDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	}
+	suffix := breadcrumbSuffix(key)
 	var firstErr error
-	for _, m := range matches {
-		if !isBreadcrumb(m) {
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), suffix) {
 			continue
 		}
-		if err := os.Remove(m); err != nil && !os.IsNotExist(err) && firstErr == nil {
+		full := filepath.Join(outDir, e.Name())
+		if !isBreadcrumb(full) {
+			continue
+		}
+		if err := os.Remove(full); err != nil && !os.IsNotExist(err) && firstErr == nil {
 			firstErr = err
 		}
 	}

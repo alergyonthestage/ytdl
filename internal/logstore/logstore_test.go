@@ -188,6 +188,26 @@ func TestRemoveBreadcrumbSpareUserFile(t *testing.T) {
 	}
 }
 
+// An output folder whose NAME contains glob metacharacters must not defeat
+// cleanup (regression: filepath.Glob treated the whole path as a pattern).
+func TestRemoveBreadcrumbGlobMetaDir(t *testing.T) {
+	base := t.TempDir()
+	out := filepath.Join(base, "80s Hits [Remastered]")
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	key := Hash(NormalizeURL("https://youtu.be/x"))
+	if err := WriteBreadcrumb(out, "Track", key, "https://youtu.be/x", 1, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveBreadcrumb(out, key); err != nil {
+		t.Fatal(err)
+	}
+	if logs, _ := filepath.Glob(filepath.Join(base, "*", "*.log")); len(logs) != 0 {
+		t.Errorf("breadcrumb not cleaned up in a bracketed folder: %v", logs)
+	}
+}
+
 func TestSanitizeTitle(t *testing.T) {
 	cases := map[string]string{
 		"Artist - Track":   "Artist - Track",
