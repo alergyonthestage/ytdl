@@ -317,16 +317,27 @@ func runSilentSink(o core.Options, sink ProgressSink) int {
 	}
 	cmd := exec.Command(ytDlp, args...)
 	cmd.Stdout = nil // → /dev/null
-	var pw *progressStderr
+	cmd.Stderr = ef
+	var em *progressEmitter
+	var pout, perr *progressSplitter
 	if sink != nil {
-		pw = newProgressStderr(ef, sink)
-		cmd.Stderr = pw
-	} else {
-		cmd.Stderr = ef
+		// yt-dlp splits its progress across BOTH streams: the `download:` template
+		// goes to stdout and `postprocess:` to stderr (verified against yt-dlp
+		// 2026.07.04). Route each through a splitter sharing one emitter — stdout's
+		// non-progress output is discarded exactly as /dev/null did, and stderr's
+		// still reaches the failure log byte-for-byte.
+		em = newProgressEmitter(sink)
+		pout = newProgressSplitter(io.Discard, em)
+		perr = newProgressSplitter(ef, em)
+		cmd.Stdout, cmd.Stderr = pout, perr
 	}
 	rc := runCode(cmd)
-	if pw != nil {
-		pw.Flush() // route any buffered trailing (non-progress) line to the .log
+	if em != nil {
+		// cmd.Run has already joined os/exec's copy goroutines, so no write can
+		// land after this point.
+		pout.Flush()
+		perr.Flush() // any buffered trailing (non-progress) line → the .log
+		em.flush()   // replay the last throttled-away frame
 	}
 	ef.Close()
 

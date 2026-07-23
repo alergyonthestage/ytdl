@@ -152,9 +152,13 @@ if [ -n "$sucfile" ] && [ -n "$YTDLP_FAKE_SUCCEEDED" ]; then
   for id in "${sids[@]}"; do printf '%s\n' "$id" >> "$sucfile"; done
 fi
 if [ -n "$YTDLP_FAKE_PROGRESS" ]; then
-  printf '@@YTDLP-PROGRESS@@\tdownloading\t 10.0%%\t1.00MiB/s\t00:10\tArtist - Track\n' >&2
-  printf '@@YTDLP-PROGRESS@@\tdownloading\t 55.5%%\t2.00MiB/s\t00:05\tArtist - Track\n' >&2
-  printf '@@YTDLP-PROGRESS@@\tfinished\t100.0%%\t\t\tArtist - Track\n' >&2
+  # Mirror the REAL yt-dlp split (verified against 2026.07.04): the download
+  # progress template goes to STDOUT, the postprocess one goes to stderr.
+  # Fields are the raw numeric ones with a JSON-encoded title.
+  printf '@@YTDLP-PROGRESS@@\tdownloading\t100000\t1000000\tNA\t315111.32\t9\t"Artist - Track"\n'
+  printf '@@YTDLP-PROGRESS@@\tdownloading\t555000\t1000000\tNA\t409301.71\t2\t"Artist - Track"\n'
+  printf '@@YTDLP-PROGRESS@@\tfinished\t1000000\t1000000\tNA\t409189.31\tNA\t"Artist - Track"\n'
+  printf '@@YTDLP-PROGRESS@@\tprocessing\t\t\t\t\t\t"Artist - Track"\n' >&2
   printf 'a genuine stderr warning\n' >&2
 fi
 exit "${YTDLP_FAKE_RC:-0}"
