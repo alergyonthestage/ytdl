@@ -106,10 +106,12 @@ A Gate-B decision: use the **non-blocking** `flock` + poll strategy, not a block
 `flock`. There is a theoretical window (a job enqueued in the microseconds between
 the daemon's final empty scan and its lock release) in which a job could sit
 undrained. It is closed in practice by the final re-scan and by **recovery on the
-next invocation**: any later `ytdl -b` / `ytdl queue` spawns a daemon that drains
-the leftovers. For a single-user tool this is acceptable; the blocking-`flock`
-alternative (excess daemons parking on the lock until the incumbent exits) was
-rejected as needless process churn on bursty enqueues.
+next invocation**: any later `ytdl -b` — and `ytdl queue`, which re-spawns a
+daemon (via the same idempotent `Spawn`, gated on an `IsRunning` liveness probe)
+whenever it sees un-terminal work but no live daemon — drains the leftovers. For a
+single-user tool this is acceptable; the blocking-`flock` alternative (excess
+daemons parking on the lock until the incumbent exits) was rejected as needless
+process churn on bursty enqueues.
 
 ### 5. Concurrency
 
@@ -179,9 +181,19 @@ flowchart TD
 - **2A reuse.** Queued downloads get the central log store, failure breadcrumb and
   completion notification for free through `run.Dispatch(ModeSilent)`;
   `NormalizeURL`/`Hash` key the spool filenames.
-- **Seams for 2B-plus.** `cancel`/`retry` are already just `mv` transitions on the
-  spool; Phase-5 retry/backoff adds `Attempts`/`LastError` to `Job`.
+- **Seams and deferrals for 2B-plus.** `cancel`/`retry` are already just `mv`
+  transitions on the spool; Phase-5 retry/backoff adds `Attempts`/`LastError` to
+  `Job`. Explicitly deferred to 2B-plus: a **per-job execution timeout** (the pool
+  bounds parallelism, not stall detection — a hung `yt-dlp` holds a concurrency
+  slot until it returns; distinguishing "hung" from "legitimately long download"
+  needs care, so it belongs with the Phase-5 retry/rate-limit work); a **daemon
+  logging/diagnostics seam** (today the daemon is silent by design, so a persistent
+  spool error is invisible — it now idle-exits rather than wedging, but is not
+  surfaced); and **removing the now-unused `core.ReExecArgs` + the three
+  `background-*` goldens** (retained here so `internal/core` stays byte-identical to
+  `main`, preserving the parity gate — the runtime no longer re-execs for `-b`).
 - **Platform.** `flock` and `Setsid` are POSIX; the Linux dev container and CI
   exercise the queue/daemon end to end (notifications no-op there, as in 2A).
-- **Docs.** The roadmap marks 4.5–4.6 and the `queue`/`status` half of 4.7 done for
-  2B-core; `improvements.md` U5 records the on-demand daemon shape.
+- **Docs (on close, Phase 5).** The roadmap will mark 4.5–4.6 and the
+  `queue`/`status` half of 4.7 done for 2B-core, and `improvements.md` U5 will
+  record the on-demand daemon shape.
