@@ -10,7 +10,8 @@ out to yt-dlp/ffmpeg; the installer stays Bash and Python is not adopted. See
 [go-engine.md](go-engine.md) for the as-built engine. The confirmed sequence is
 **foundations → backend integrations → robustness → GUI**, with the GUI last.
 **Cycle 1 (foundations, phase 3) is done and shipped as v2.0.0 (2026-07-23)**;
-next is Cycle 2 (backend, phase 4).
+**Cycle 2A (backend logs + notifications, phase 4) is done on branch (2026-07-23)**;
+next is Cycle 2B (queue + `ytdld` daemon).
 
 ```mermaid
 flowchart LR
@@ -174,19 +175,27 @@ Useful config settings — the full list lives in [improvements.md](improvements
 (output dir, format, name template, background-by-default, concurrency, notify,
 log dir/retention, embed options, …).
 
-## Phase 4 — Backend integrations (Go) — `planned`
+## Phase 4 — Backend integrations (Go) — `in progress`
 
-The maintainer's requested backend evolutions, built on the Go core.
+The maintainer's requested backend evolutions, built on the Go core. Split into
+Cycle 2A (logs + notifications, done) and Cycle 2B (queue + daemon, planned).
 
-| # | Item | Ref |
-|---|---|---|
-| 4.1 | Persistent central log store (`~/.local/state/ytdl/logs/`) + retention | U7 |
-| 4.2 | Optional in-destination failure breadcrumb, keyed by **hash(URL)** | U7 |
-| 4.3 | Auto-cleanup: a successful download removes the stale breadcrumb for that URL | U7 |
-| 4.4 | System notification on completion, toggleable (`notify`, `notify_on`) | U6 |
-| 4.5 | Real queue + daemon (`ytdld`): filesystem spool with atomic state transitions | U5 |
-| 4.6 | Bounded concurrency (default cap 2–3; `unlimited` allowed but discouraged) | U5 |
-| 4.7 | Job status inspection: `ytdl queue [--watch]`, `status`, `cancel`, `retry` | U5 |
+| # | Item | Status | Ref |
+|---|---|---|---|
+| 4.1 | Persistent central log store (`~/.local/state/ytdl/logs/`) + retention | done (2A) | U7 |
+| 4.2 | In-destination failure breadcrumb, keyed by **hash(URL)** / item id | done (2A) | U7 |
+| 4.3 | Auto-cleanup: a successful download removes the stale breadcrumb for that URL | done (2A) | U7 |
+| 4.4 | System notification on completion, toggleable (`notify`, `notify_on`, …) | done (2A) | U6 |
+| 4.5 | Real queue + daemon (`ytdld`): filesystem spool with atomic state transitions | planned (2B) | U5 |
+| 4.6 | Bounded concurrency (default cap 2–3; `unlimited` allowed but discouraged) | planned (2B) | U5 |
+| 4.7 | Job status inspection: `ytdl queue [--watch]`, `status`, `cancel`, `retry` | planned (2B) | U5 |
+
+**Cycle 2A (done, 2026-07-23)** on branch `feat/backend/cycle2`: `internal/logstore`
+(central store + retention + breadcrumb + per-item playlist reconcile) and
+`internal/notify` (osascript / no-op), wired through `internal/run`; seven config
+keys added. `core.BuildArgs` and the goldens are byte-unchanged (parity preserved).
+Decisions in [ADR-0006](decisions/0006-cycle2a-logs-breadcrumbs-notifications.md).
+Merge/release pending.
 
 ## Phase 5 — Robustness & tests (Go) — `planned`
 
@@ -304,11 +313,25 @@ install + a real download are verified on Apple Silicon (see 1.11).
 
 ### Cycle 2 — Backend integrations (phase 4 + phase 5 hardening)
 
-- **Scope:** central persistent logs + retention; failure breadcrumb by hash(URL)
-  + auto-cleanup; toggleable notifications; queue + `ytdld` daemon (spool, atomic
-  transitions) + bounded concurrency + `status`/`cancel`/`retry`; hardening + tests.
-- **Entry:** Cycle 1 done **and shipped as v2.0.0**; base Cycle 2 off `main`
-  (branch `feat/backend/cycle2`, per git practice).
+Split into two sessions; the queue/daemon is substantial enough to stand alone.
+
+**Cycle 2A — logs + notifications — done (2026-07-23).** Central persistent logs +
+age retention; in-destination failure breadcrumb keyed by hash(URL) / item id with
+auto-cleanup; toggleable completion notifications (silent/background by default,
+foreground opt-in). Built on branch `feat/backend/cycle2` as `internal/logstore` +
+`internal/notify` wired through `internal/run`, plus seven config keys — all off the
+golden argv path, so parity is preserved. Adversarially reviewed (one real bug —
+breadcrumb cleanup vs. glob metacharacters in the output folder — found and fixed);
+suite green under `-race`. See [ADR-0006](decisions/0006-cycle2a-logs-breadcrumbs-notifications.md).
+Merge/release pending.
+
+**Cycle 2B — queue + daemon — planned.** Real queue + `ytdld` daemon (filesystem
+spool, atomic `mv` transitions) + bounded concurrency + `ytdl queue`/`status`/
+`cancel`/`retry`, plus phase-5 hardening + tests. Reuses the 2A primitives (the
+central store as job history; `NormalizeURL`/`Hash` as stable job identity).
+
+- **Entry:** Cycle 1 done **and shipped as v2.0.0**; Cycle 2A done on
+  `feat/backend/cycle2`. Base 2B off `main` once 2A merges (per git practice).
 - **Done when:** queued/background downloads run under a concurrency cap with
   inspectable status; logs persist centrally and auto-clean; notifications fire per
   config; test suite green.
