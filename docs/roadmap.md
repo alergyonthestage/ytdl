@@ -91,6 +91,20 @@ and extraction from the martin-riedl arm64 zips, the signed ffmpeg actually
 running, PATH written to `.zprofile` and `.bash_profile`, and the final
 `ytdl --version` / `yt-dlp` / `ffmpeg` checks all passing.
 
+> **Scope caveat (Cycle 1 consolidation review, 2026-07-23):** that hardware run
+> predates the compiled-binary install path. At the time it was recorded the
+> installer still fetched the Bash `ytdl` script directly; the `install_ytdl`
+> function — which downloads the cross-compiled Go binary, hard-fails on a missing
+> checksum, and replaces the binary in place — landed ~6 hours later. So the
+> yt-dlp/ffmpeg provisioning is hardware-verified, but **`install_ytdl` running
+> against a real GitHub Release has not yet been exercised on a Mac**, including
+> whether the ad-hoc-signed (Go-linker, not `codesign`) cross-compiled binary
+> launches under Gatekeeper/AMFI. Closing this — run `install.sh` end to end
+> against a real (or pre-release) tag on an actual Mac — is the blocker to clear
+> before tagging `v2.0.0`. The release *mechanics* (asset names, ldflags version
+> wiring, checksum format, `--latest`/trigger/permissions, darwin cross-compile)
+> were statically verified in the same review and check out.
+
 **The legacy path is no longer a gap.** macOS 10.13–10.14 (Intel + python.org
 Python 3.13 + zipimport yt-dlp) was only ever checked on paper; rather than close
 that gap on old hardware, [ADR-0005](decisions/0005-macos-floor-and-single-engine.md)
