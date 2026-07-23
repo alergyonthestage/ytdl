@@ -132,19 +132,63 @@ func TestLoadFileHomeExpansion(t *testing.T) {
 }
 
 func TestLoadFileUnknownKeyWarns(t *testing.T) {
-	// Future/GUI keys must warn-and-ignore, never brick an older binary. These
-	// two stay out of the 2A whitelist (concurrency → 2B; overwrites would break
-	// golden parity, so it is excluded on purpose).
-	path := writeConfig(t, "concurrency = 4\noverwrites = true\nformat = mp3\n")
+	// Future/GUI keys must warn-and-ignore, never brick an older binary.
+	// `overwrites` stays out of the whitelist on purpose — it would change the
+	// yt-dlp argv and break golden parity (concurrency joined the whitelist in 2B).
+	path := writeConfig(t, "overwrites = true\nformat = mp3\n")
 	p, warns, err := LoadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(warns) != 2 {
-		t.Fatalf("want 2 unknown-key warnings, got %d: %v", len(warns), warns)
+	if len(warns) != 1 {
+		t.Fatalf("want 1 unknown-key warning, got %d: %v", len(warns), warns)
 	}
 	if p.Format == nil || *p.Format != "mp3" {
-		t.Errorf("the known key after unknown ones was dropped: %v", p.Format)
+		t.Errorf("the known key after the unknown one was dropped: %v", p.Format)
+	}
+}
+
+func TestLoadFileConcurrency(t *testing.T) {
+	// Valid: a positive integer, and the `unlimited` keyword (case-insensitive → 0).
+	t.Run("positive integer", func(t *testing.T) {
+		p, warns, err := LoadFile(writeConfig(t, "concurrency = 4\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(warns) != 0 {
+			t.Fatalf("unexpected warnings: %v", warns)
+		}
+		if p.Concurrency == nil || *p.Concurrency != 4 {
+			t.Errorf("Concurrency = %v, want 4", p.Concurrency)
+		}
+	})
+	t.Run("unlimited keyword", func(t *testing.T) {
+		p, warns, err := LoadFile(writeConfig(t, "concurrency = Unlimited\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(warns) != 0 {
+			t.Fatalf("unexpected warnings: %v", warns)
+		}
+		if p.Concurrency == nil || *p.Concurrency != ConcurrencyUnlimited {
+			t.Errorf("Concurrency = %v, want ConcurrencyUnlimited (%d)", p.Concurrency, ConcurrencyUnlimited)
+		}
+	})
+	// Invalid: 0, negatives and non-integers warn and fall through (nil). `unlimited`
+	// is the only way to express "no cap"; a bare 0 is a mistake.
+	for _, bad := range []string{"0", "-2", "x", "3.5", ""} {
+		t.Run("invalid "+bad, func(t *testing.T) {
+			p, warns, err := LoadFile(writeConfig(t, "concurrency = "+bad+"\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(warns) != 1 {
+				t.Fatalf("want 1 invalid-concurrency warning for %q, got %d: %v", bad, len(warns), warns)
+			}
+			if p.Concurrency != nil {
+				t.Errorf("invalid concurrency %q was kept: %v", bad, *p.Concurrency)
+			}
+		})
 	}
 }
 

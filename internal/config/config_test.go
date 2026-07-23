@@ -157,6 +157,9 @@ func TestBackendDefaults(t *testing.T) {
 	if !d.NotifySound {
 		t.Error("NotifySound default = false, want true")
 	}
+	if d.Concurrency != DefaultConcurrency {
+		t.Errorf("Concurrency = %d, want %d", d.Concurrency, DefaultConcurrency)
+	}
 }
 
 func TestStatePathXDGWins(t *testing.T) {

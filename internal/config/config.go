@@ -33,6 +33,11 @@ type Settings struct {
 	NotifyOn            string // default: "both" (failure|success|both)
 	NotifyForeground    bool   // default: false (notify only silent/background)
 	NotifySound         bool   // default: true
+
+	// Cycle 2B backend setting (queue + daemon). Like the 2A keys it is not read
+	// by core.BuildArgs, so it never affects the yt-dlp argv or the golden parity;
+	// it only bounds how many queued downloads the daemon runs at once.
+	Concurrency int // default: 3; ConcurrencyUnlimited (0) = no cap (discouraged)
 }
 
 // Defaults copied verbatim from the Bash ytdl (lines 31-41, 196).
@@ -44,6 +49,13 @@ const (
 	DefaultLogRetentionDays = 30
 	// DefaultNotifyOn is the default set of completion events that notify.
 	DefaultNotifyOn = "both"
+	// DefaultConcurrency is the daemon's default parallel-download cap (roadmap
+	// 4.6: "default cap 2–3"). ConcurrencyUnlimited removes the cap.
+	DefaultConcurrency = 3
+	// ConcurrencyUnlimited is the Concurrency value meaning "no cap", set via the
+	// config keyword `unlimited`. It reintroduces the pre-2B unbounded background
+	// behaviour (U5) and is deliberately discouraged.
+	ConcurrencyUnlimited = 0
 
 	// NameTemplate is the filename template with yt-dlp first-present fallback
 	// chains: artist -> creator -> xartist -> uploader, and track -> xtrack ->
@@ -101,6 +113,8 @@ func Defaults() Settings {
 		NotifyOn:            DefaultNotifyOn,
 		NotifyForeground:    false,
 		NotifySound:         true,
+
+		Concurrency: DefaultConcurrency,
 	}
 }
 
@@ -144,6 +158,8 @@ type Partial struct {
 	NotifyOn            *string
 	NotifyForeground    *bool
 	NotifySound         *bool
+
+	Concurrency *int
 }
 
 // Env is the environment layer. For parity with the Bash tool only
@@ -236,6 +252,9 @@ func apply(s *Settings, p Partial) {
 	if p.NotifySound != nil {
 		s.NotifySound = *p.NotifySound
 	}
+	if p.Concurrency != nil {
+		s.Concurrency = *p.Concurrency
+	}
 }
 
 func applyEnv(s *Settings, env Env) {
@@ -259,6 +278,9 @@ func validate(s Settings) []Warning {
 	}
 	if s.LogRetentionDays < 0 {
 		w = append(w, Warning{Msg: fmt.Sprintf("resolved log_retention_days %d is negative", s.LogRetentionDays)})
+	}
+	if s.Concurrency < 0 {
+		w = append(w, Warning{Msg: fmt.Sprintf("resolved concurrency %d is negative", s.Concurrency)})
 	}
 	return w
 }
