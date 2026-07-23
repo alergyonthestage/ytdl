@@ -43,15 +43,16 @@ func historyLabel(e logstore.Entry) string {
 	return shortenURL(e.URL)
 }
 
-// shortenURL trims the scheme/www and caps the length, so a bare URL fits one
-// history line without wrapping.
+// shortenURL trims the scheme/www and caps the length (rune-safe, so a multi-byte
+// character is never split into invalid UTF-8), so a bare URL fits one line
+// without wrapping.
 func shortenURL(u string) string {
 	s := strings.TrimPrefix(u, "https://")
 	s = strings.TrimPrefix(s, "http://")
 	s = strings.TrimPrefix(s, "www.")
 	const max = 40
-	if len(s) > max {
-		s = s[:max-1] + "…"
+	if r := []rune(s); len(r) > max {
+		s = string(r[:max-1]) + "…"
 	}
 	return s
 }

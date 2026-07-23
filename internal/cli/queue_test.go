@@ -36,8 +36,8 @@ func TestRenderQueueListsLiveOnly(t *testing.T) {
 	}
 	got := RenderQueue(snap)
 	for _, want := range []string{
-		"in corso (1):", "https://youtu.be/RUN",
-		"in attesa (2):", "https://youtu.be/P1", "https://youtu.be/P2",
+		"in corso (1):", "youtu.be/RUN", // scheme trimmed (shortened for one-row lines)
+		"in attesa (2):", "youtu.be/P1", "youtu.be/P2",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("render missing %q:\n%s", want, got)

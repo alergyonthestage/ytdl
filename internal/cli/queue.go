@@ -78,14 +78,18 @@ func retentionWindow(retentionDays int) string {
 }
 
 // jobLine is the per-job "<url>  (accodato <time>)" cell, tolerant of an
-// unreadable job spec (URL empty).
+// unreadable job spec (URL empty). The label is shortened (scheme trimmed +
+// length-capped) so the whole line stays within one terminal row — a wrapped
+// line would break the --watch region redraw's line accounting (it counts
+// logical newlines, not physical rows).
 func jobLine(e queue.Entry) string {
-	url := e.Job.URL
-	if url == "" {
-		url = "(job illeggibile: " + e.ID + ")"
+	label := e.Job.URL
+	if label == "" {
+		label = "job illeggibile: " + e.ID
 	}
+	label = shortenURL(label)
 	if e.Job.EnqueuedAt.IsZero() {
-		return url
+		return label
 	}
-	return fmt.Sprintf("%s  (accodato %s)", url, e.Job.EnqueuedAt.Format(enqueuedTimeFormat))
+	return fmt.Sprintf("%s  (accodato %s)", label, e.Job.EnqueuedAt.Format(enqueuedTimeFormat))
 }

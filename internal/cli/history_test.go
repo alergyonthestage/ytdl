@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/alergyonthestage/ytdl/internal/logstore"
 )
@@ -47,5 +48,13 @@ func TestShortenURL(t *testing.T) {
 	long := "https://example.com/" + strings.Repeat("a", 80)
 	if got := shortenURL(long); len([]rune(got)) > 40 || !strings.HasSuffix(got, "…") {
 		t.Errorf("shortenURL cap = %q (len %d)", got, len([]rune(got)))
+	}
+	// A multi-byte tail must be cut on a rune boundary, never split into invalid UTF-8.
+	got := shortenURL("example.com/" + strings.Repeat("日", 60))
+	if !utf8.ValidString(got) {
+		t.Errorf("shortenURL produced invalid UTF-8: %q", got)
+	}
+	if len([]rune(got)) > 40 {
+		t.Errorf("shortenURL rune cap exceeded: %d runes", len([]rune(got)))
 	}
 }

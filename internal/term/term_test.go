@@ -51,4 +51,13 @@ func TestColorize(t *testing.T) {
 	if !strings.Contains(Colorize("✗ fail", true), red+"✗"+Reset) {
 		t.Error("✗ not coloured red")
 	}
+	// Only the LEADING glyph is coloured: a glyph inside a title (here "•" as a
+	// separator) must be left untouched.
+	mid := Colorize("✓ 20:47  Song • Remix", true)
+	if !strings.Contains(mid, green+"✓"+Reset) {
+		t.Error("leading ✓ should be coloured")
+	}
+	if strings.Contains(mid, dim+"•"+Reset) {
+		t.Error("a mid-line • must not be coloured")
+	}
 }

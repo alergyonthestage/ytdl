@@ -8,6 +8,7 @@ package term
 import (
 	"os"
 	"strings"
+	"unicode/utf8"
 )
 
 // IsTTY reports whether f is a terminal (a character device). A piped or
@@ -38,22 +39,28 @@ const (
 	dim   = "\033[2m"
 )
 
-// Colorize tints ytdl's status glyphs in s when enabled — ✓ green, ✗ red,
-// ▸/⟳ cyan, • dim — colouring only the glyph and leaving the surrounding text
-// default, so a plain render and its coloured form differ only by escape codes.
-// The set is limited to glyphs that never occur inside a URL or track title, so
-// a whole-string replace is safe. When enabled is false, s is returned verbatim.
+// Colorize tints ytdl's status glyphs — ✓ green, ✗ red, ▸/⟳ cyan, • dim — when
+// enabled, colouring ONLY the leading glyph of each line (the status marker) and
+// leaving everything else default. Scoping to the line-leading position (not a
+// whole-string replace) means a glyph that legitimately appears inside a track
+// title or URL — e.g. "•" as a separator in a real video title — is never spliced
+// with colour. When enabled is false, s is returned verbatim.
 func Colorize(s string, enabled bool) string {
 	if !enabled {
 		return s
 	}
-	return glyphColorer.Replace(s)
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimLeft(line, " ")
+		r, size := utf8.DecodeRuneInString(trimmed)
+		if code, ok := glyphColor[r]; ok {
+			indent := line[:len(line)-len(trimmed)]
+			lines[i] = indent + code + string(r) + Reset + trimmed[size:]
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
-var glyphColorer = strings.NewReplacer(
-	"✓", green+"✓"+Reset,
-	"✗", red+"✗"+Reset,
-	"▸", cyan+"▸"+Reset,
-	"⟳", cyan+"⟳"+Reset,
-	"•", dim+"•"+Reset,
-)
+var glyphColor = map[rune]string{
+	'✓': green, '✗': red, '▸': cyan, '⟳': cyan, '•': dim,
+}
