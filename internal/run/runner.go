@@ -236,9 +236,13 @@ func runSilent(o core.Options) int {
 	rc := runCode(cmd)
 	ef.Close()
 
-	info, statErr := os.Stat(saved)
-	empty := statErr != nil || info.Size() == 0
-	success := rc == 0 && !empty
+	// "Success" means yt-dlp exited 0 AND actually saved a file. Count non-blank
+	// after_move lines once and reuse it for the record, the breadcrumb decision
+	// and the notification — consistent with default mode (an empty or
+	// blank-only saved list is a failure, matching the Bash tool's zero-files
+	// case, ytdl lines 290-293).
+	_, count := readSavedPaths(saved)
+	success := rc == 0 && count > 0
 	now := time.Now()
 
 	recordJob(o, "silent", rc, success, readCapped(errlog, stderrCap), now)
@@ -257,7 +261,6 @@ func runSilent(o core.Options) int {
 		}
 	}
 
-	_, count := readSavedPaths(saved)
 	maybeNotify(o, false, success, count) // silent/background: not gated on notify_foreground
 	return rc
 }
