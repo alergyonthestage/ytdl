@@ -56,6 +56,12 @@ const (
 	// config keyword `unlimited`. It reintroduces the pre-2B unbounded background
 	// behaviour (U5) and is deliberately discouraged.
 	ConcurrencyUnlimited = 0
+	// ConcurrencyAdvisoryThreshold is the point above which a resolved concurrency
+	// draws an advisory warning: many parallel downloads risk being throttled or
+	// blocked by YouTube. It is only advice — there is no hard cap (a deliberate
+	// design choice) — and sits well above the recommended 2–3 default so ordinary
+	// settings stay quiet. The future config UI surfaces the same warning.
+	ConcurrencyAdvisoryThreshold = 8
 
 	// NameTemplate is the filename template with yt-dlp first-present fallback
 	// chains: artist -> creator -> xartist -> uploader, and track -> xtrack ->
@@ -281,6 +287,14 @@ func validate(s Settings) []Warning {
 	}
 	if s.Concurrency < 0 {
 		w = append(w, Warning{Msg: fmt.Sprintf("resolved concurrency %d is negative", s.Concurrency)})
+	}
+	// Advisory only (no hard cap): warn when parallelism is aggressive enough to
+	// risk YouTube throttling/blocking. Fires for `unlimited` and for values well
+	// above the recommended default; the default (3) stays quiet.
+	if s.Concurrency == ConcurrencyUnlimited {
+		w = append(w, Warning{Msg: "concurrency 'unlimited': too many parallel downloads may be throttled or blocked by YouTube"})
+	} else if s.Concurrency > ConcurrencyAdvisoryThreshold {
+		w = append(w, Warning{Msg: fmt.Sprintf("concurrency %d is high: too many parallel downloads may be throttled or blocked by YouTube", s.Concurrency)})
 	}
 	return w
 }
