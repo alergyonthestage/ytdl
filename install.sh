@@ -171,6 +171,9 @@ install_ytdlp() {
   verify_checksum "$tmp" "yt-dlp_macos" "$sums"
   mv "$tmp" "$INSTALL_DIR/yt-dlp"
   chmod +x "$INSTALL_DIR/yt-dlp"
+  # Binaries fetched with curl are not quarantined, but clear the attribute
+  # defensively, consistent with ffmpeg and ytdl.
+  xattr -d com.apple.quarantine "$INSTALL_DIR/yt-dlp" 2>/dev/null || true
 
   ok "yt-dlp installed"
 }
