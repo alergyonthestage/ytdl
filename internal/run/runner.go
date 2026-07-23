@@ -289,7 +289,13 @@ func updateFailed() int {
 }
 
 // runCode runs cmd and returns its exit code: 0 on success, the process exit
-// code on a normal failure, 1 if it could not be started.
+// code on a normal failure, 128+signal when the child was killed by a signal, and
+// 1 if it could not be started. The 128+signal path matches the shell's
+// convention (Bash `set -e`/`rc=$?` propagates e.g. 137 for SIGKILL, 130 for
+// SIGINT): yt-dlp/ffmpeg are the memory-heavy, OOM-killable part of the pipeline,
+// and a caller keying off 130/137 to tell "interrupted/killed" from "yt-dlp
+// reported an error" would otherwise see every signal death collapse to a
+// generic 1 (also under-reporting the cause in silent mode's .log).
 func runCode(cmd *exec.Cmd) int {
 	err := cmd.Run()
 	if err == nil {
@@ -299,6 +305,10 @@ func runCode(cmd *exec.Cmd) int {
 	if errors.As(err, &ee) {
 		if code := ee.ExitCode(); code >= 0 {
 			return code
+		}
+		// ExitCode() is -1 for a signal death; recover the shell's 128+signal.
+		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			return 128 + int(ws.Signal())
 		}
 	}
 	return 1

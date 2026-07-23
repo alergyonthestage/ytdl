@@ -3,6 +3,7 @@ package run
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -163,6 +164,32 @@ func findLogs(t *testing.T, dir string) []string {
 		t.Fatal(err)
 	}
 	return m
+}
+
+func TestRunCode(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	cases := []struct {
+		name string
+		cmd  *exec.Cmd
+		want int
+	}{
+		{"success", exec.Command("bash", "-c", "exit 0"), 0},
+		{"normal failure propagates code", exec.Command("bash", "-c", "exit 3"), 3},
+		// A signal-killed child must surface 128+signal (SIGKILL=9 → 137), the
+		// shell's convention, not collapse to a generic 1.
+		{"SIGKILL becomes 137", exec.Command("bash", "-c", "kill -9 $$"), 137},
+		{"SIGTERM becomes 143", exec.Command("bash", "-c", "kill -TERM $$"), 143},
+		{"cannot start is 1", exec.Command(filepath.Join(t.TempDir(), "nope")), 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := runCode(c.cmd); got != c.want {
+				t.Errorf("runCode = %d, want %d", got, c.want)
+			}
+		})
+	}
 }
 
 func TestCheckDeps(t *testing.T) {
