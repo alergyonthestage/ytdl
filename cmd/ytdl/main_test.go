@@ -46,7 +46,7 @@ func TestRealMainQueueListsEnqueued(t *testing.T) {
 	if rc != 0 {
 		t.Errorf("rc = %d, want 0", rc)
 	}
-	if !strings.Contains(out, "https://youtu.be/MAIN") {
+	if !strings.Contains(out, "youtu.be/MAIN") { // scheme trimmed by the one-row shortener
 		t.Errorf("queue output missing the enqueued job:\n%s", out)
 	}
 }

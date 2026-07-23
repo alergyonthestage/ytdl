@@ -71,7 +71,7 @@ func TestRenderStatus(t *testing.T) {
 	if !strings.Contains(active, "daemon:    attivo") {
 		t.Errorf("status(active) missing active daemon line:\n%s", active)
 	}
-	for _, want := range []string{"in attesa: 3", "in corso:  1", "recenti (ultimi 30 giorni): 12 ok · 1 falliti"} {
+	for _, want := range []string{"in attesa: 3", "in corso:  1", "recenti (ultimi 30 giorni): 12 ok · 1 fallito"} {
 		if !strings.Contains(active, want) {
 			t.Errorf("status missing %q:\n%s", want, active)
 		}
@@ -80,6 +80,17 @@ func TestRenderStatus(t *testing.T) {
 	inactive := RenderStatus(queue.Snapshot{}, false, RecentSummary{}, 30)
 	if !strings.Contains(inactive, "inattivo") || strings.Contains(inactive, "non attivo") {
 		t.Errorf("status(inactive) should read informationally:\n%s", inactive)
+	}
+}
+
+func TestPlural(t *testing.T) {
+	if Plural(1, "fallito", "falliti") != "fallito" {
+		t.Error("n=1 should be singular")
+	}
+	for _, n := range []int{0, 2, 5} {
+		if Plural(n, "fallito", "falliti") != "falliti" {
+			t.Errorf("n=%d should be plural", n)
+		}
 	}
 }
 

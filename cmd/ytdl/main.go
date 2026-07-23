@@ -253,7 +253,10 @@ func watchQueue(sp *queue.Spool) int {
 			}
 			fmt.Print(term.Colorize(content, color))
 			if sawWork {
-				fmt.Printf("✓ Coda evasa — in questa sessione: %d completati · %d falliti\n", d-baseDone, f-baseFailed)
+				done, failed := max(0, d-baseDone), max(0, f-baseFailed) // floor: a concurrent prune could shrink the totals
+				fmt.Printf("✓ Coda evasa — in questa sessione: %d %s · %d %s\n",
+					done, cli.Plural(done, "completato", "completati"),
+					failed, cli.Plural(failed, "fallito", "falliti"))
 			}
 			return 0
 		}

@@ -59,8 +59,17 @@ func RenderStatus(snap queue.Snapshot, daemonActive bool, recent RecentSummary, 
 	fmt.Fprintf(&b, "  daemon:    %s\n", daemon)
 	fmt.Fprintf(&b, "  in attesa: %d\n", p)
 	fmt.Fprintf(&b, "  in corso:  %d\n", r)
-	fmt.Fprintf(&b, "  recenti (%s): %d ok · %d falliti\n", retentionWindow(retentionDays), recent.OK, recent.Failed)
+	fmt.Fprintf(&b, "  recenti (%s): %d ok · %d %s\n", retentionWindow(retentionDays), recent.OK, recent.Failed, Plural(recent.Failed, "fallito", "falliti"))
 	return b.String()
+}
+
+// Plural returns one when n == 1, else many — for grammatically correct Italian
+// count labels ("1 fallito" vs "2 falliti").
+func Plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // retentionWindow renders the human window label for a windowed count/list, from
