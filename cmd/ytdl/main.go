@@ -58,6 +58,8 @@ func realMain(args []string) int {
 		return runQueueCmd(parsed.QueueWatch)
 	case cli.ActionStatus:
 		return runStatusCmd()
+	case cli.ActionHistory:
+		return runHistoryCmd(parsed)
 	}
 
 	// ActionRun. C1: a bad -f flag fails fast (unlike the config file, which
@@ -225,6 +227,32 @@ func runStatusCmd() int {
 	pruneStores(sp, settings)
 	recent := recentSummary(settings.LogDir, settings.LogRetentionDays)
 	fmt.Print(cli.RenderStatus(snap, daemon.IsRunning(sp.LockPath()), recent, settings.LogRetentionDays))
+	return 0
+}
+
+// runHistoryCmd prints the durable download history from the log store —
+// foreground and background alike — newest first, within the retention window.
+func runHistoryCmd(p *cli.Parsed) int {
+	settings, _ := resolveWithFlags(config.Partial{})
+	if settings.LogDir == "" {
+		fmt.Fprintln(os.Stderr, "✗ Impossibile individuare lo storico: $HOME non è impostata.")
+		return 1
+	}
+	_ = logstore.Prune(settings.LogDir, settings.LogRetentionDays) // keep the window honest
+	var since time.Time
+	if settings.LogRetentionDays > 0 {
+		since = time.Now().AddDate(0, 0, -settings.LogRetentionDays)
+	}
+	entries, err := logstore.Load(settings.LogDir, logstore.QueryOpts{
+		Since:      since,
+		Limit:      p.HistoryLimit,
+		OnlyFailed: p.HistoryFailed,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "✗ Impossibile leggere lo storico: %v\n", err)
+		return 1
+	}
+	fmt.Print(cli.RenderHistory(entries, settings.LogRetentionDays))
 	return 0
 }
 

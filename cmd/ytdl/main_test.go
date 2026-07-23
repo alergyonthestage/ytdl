@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/alergyonthestage/ytdl/internal/config"
+	"github.com/alergyonthestage/ytdl/internal/logstore"
 	"github.com/alergyonthestage/ytdl/internal/queue"
 )
 
@@ -62,6 +63,30 @@ func TestRealMainStatusNoDaemon(t *testing.T) {
 	}
 	if !strings.Contains(out, "inattivo") {
 		t.Errorf("status output should report the daemon as not running:\n%s", out)
+	}
+}
+
+// `history` reads the durable log store — including a foreground download, which
+// never touches the spool — and lists it title-first with the window label.
+func TestRealMainHistoryLists(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+	t.Setenv("HOME", dir)
+
+	logDir := config.Defaults().LogDir
+	if err := logstore.Append(logDir, logstore.Job{
+		URL: "https://youtu.be/H", Title: "Artist - Song", Mode: "default",
+		Format: "mp3", Success: true, Time: time.Now().Add(-time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rc, out := captureStdout(t, func() int { return realMain([]string{"history"}) })
+	if rc != 0 {
+		t.Errorf("rc = %d, want 0", rc)
+	}
+	if !strings.Contains(out, "STORICO ytdl") || !strings.Contains(out, "Artist - Song") {
+		t.Errorf("history output missing header/title:\n%s", out)
 	}
 }
 
