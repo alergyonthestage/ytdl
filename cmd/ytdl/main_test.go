@@ -51,6 +51,27 @@ func TestRealMainQueueListsEnqueued(t *testing.T) {
 	}
 }
 
+// `queue --watch` must NOT enter its redraw loop when stdout is not a terminal
+// (here a pipe, under captureStdout): it falls back to a single snapshot and
+// returns. If the fallback regressed this test would hang (caught by the timeout).
+func TestRealMainQueueWatchNonTTYFallsBack(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+	t.Setenv("HOME", dir)
+
+	rc, out := captureStdout(t, func() int { return realMain([]string{"queue", "--watch"}) })
+	if rc != 0 {
+		t.Errorf("rc = %d, want 0", rc)
+	}
+	if !strings.Contains(out, "CODA ytdl") {
+		t.Errorf("non-TTY --watch should print one snapshot:\n%s", out)
+	}
+	// No ANSI redraw/cursor sequences must leak into a piped stream.
+	if strings.Contains(out, "\033[") {
+		t.Errorf("non-TTY --watch leaked ANSI escapes:\n%q", out)
+	}
+}
+
 // `status` reports the daemon as not running when none holds the lock.
 func TestRealMainStatusNoDaemon(t *testing.T) {
 	dir := t.TempDir()
