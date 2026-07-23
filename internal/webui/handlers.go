@@ -403,10 +403,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
-		case msg, ok := <-c.ch:
-			if !ok {
-				return
-			}
+		case msg := <-c.ch: // never closed; the context is what ends this loop
 			writeSSE(w, msg.event, msg.data)
 			flusher.Flush()
 		case <-poll.C:

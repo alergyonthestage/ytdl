@@ -13,6 +13,13 @@ type sseMsg struct {
 // the reading end; broadcast() is the only writer. The channel is buffered and
 // broadcast drops on overflow, so one slow/stalled client never blocks the
 // daemon's job goroutines that publish progress.
+//
+// The channel is deliberately NEVER closed: broadcast sends outside the hub lock,
+// so closing on disconnect would race with an in-flight send and panic with "send
+// on closed channel" — inside os/exec's stderr-copy goroutine, which no recover
+// covers, killing the whole daemon and orphaning every sibling download. A
+// removed client is unreachable (it is out of the map) and its channel is simply
+// garbage-collected; the reader exits on the request context instead.
 type hubClient struct {
 	ch chan sseMsg
 }
@@ -45,10 +52,7 @@ func (h *hub) addClient() *hubClient {
 
 func (h *hub) removeClient(c *hubClient) {
 	h.mu.Lock()
-	if _, ok := h.clients[c]; ok {
-		delete(h.clients, c)
-		close(c.ch)
-	}
+	delete(h.clients, c) // never close(c.ch) — see the hubClient doc comment
 	h.mu.Unlock()
 }
 
