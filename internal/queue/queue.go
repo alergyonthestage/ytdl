@@ -38,12 +38,13 @@ const (
 	Done    State = "done"
 	Failed  State = "failed"
 
-	tmpSub   = "tmp"
-	lockFile = "lock"
+	tmpSub    = "tmp"
+	cancelSub = "cancel"
+	lockFile  = "lock"
 )
 
-// stateDirs are the four job states, plus tmp, created up front.
-var stateDirs = []string{string(Pending), string(Running), string(Done), string(Failed), tmpSub}
+// stateDirs are the four job states, plus tmp and cancel, created up front.
+var stateDirs = []string{string(Pending), string(Running), string(Done), string(Failed), tmpSub, cancelSub}
 
 // Job is one enqueued download. The resolved settings are snapshotted at enqueue
 // time so a later config edit cannot retroactively change a queued job (ADR-0007).
@@ -214,6 +215,93 @@ func (s *Spool) RequeueRunning() (int, error) {
 		n++
 	}
 	return n, firstErr
+}
+
+// cancelDir holds the cancel markers: an empty file cancel/<id> asks the daemon
+// to stop the currently-running job with that id. Markers live apart from the
+// job files so writing one never races the pending→running or running→terminal
+// renames — the two touch different directories.
+func (s *Spool) cancelDir() string { return filepath.Join(s.root, cancelSub) }
+
+// RequestCancel drops a cancel marker for id (idempotent — re-requesting is a
+// no-op). The daemon's watcher picks it up and, if that id is currently running,
+// kills the job; a marker for a job that is not (or no longer) running is swept
+// as stale. Safe to call in any job state: it only creates a file in cancel/.
+func (s *Spool) RequestCancel(id string) error {
+	if err := s.EnsureDirs(); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(filepath.Join(s.cancelDir(), id), os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+// CancelPending removes a still-pending job outright — the cancel path for work
+// that has not started. A pending cancel is a delete (ADR-0011): the job never
+// ran, so there is nothing to record and no residue to clean. It returns
+// (true, nil) if the job was pending and is now gone, (false, nil) if it was not
+// pending (already claimed/running, or terminal), or (false, err) on a real
+// error. It races the daemon's claim safely: os.Remove and the claim's
+// os.Rename both target pending/<id>.json, so exactly one wins — if Remove wins
+// the job never runs; if the claim wins, Remove sees ErrNotExist and the caller
+// falls back to the cancel marker for the now-running job.
+func (s *Spool) CancelPending(id string) (bool, error) {
+	err := os.Remove(filepath.Join(s.dir(Pending), id+".json"))
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
+}
+
+// CancelRequests lists the ids that currently have a cancel marker. The daemon
+// polls it: an id in its in-flight set is killed, any other (stale) marker is
+// cleared with ClearCancel. Reads are lock-free; a missing cancel/ dir yields no
+// ids and no error.
+func (s *Spool) CancelRequests() ([]string, error) {
+	des, err := os.ReadDir(s.cancelDir())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	ids := make([]string, 0, len(des))
+	for _, de := range des {
+		if de.IsDir() {
+			continue
+		}
+		ids = append(ids, de.Name())
+	}
+	return ids, nil
+}
+
+// ClearCancel removes a cancel marker. Best-effort: a marker that has already
+// vanished is not an error.
+func (s *Spool) ClearCancel(id string) error {
+	if err := os.Remove(filepath.Join(s.cancelDir(), id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// Retry re-enqueues a failed job: rename(failed/<id> → pending/<id>), so the
+// daemon (which the caller spawns/resumes) drains it again. The job keeps its
+// original id, so it sorts by its first-enqueue time and is claimed ahead of
+// newer pending work — matching "retry it now". Returns os.ErrNotExist if id is
+// not in failed/ (e.g. it was pruned or already retried).
+func (s *Spool) Retry(id string) error {
+	if err := s.EnsureDirs(); err != nil {
+		return err
+	}
+	return os.Rename(
+		filepath.Join(s.dir(Failed), id+".json"),
+		filepath.Join(s.dir(Pending), id+".json"),
+	)
 }
 
 // PruneTerminal removes done/ and failed/ job files older than maxAgeDays (by
