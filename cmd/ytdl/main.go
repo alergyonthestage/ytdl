@@ -176,6 +176,7 @@ func runDaemon(daemonArgs []string) int {
 		Spool:         sp,
 		Concurrency:   settings.Concurrency,
 		RetentionDays: settings.LogRetentionDays,
+		JobTimeout:    time.Duration(settings.JobTimeout) * time.Second,
 	}
 
 	var srv *webui.Server
@@ -281,8 +282,8 @@ func readGUIToken(path string) string {
 // a progress sink keyed by its spool id, so the browser can draw a live bar. A
 // headless daemon (every `ytdl -b`) passes a nil srv, so the sink is nil, no
 // progress flags are added and execution is byte-for-byte the pre-GUI path.
-func jobRunner(srv *webui.Server) func(queue.Claim) int {
-	return func(cl queue.Claim) int {
+func jobRunner(srv *webui.Server) func(context.Context, queue.Claim) int {
+	return func(ctx context.Context, cl queue.Claim) int {
 		j := cl.Job
 		o := core.Options{Mode: core.ModeSilent, URL: j.URL, Settings: j.Settings, Playlist: j.Playlist}
 		var sink run.ProgressSink
@@ -297,7 +298,7 @@ func jobRunner(srv *webui.Server) func(queue.Claim) int {
 				})
 			}
 		}
-		return run.RunQueued(o, sink)
+		return run.RunQueued(ctx, o, sink)
 	}
 }
 

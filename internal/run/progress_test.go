@@ -2,6 +2,7 @@ package run
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"strings"
 	"sync"
@@ -250,7 +251,7 @@ func TestRunQueuedStreamsProgress(t *testing.T) {
 	}
 
 	o := runOptions(t, core.ModeSilent, out)
-	if rc := RunQueued(o, sink); rc != 0 {
+	if rc := RunQueued(context.Background(), o, sink); rc != 0 {
 		t.Fatalf("rc = %d, want 0", rc)
 	}
 
@@ -297,7 +298,7 @@ func TestRunQueuedKeepsLogClean(t *testing.T) {
 	t.Setenv("YTDLP_FAKE_PROGRESS", "1")
 
 	o := runOptions(t, core.ModeSilent, out)
-	if rc := RunQueued(o, func(ProgressEvent) {}); rc == 0 {
+	if rc := RunQueued(context.Background(), o, func(ProgressEvent) {}); rc == 0 {
 		t.Fatal("expected a failure exit code")
 	}
 	logs := storeLogs(t, o)

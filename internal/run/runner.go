@@ -8,6 +8,7 @@ package run
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -240,28 +242,37 @@ func runDefault(o core.Options, w io.Writer) int {
 // playlist item), keyed by a stable hash so a later success cleans it up (U7).
 // A completion notification fires per config (U6). It is also the mode the
 // background launcher re-executes into, so background inherits all of this.
-func runSilent(o core.Options) int { return runSilentSink(o, nil) }
+// The interactive `ytdl -s` is not cancellable — it runs in the foreground under
+// the user's own shell, so a background context and no process-group isolation
+// preserve its pre-2B-plus behaviour (Ctrl-C reaches it via the terminal group).
+func runSilent(o core.Options) int { return runSilentSink(context.Background(), o, nil, false) }
 
 // RunQueued executes a queued job in silent mode with optional live-progress
-// capture — the daemon's execution entry point when serving the web GUI (Cycle
-// 3). With a non-nil sink, yt-dlp is asked to emit machine-parseable progress
-// (appended AFTER core.BuildArgs, off the golden argv path) and every update is
-// forwarded to sink for SSE streaming, while the failure .log stays free of
-// progress lines. A nil sink is exactly runSilent — byte-identical behaviour —
-// so a CLI-spawned daemon with no GUI connected pays nothing. It performs the
-// pre-download mkdir that Dispatch does for the interactive silent mode.
-func RunQueued(o core.Options, sink ProgressSink) int {
+// capture — the daemon's execution entry point (Cycle 3 GUI; Cycle 2B-plus
+// cancel/timeout). With a non-nil sink, yt-dlp is asked to emit machine-parseable
+// progress (appended AFTER core.BuildArgs, off the golden argv path) and every
+// update is forwarded to sink for SSE streaming, while the failure .log stays
+// free of progress lines. ctx is the daemon's per-job context: cancelling it (an
+// external `ytdl cancel` or the job timeout) tears down the whole yt-dlp/ffmpeg
+// process group. A nil sink still behaves like runSilent for output, but the run
+// is cancellable. It performs the pre-download mkdir that Dispatch does for the
+// interactive silent mode.
+func RunQueued(ctx context.Context, o core.Options, sink ProgressSink) int {
 	if err := os.MkdirAll(o.Settings.OutputDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "✗ Impossibile creare la cartella %s: %v\n", o.Settings.OutputDir, err)
 		return 1
 	}
-	return runSilentSink(o, sink)
+	return runSilentSink(ctx, o, sink, true)
 }
 
-// runSilentSink is runSilent's body, parameterised by an optional progress sink.
-// A nil sink is the interactive `ytdl -s` path (no progress args; yt-dlp stderr
-// goes straight to the failure log, unchanged); a non-nil sink is the GUI path.
-func runSilentSink(o core.Options, sink ProgressSink) int {
+// runSilentSink is runSilent's body, parameterised by an optional progress sink
+// and whether the run is cancellable. A nil sink means no progress args (yt-dlp
+// stderr goes straight to the failure log, unchanged); cancellable=true wires
+// ctx to a process-group teardown so an external cancel or the job timeout stops
+// the whole yt-dlp/ffmpeg tree. A ctx-driven stop (cancel or timeout) is NOT a
+// genuine download failure: it drops no .log breadcrumb and is recorded under a
+// distinct mode ("cancelled"/"timeout") so history shows what happened.
+func runSilentSink(ctx context.Context, o core.Options, sink ProgressSink, cancellable bool) int {
 	// Register each cleanup immediately after its own successful creation, so a
 	// later failure still removes the temp files already made.
 	saved, cleanSaved, err := tempFile("ytdl-saved-")
@@ -327,7 +338,11 @@ func runSilentSink(o core.Options, sink ProgressSink) int {
 		fmt.Fprintf(os.Stderr, "✗ Errore file temporaneo: %v\n", err)
 		return 1
 	}
-	cmd := exec.Command(ytDlp, args...)
+	cmd := exec.CommandContext(ctx, ytDlp, args...)
+	var markReaped func()
+	if cancellable {
+		markReaped = cancellableProcessGroup(cmd)
+	}
 	cmd.Stdout = nil // → /dev/null
 	cmd.Stderr = ef
 	var em *progressEmitter
@@ -344,6 +359,9 @@ func runSilentSink(o core.Options, sink ProgressSink) int {
 		cmd.Stdout, cmd.Stderr = pout, perr
 	}
 	rc := runCode(cmd)
+	if markReaped != nil {
+		markReaped() // child reaped by os/exec — stop the escalation SIGKILL firing
+	}
 	if em != nil {
 		// cmd.Run has already joined os/exec's copy goroutines, so no write can
 		// land after this point.
@@ -360,15 +378,30 @@ func runSilentSink(o core.Options, sink ProgressSink) int {
 	// case, ytdl lines 290-293).
 	_, count := readSavedPaths(saved)
 	success := rc == 0 && count > 0
+
+	// A ctx cancel or timeout that stopped an unfinished job is not a genuine
+	// download failure: record it under a distinct mode and skip the .log
+	// breadcrumb, so a user-initiated cancel or a policy timeout never litters the
+	// destination with a failure log (ADR-0011). Only intermediates in the scratch
+	// dir are cleaned; a job that actually saved a file stays "silent".
+	mode, stopped := "silent", false
+	if cancellable && !success {
+		switch {
+		case errors.Is(ctx.Err(), context.DeadlineExceeded):
+			mode, stopped = "timeout", true
+		case ctx.Err() != nil:
+			mode, stopped = "cancelled", true
+		}
+	}
 	now := time.Now()
 
 	// Title from the dedicated before_dl temp file (the "Artist - Track" contract,
 	// core.silentBeforeDL), NOT the saved filename — the latter depends on the
 	// user's name_template, the former does not. Empty on an early failure → the
 	// history falls back to the URL.
-	recordJob(o, "silent", lastLine(title), rc, success, readCapped(errlog, stderrCap), now)
+	recordJob(o, mode, lastLine(title), rc, success, readCapped(errlog, stderrCap), now)
 
-	if o.Settings.BreadcrumbOnFailure {
+	if o.Settings.BreadcrumbOnFailure && !stopped {
 		if o.Playlist {
 			logstore.ReconcilePlaylist(o.Settings.OutputDir, o.URL, rc, now,
 				logstore.ParseAttempted(attemptedFile), logstore.ParseSucceededIDs(succeededFile))
@@ -514,6 +547,37 @@ func runCode(cmd *exec.Cmd) int {
 		}
 	}
 	return 1
+}
+
+// killGrace is how long a cancelled or timed-out job's process group is given to
+// exit on SIGTERM before it is SIGKILLed.
+const killGrace = 5 * time.Second
+
+// cancellableProcessGroup wires cmd — which MUST be an exec.CommandContext — so a
+// context cancel (an external `ytdl cancel` or the per-job timeout) tears down the
+// WHOLE process group: yt-dlp AND the ffmpeg child it spawns, not just yt-dlp.
+// Setpgid makes the child its own group leader (pgid == its pid); on cancel we
+// SIGTERM the group, then SIGKILL it after killGrace so a process ignoring
+// SIGTERM cannot linger holding a file open in the destination. It returns a
+// markReaped func the caller MUST invoke right after the child is reaped
+// (cmd.Run returns): it disarms the escalation SIGKILL, so it can never land on a
+// reused pgid. WaitDelay is set past killGrace so os/exec keeps the leader
+// un-reaped until the SIGKILL has had its chance.
+func cancellableProcessGroup(cmd *exec.Cmd) (markReaped func()) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var reaped atomic.Bool
+	cmd.Cancel = func() error {
+		pgid := cmd.Process.Pid // == pgid, since Setpgid made the child a group leader
+		_ = syscall.Kill(-pgid, syscall.SIGTERM)
+		time.AfterFunc(killGrace, func() {
+			if !reaped.Load() {
+				_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			}
+		})
+		return nil
+	}
+	cmd.WaitDelay = killGrace + 2*time.Second
+	return func() { reaped.Store(true) }
 }
 
 func tempFileError(err error) int {

@@ -15,6 +15,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -52,11 +53,16 @@ type Config struct {
 	// Concurrency caps parallel jobs; <= 0 means unlimited (no cap — the
 	// discouraged pre-2B behaviour).
 	Concurrency int
-	// Run executes one claimed job and returns its exit code (0 = success). It
-	// receives the whole Claim, so the runner can key side-channels (the GUI's
-	// live-progress stream) by the job's spool id. It is called from a worker
-	// goroutine; it must be safe for concurrent use.
-	Run func(queue.Claim) int
+	// Run executes one claimed job under ctx and returns its exit code (0 =
+	// success). It receives the whole Claim, so the runner can key side-channels
+	// (the GUI's live-progress stream) by the job's spool id. ctx is cancelled to
+	// stop the job — by the per-job JobTimeout, or by an external `ytdl cancel`
+	// the daemon's watcher routes to this job's cancel func. It is called from a
+	// worker goroutine; it must be safe for concurrent use.
+	Run func(ctx context.Context, cl queue.Claim) int
+	// JobTimeout caps how long a single job may run before its ctx is cancelled
+	// (the process group is then torn down by the runner). 0 means no limit.
+	JobTimeout time.Duration
 	// IdleTimeout / PollInterval default to the package constants when zero.
 	IdleTimeout  time.Duration
 	PollInterval time.Duration
@@ -154,7 +160,11 @@ func drain(cfg Config) {
 				defer wg.Done()
 				defer atomic.AddInt64(&inflight, -1)
 				defer release()
-				if runJobGuarded(cfg.Run, cl) == 0 {
+				// Per-job context: bounded by JobTimeout, and cancellable so an
+				// external `ytdl cancel` (routed by the watcher) can stop this job.
+				ctx, cancel := jobContext(cfg.JobTimeout)
+				defer cancel()
+				if runJobGuarded(cfg.Run, ctx, cl) == 0 {
 					_ = cfg.Spool.MarkDone(cl.ID)
 				} else {
 					_ = cfg.Spool.MarkFailed(cl.ID)
@@ -213,13 +223,24 @@ func drain(cfg Config) {
 // failure exit code, so a single misbehaving job cannot crash the whole daemon
 // (which would abandon every sibling download's yt-dlp child and strand their
 // spool entries in running/). The panicking job is marked failed, not retried.
-func runJobGuarded(run func(queue.Claim) int, cl queue.Claim) (rc int) {
+func runJobGuarded(run func(context.Context, queue.Claim) int, ctx context.Context, cl queue.Claim) (rc int) {
 	defer func() {
 		if r := recover(); r != nil {
 			rc = 1
 		}
 	}()
-	return run(cl)
+	return run(ctx, cl)
+}
+
+// jobContext builds a per-job context: bounded by timeout when set (>0), else a
+// plain cancellable context (0 = no limit). The returned cancel MUST be called
+// when the job ends — it releases the timer and lets the watcher's external
+// cancel unblock.
+func jobContext(timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout > 0 {
+		return context.WithTimeout(context.Background(), timeout)
+	}
+	return context.WithCancel(context.Background())
 }
 
 // liveClients evaluates the injected GUI-connected hook defensively: nil means

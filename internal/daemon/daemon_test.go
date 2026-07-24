@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -20,7 +21,7 @@ func fastCfg(sp *queue.Spool, concurrency int, run func(queue.Job) int) Config {
 		Concurrency: concurrency,
 		// Serve hands the whole Claim to Run; tests care only about the job, so
 		// adapt here and leave every call site expressed in terms of queue.Job.
-		Run:          func(cl queue.Claim) int { return run(cl.Job) },
+		Run:          func(_ context.Context, cl queue.Claim) int { return run(cl.Job) },
 		IdleTimeout:  40 * time.Millisecond,
 		PollInterval: 5 * time.Millisecond,
 	}
@@ -218,7 +219,7 @@ func TestServeIdleExitsOnPersistentClaimError(t *testing.T) {
 }
 
 func TestServeRejectsNilConfig(t *testing.T) {
-	if err := Serve(Config{Run: func(queue.Claim) int { return 0 }}); err == nil {
+	if err := Serve(Config{Run: func(context.Context, queue.Claim) int { return 0 }}); err == nil {
 		t.Error("Serve without a Spool returned nil error")
 	}
 	if err := Serve(Config{Spool: queue.Open(t.TempDir())}); err == nil {
@@ -304,6 +305,38 @@ func TestServeIdleExitsWithoutGUIHook(t *testing.T) {
 	}
 }
 
+// JobTimeout cancels a job's ctx after the deadline; the runner tears the process
+// group down and the daemon marks the job failed, all without wedging.
+func TestJobTimeoutCancelsRun(t *testing.T) {
+	sp := queue.Open(t.TempDir())
+	enqueueN(t, sp, 1)
+
+	cfg := fastCfg(sp, 1, func(queue.Job) int { return 0 })
+	cfg.JobTimeout = 30 * time.Millisecond
+	// A job that only ends when its ctx is cancelled: without the timeout it would
+	// run for 5s (far past the test), so a prompt finish proves the timeout fired.
+	cfg.Run = func(ctx context.Context, _ queue.Claim) int {
+		select {
+		case <-ctx.Done():
+			return 1 // ctx cancelled → the runner would report a signal death
+		case <-time.After(5 * time.Second):
+			return 0
+		}
+	}
+
+	start := time.Now()
+	if err := Serve(cfg); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("job not cancelled by the timeout; Serve took %v", elapsed)
+	}
+	snap, _ := sp.List()
+	if _, _, _, f := snap.Counts(); f != 1 {
+		t.Fatalf("timed-out job should be in failed/; counts failed=%d", f)
+	}
+}
+
 // Run receives the whole Claim, so the GUI can key live progress by spool id.
 func TestRunReceivesClaimID(t *testing.T) {
 	sp := queue.Open(t.TempDir())
@@ -311,7 +344,7 @@ func TestRunReceivesClaimID(t *testing.T) {
 
 	var gotID atomic.Value
 	cfg := fastCfg(sp, 1, func(queue.Job) int { return 0 })
-	cfg.Run = func(cl queue.Claim) int { gotID.Store(cl.ID); return 0 }
+	cfg.Run = func(_ context.Context, cl queue.Claim) int { gotID.Store(cl.ID); return 0 }
 	if err := Serve(cfg); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
