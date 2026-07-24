@@ -35,6 +35,10 @@ const DaemonSubcommand = "__daemon"
 const (
 	DefaultIdleTimeout  = 20 * time.Second
 	DefaultPollInterval = 1 * time.Second
+	// DefaultFirstClientGrace covers the gap between `ytdl gui` spawning the
+	// daemon and the browser actually connecting — a cold browser start can far
+	// exceed DefaultIdleTimeout, and the URL just printed must not go dead.
+	DefaultFirstClientGrace = 2 * time.Minute
 )
 
 // ErrAlreadyRunning is returned by Serve when another daemon already holds the
@@ -48,15 +52,27 @@ type Config struct {
 	// Concurrency caps parallel jobs; <= 0 means unlimited (no cap — the
 	// discouraged pre-2B behaviour).
 	Concurrency int
-	// Run executes one claimed job and returns its exit code (0 = success). It is
-	// called from a worker goroutine; it must be safe for concurrent use.
-	Run func(queue.Job) int
+	// Run executes one claimed job and returns its exit code (0 = success). It
+	// receives the whole Claim, so the runner can key side-channels (the GUI's
+	// live-progress stream) by the job's spool id. It is called from a worker
+	// goroutine; it must be safe for concurrent use.
+	Run func(queue.Claim) int
 	// IdleTimeout / PollInterval default to the package constants when zero.
 	IdleTimeout  time.Duration
 	PollInterval time.Duration
 	// RetentionDays ages out terminal (done/failed) spool files at startup,
 	// reusing log_retention_days; <= 0 keeps everything (ADR-0009).
 	RetentionDays int
+	// LiveClients reports whether a GUI client is currently connected. It is the
+	// second half of the ADR-0008 lifetime rule — the daemon lives while
+	// (queue has work) OR (a GUI client is connected) — so an idle queue no
+	// longer ends the process while a browser tab is watching. nil (the CLI-only
+	// case) means "no GUI", i.e. exactly the Cycle 2B-core idle-exit behaviour.
+	LiveClients func() bool
+	// FirstClientGrace is how long a GUI-serving daemon waits for its FIRST
+	// client before the ordinary idle timeout applies; it defaults to
+	// DefaultFirstClientGrace and is ignored when LiveClients is nil.
+	FirstClientGrace time.Duration
 }
 
 // Serve runs the drain loop until the queue is idle for IdleTimeout, then returns
@@ -71,6 +87,9 @@ func Serve(cfg Config) error {
 	}
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = DefaultPollInterval
+	}
+	if cfg.FirstClientGrace <= 0 {
+		cfg.FirstClientGrace = DefaultFirstClientGrace
 	}
 
 	if err := cfg.Spool.EnsureDirs(); err != nil {
@@ -119,6 +138,8 @@ func drain(cfg Config) {
 	var inflight int64
 
 	idleSince := time.Now()
+	started := time.Now()
+	sawClient := false
 	for {
 		// Take a worker slot BEFORE claiming, so a job is only moved into running/
 		// once a slot is truly free — the pool bounds claims, not just executions,
@@ -133,7 +154,7 @@ func drain(cfg Config) {
 				defer wg.Done()
 				defer atomic.AddInt64(&inflight, -1)
 				defer release()
-				if runJobGuarded(cfg.Run, cl.Job) == 0 {
+				if runJobGuarded(cfg.Run, cl) == 0 {
 					_ = cfg.Spool.MarkDone(cl.ID)
 				} else {
 					_ = cfg.Spool.MarkFailed(cl.ID)
@@ -155,7 +176,32 @@ func drain(cfg Config) {
 			time.Sleep(cfg.PollInterval)
 			continue
 		}
+		// ADR-0008: the daemon is long-lived but session-scoped — alive while the
+		// queue has work OR a GUI client is connected. A drained queue is therefore
+		// NOT enough to exit while a browser tab is watching; keep the idle clock
+		// reset so the full grace period only starts once the GUI disconnects.
+		if liveClients(cfg.LiveClients) {
+			sawClient = true
+			idleSince = time.Now()
+			time.Sleep(cfg.PollInterval)
+			continue
+		}
+		// A GUI daemon has just been spawned by `ytdl gui`, which prints a URL and
+		// launches a browser: a cold browser start can take far longer than
+		// IdleTimeout, so hold the door open until the FIRST client arrives.
+		if !sawClient && cfg.LiveClients != nil && time.Since(started) < cfg.FirstClientGrace {
+			idleSince = time.Now()
+			time.Sleep(cfg.PollInterval)
+			continue
+		}
 		if time.Since(idleSince) >= cfg.IdleTimeout {
+			// Re-check on the way out: a client that connected during the last poll
+			// window would otherwise be cut off the instant it loaded the page.
+			if liveClients(cfg.LiveClients) {
+				sawClient = true
+				idleSince = time.Now()
+				continue
+			}
 			break
 		}
 		time.Sleep(cfg.PollInterval)
@@ -167,13 +213,28 @@ func drain(cfg Config) {
 // failure exit code, so a single misbehaving job cannot crash the whole daemon
 // (which would abandon every sibling download's yt-dlp child and strand their
 // spool entries in running/). The panicking job is marked failed, not retried.
-func runJobGuarded(run func(queue.Job) int, j queue.Job) (rc int) {
+func runJobGuarded(run func(queue.Claim) int, cl queue.Claim) (rc int) {
 	defer func() {
 		if r := recover(); r != nil {
 			rc = 1
 		}
 	}()
-	return run(j)
+	return run(cl)
+}
+
+// liveClients evaluates the injected GUI-connected hook defensively: nil means
+// "no GUI" (the CLI-only case), and a panicking hook must not kill the daemon
+// and strand its running jobs — Run is already protected this way.
+func liveClients(f func() bool) (live bool) {
+	if f == nil {
+		return false
+	}
+	defer func() {
+		if recover() != nil {
+			live = false
+		}
+	}()
+	return f()
 }
 
 // acquireLock opens (creating) the lock file and takes an exclusive, non-blocking
@@ -216,16 +277,29 @@ func IsRunning(lockPath string) bool {
 	return false
 }
 
-// Spawn self-exec's the current binary into the hidden __daemon subcommand,
+// GUIFlag asks a spawned daemon to also serve the web interface. Only `ytdl gui`
+// passes it: a queue daemon started by `ytdl -b` stays headless, so the CLI-only
+// path opens no listening socket at all (the pre-Cycle-3 surface).
+const GUIFlag = "--gui"
+
+// Spawn starts a headless queue daemon: it drains the spool and serves no GUI.
+func Spawn() error { return spawn() }
+
+// SpawnGUI starts a daemon that also serves the web interface. Kept separate
+// from Spawn so the GUI is opt-in per invocation rather than a side effect of
+// every background download.
+func SpawnGUI() error { return spawn(GUIFlag) }
+
+// spawn self-exec's the current binary into the hidden __daemon subcommand,
 // detached from the terminal (Setsid + /dev/null stdio) and released so the
 // parent does not wait. It is idempotent: a duplicate daemon exits immediately on
 // the contended lock. Mirrors run.runBackground's detach, which it supersedes.
-func Spawn() error {
+func spawn(extra ...string) error {
 	self, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(self, DaemonSubcommand)
+	cmd := exec.Command(self, append([]string{DaemonSubcommand}, extra...)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if devnull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0); err == nil {
 		defer devnull.Close()

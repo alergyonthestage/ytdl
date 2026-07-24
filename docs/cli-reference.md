@@ -40,7 +40,7 @@ is *built and extended*, not an end-user guide (that is
 ## 2. Command → action map
 
 `realMain` dispatches in this order: `__daemon` (hidden, intercepted before the
-parser) → reserved subcommand keywords (`queue`, `status`, `history`) → the
+parser) → reserved subcommand keywords (`queue`, `status`, `history`, `gui`) → the
 download parser (a URL never collides with a keyword). Exit codes: `0` success,
 `1` user/parse/setup error, yt-dlp's own code (incl. `128+signal`) for a download.
 
@@ -55,6 +55,7 @@ download parser (a URL never collides with a keyword). Exit codes: `0` success,
 | `ytdl queue --watch` | live queue, in-place | reads: spool (loop) | region redraw; **auto-exit** on drain (§4) |
 | `ytdl status` | health summary | reads: spool (live) + log store (recent) | daemon (informational) + live + windowed recent |
 | `ytdl history [--failed] [--limit N]` | durable history | reads: log store `history.jsonl` | chronological list, title-first (§3.4) |
+| `ytdl gui` | open the web interface | spawns a GUI daemon (`__daemon --gui`) if none is listening, then opens the browser | `▸ Interfaccia ytdl su http://127.0.0.1:8765/` |
 | `ytdl -V` / `--version` | version | — | `ytdl X` + `yt-dlp Y` |
 | `ytdl -h` / `--help` | help | — | usage |
 | `ytdl --update` | re-run installer | network | streamed installer output |

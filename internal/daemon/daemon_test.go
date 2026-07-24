@@ -16,9 +16,11 @@ import (
 // fastCfg builds a Config with tiny timings so tests do not wait 20s to idle-exit.
 func fastCfg(sp *queue.Spool, concurrency int, run func(queue.Job) int) Config {
 	return Config{
-		Spool:        sp,
-		Concurrency:  concurrency,
-		Run:          run,
+		Spool:       sp,
+		Concurrency: concurrency,
+		// Serve hands the whole Claim to Run; tests care only about the job, so
+		// adapt here and leave every call site expressed in terms of queue.Job.
+		Run:          func(cl queue.Claim) int { return run(cl.Job) },
 		IdleTimeout:  40 * time.Millisecond,
 		PollInterval: 5 * time.Millisecond,
 	}
@@ -216,7 +218,7 @@ func TestServeIdleExitsOnPersistentClaimError(t *testing.T) {
 }
 
 func TestServeRejectsNilConfig(t *testing.T) {
-	if err := Serve(Config{Run: func(queue.Job) int { return 0 }}); err == nil {
+	if err := Serve(Config{Run: func(queue.Claim) int { return 0 }}); err == nil {
 		t.Error("Serve without a Spool returned nil error")
 	}
 	if err := Serve(Config{Spool: queue.Open(t.TempDir())}); err == nil {
@@ -256,4 +258,64 @@ func mustCounts(t *testing.T, sp *queue.Spool) (pending, running, done, failed i
 		t.Fatal(err)
 	}
 	return snap.Counts()
+}
+
+// ADR-0008: while a GUI client is connected the daemon must NOT idle-exit on an
+// empty queue — the exit test is "queue drained AND no GUI client". It exits
+// once the client disconnects and the grace period elapses.
+func TestServeStaysAliveWhileGUIConnected(t *testing.T) {
+	sp := queue.Open(t.TempDir())
+
+	var connected atomic.Bool
+	connected.Store(true)
+	cfg := fastCfg(sp, 2, func(queue.Job) int { return 0 })
+	cfg.LiveClients = connected.Load
+
+	done := make(chan error, 1)
+	go func() { done <- Serve(cfg) }()
+
+	// IdleTimeout is 40ms here; well past it the daemon must still be serving.
+	select {
+	case err := <-done:
+		t.Fatalf("Serve exited while a GUI client was connected (err=%v)", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	connected.Store(false)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Serve: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not exit after the GUI client disconnected")
+	}
+}
+
+// A nil LiveClients is the CLI-only case: unchanged Cycle 2B-core idle-exit.
+func TestServeIdleExitsWithoutGUIHook(t *testing.T) {
+	sp := queue.Open(t.TempDir())
+	start := time.Now()
+	if err := Serve(fastCfg(sp, 2, func(queue.Job) int { return 0 })); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Error("Serve should idle-exit promptly with no GUI hook")
+	}
+}
+
+// Run receives the whole Claim, so the GUI can key live progress by spool id.
+func TestRunReceivesClaimID(t *testing.T) {
+	sp := queue.Open(t.TempDir())
+	enqueueN(t, sp, 1)
+
+	var gotID atomic.Value
+	cfg := fastCfg(sp, 1, func(queue.Job) int { return 0 })
+	cfg.Run = func(cl queue.Claim) int { gotID.Store(cl.ID); return 0 }
+	if err := Serve(cfg); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	if id, _ := gotID.Load().(string); id == "" {
+		t.Error("Run did not receive a claim id")
+	}
 }

@@ -152,6 +152,35 @@ ytdl history --limit 50
 Il riepilogo di `status` e la cronologia coprono un periodo (di default gli ultimi
 30 giorni); l'etichetta accanto ai numeri te lo ricorda sempre.
 
+## L'interfaccia grafica (senza Terminale)
+
+Se preferisci non usare il Terminale, ytdl ha un'interfaccia nel browser. Aprila
+una volta sola così:
+
+```
+ytdl gui
+```
+
+Si apre una pagina web (sul tuo computer, non su internet) dove puoi:
+
+- **incollare un link e scaricare**, scegliendo formato, playlist e cartella;
+- **vedere la barra di avanzamento** dei download in corso, dal vivo;
+- consultare la **coda** e la **cronologia** recente;
+- **cambiare le impostazioni** (cartella predefinita, formato, e tutto il resto)
+  senza modificare file a mano.
+
+La pagina resta la tua finestra su ytdl finché la tieni aperta; quando la chiudi
+e non ci sono download in coda, il motore si spegne da solo. Se chiudi la pagina
+con dei download ancora in coda, il browser ti avvisa prima di uscire.
+
+L'interfaccia è **solo tua e solo locale**: risponde unicamente sul tuo computer
+(`127.0.0.1`) e ogni sessione è protetta da un codice, quindi nessun sito web che
+visiti può comandarla. La cartella per la sessione corrente si imposta dalla
+pagina stessa, senza toccare la configurazione permanente.
+
+> Se la porta predefinita è occupata, scegline un'altra:
+> `YTDL_GUI_PORT=8790 ytdl gui`
+
 ## Cambiare la cartella di destinazione
 
 Per cambiarla stabilmente, incolla nel Terminale (sostituendo il percorso con il
@@ -222,3 +251,4 @@ ytdl --help
 | `ytdl queue [--watch]` | Download in attesa e in corso (con `--watch` si aggiorna dal vivo e si chiude a coda finita) |
 | `ytdl status` | Stato del servizio di download + riepilogo recente |
 | `ytdl history [--failed] [--limit N]` | Cronologia dei download, anche in primo piano |
+| `ytdl gui` | Apre l'interfaccia grafica nel browser |

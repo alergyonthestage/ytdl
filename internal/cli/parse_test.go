@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/alergyonthestage/ytdl/internal/core"
@@ -211,5 +212,30 @@ func TestParseErrors(t *testing.T) {
 				t.Errorf("Usage = %v, want %v", pe.Usage, c.usage)
 			}
 		})
+	}
+}
+
+// `ytdl gui` is a bare subcommand: it takes no options, because every setting
+// lives inside the interface it opens.
+func TestParseGUI(t *testing.T) {
+	p, err := Parse([]string{"gui"})
+	if err != nil {
+		t.Fatalf("Parse(gui): %v", err)
+	}
+	if p.Action != ActionGUI {
+		t.Errorf("Action = %v, want ActionGUI", p.Action)
+	}
+}
+
+func TestParseGUIRejectsOptions(t *testing.T) {
+	if _, err := Parse([]string{"gui", "--port", "9000"}); err == nil {
+		t.Error("gui must reject unknown options")
+	}
+}
+
+// The GUI must be discoverable from --help.
+func TestUsageDocumentsGUI(t *testing.T) {
+	if !strings.Contains(Usage, "ytdl gui") {
+		t.Error("Usage does not document `ytdl gui`")
 	}
 }

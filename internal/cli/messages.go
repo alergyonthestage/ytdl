@@ -23,6 +23,9 @@ CODA
   ytdl status                          Stato del daemon + riepilogo recente
   ytdl history [--failed] [--limit N]  Storico dei download (anche in primo piano)
 
+INTERFACCIA GRAFICA
+  ytdl gui                             Apre l'interfaccia web nel browser
+
 AGGIORNAMENTI
   yt-dlp smette di funzionare quando YouTube cambia qualcosa: succede ogni
   pochi mesi. Se i download iniziano a fallire, la prima cosa da provare è:

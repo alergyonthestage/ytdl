@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ytdl</title>
+<style>
+:root {
+  --bg: #fbfbfd; --panel: #fff; --fg: #1d1d1f; --muted: #6e6e73;
+  --line: #e3e3e8; --accent: #0a7d32; --accent-fg: #fff; --err: #c0392b;
+  --bar: #d8d8de;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16161a; --panel: #1f1f24; --fg: #ececf1; --muted: #9a9aa2;
+    --line: #33333b; --accent: #2ea55a; --accent-fg: #08130c; --err: #ff6b5e;
+    --bar: #3a3a44;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 1.5rem 1rem 3rem; background: var(--bg); color: var(--fg);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+main { max-width: 720px; margin: 0 auto; }
+header { display: flex; align-items: baseline; gap: .6rem; margin-bottom: 1.25rem; }
+h1 { font-size: 1.4rem; margin: 0; letter-spacing: -.01em; }
+h2 { font-size: .95rem; margin: 0 0 .75rem; font-weight: 600; }
+section {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 1rem; margin-bottom: 1rem;
+}
+label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: .25rem; }
+input, select, button {
+  font: inherit; color: inherit; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 7px; padding: .45rem .6rem;
+}
+input[type=checkbox] { width: auto; vertical-align: middle; }
+input, select { width: 100%; }
+button {
+  background: var(--accent); color: var(--accent-fg); border-color: transparent;
+  font-weight: 600; cursor: pointer; width: auto; padding: .5rem 1.1rem;
+}
+button:disabled { opacity: .55; cursor: default; }
+button.secondary { background: transparent; color: var(--fg); border-color: var(--line); font-weight: 400; }
+.row { display: flex; gap: .75rem; flex-wrap: wrap; }
+.row > * { flex: 1 1 10rem; }
+.field { margin-bottom: .75rem; }
+.checks { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; }
+.checks label { display: flex; align-items: center; gap: .4rem; color: var(--fg); font-size: .9rem; }
+.job { padding: .55rem 0; border-top: 1px solid var(--line); font-size: .9rem; }
+.job:first-child { border-top: 0; }
+.job .u { overflow-wrap: anywhere; }
+.meta { color: var(--muted); font-size: .8rem; }
+.bar { height: 6px; background: var(--bar); border-radius: 3px; overflow: hidden; margin-top: .4rem; }
+.bar > i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s linear; }
+.empty { color: var(--muted); font-size: .88rem; }
+.ok { color: var(--accent); } .bad { color: var(--err); }
+.dot { width: .55rem; height: .55rem; border-radius: 50%; background: var(--muted); display: inline-block; }
+.dot.on { background: var(--accent); }
+#msg { margin-top: .6rem; font-size: .88rem; min-height: 1.2em; }
+details > summary { cursor: pointer; font-size: .95rem; font-weight: 600; }
+details[open] > summary { margin-bottom: .9rem; }
+.hint { font-size: .78rem; color: var(--muted); margin-top: .2rem; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>ytdl</h1>
+    <span class="meta"><span class="dot" id="daemonDot"></span> <span id="daemonTxt">—</span></span>
+  </header>
+
+  <section>
+    <h2>Nuovo download</h2>
+    <form id="dl">
+      <div class="field">
+        <label for="url">Link</label>
+        <input id="url" name="url" type="text" placeholder="https://…" required autocomplete="off">
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="format">Formato</label>
+          <select id="format"></select>
+        </div>
+        <div class="field">
+          <label for="outDir">Cartella per questo download (opzionale)</label>
+          <input id="outDir" type="text" placeholder="predefinita">
+        </div>
+      </div>
+      <div class="checks field">
+        <label><input type="checkbox" id="playlist"> Scarica l'intera playlist</label>
+      </div>
+      <button type="submit" id="go">Scarica</button>
+      <div id="msg"></div>
+    </form>
+  </section>
+
+  <section>
+    <h2>In corso</h2>
+    <div id="running"><p class="empty">Nessun download in corso.</p></div>
+    <h2 style="margin-top:1.1rem">In coda</h2>
+    <div id="pending"><p class="empty">Coda vuota.</p></div>
+  </section>
+
+  <section>
+    <h2>Cronologia recente</h2>
+    <div id="history"><p class="empty">Nessun download registrato.</p></div>
+  </section>
+
+  <section>
+    <details id="settingsBox">
+      <summary>Impostazioni</summary>
+      <div class="field">
+        <label for="sessionOut">Cartella per questa sessione</label>
+        <input id="sessionOut" type="text" placeholder="nessun override">
+        <div class="hint">Vale finché la GUI resta aperta; non modifica il file di configurazione.</div>
+        <p><button type="button" class="secondary" id="saveSession">Applica alla sessione</button></p>
+      </div>
+      <form id="settings">
+        <div class="row">
+          <div class="field"><label for="s_outputDir">Cartella predefinita</label><input id="s_outputDir"></div>
+          <div class="field"><label for="s_format">Formato</label><select id="s_format"></select></div>
+        </div>
+        <div class="row">
+          <div class="field"><label for="s_audioQuality">Qualità audio (0 = migliore)</label><select id="s_audioQuality"></select></div>
+          <div class="field">
+            <label for="s_concurrency">Download in parallelo</label>
+            <input id="s_concurrency" type="number" min="1">
+            <div class="checks" style="margin-top:.35rem">
+              <label><input type="checkbox" id="s_noLimit"> senza limite (sconsigliato)</label>
+            </div>
+          </div>
+        </div>
+        <div class="field"><label for="s_nameTemplate">Template del nome file</label><input id="s_nameTemplate"></div>
+        <div class="row">
+          <div class="field"><label for="s_stripBrackets">Rimuovi (regex, parentesi quadre)</label><input id="s_stripBrackets"></div>
+          <div class="field"><label for="s_stripTags">Rimuovi (regex, tag ridondanti)</label><input id="s_stripTags"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label for="s_logDir">Cartella dei log</label><input id="s_logDir"></div>
+          <div class="field"><label for="s_logRetentionDays">Giorni di storico (0 = per sempre)</label><input id="s_logRetentionDays" type="number" min="0"></div>
+        </div>
+        <div class="field"><label for="s_notifyOn">Notifica quando</label><select id="s_notifyOn"></select></div>
+        <div class="checks field">
+          <label><input type="checkbox" id="s_playlistDefault"> Playlist per impostazione predefinita</label>
+          <label><input type="checkbox" id="s_embedThumbnail"> Incorpora copertina</label>
+          <label><input type="checkbox" id="s_embedMetadata"> Incorpora metadati</label>
+          <label><input type="checkbox" id="s_breadcrumbOnFailure"> Lascia un .log accanto all'audio se fallisce</label>
+          <label><input type="checkbox" id="s_notify"> Notifiche di sistema</label>
+          <label><input type="checkbox" id="s_notifyForeground"> Notifica anche in primo piano</label>
+          <label><input type="checkbox" id="s_notifySound"> Suono della notifica</label>
+        </div>
+        <button type="submit" id="saveSettings">Salva impostazioni</button>
+        <div id="settingsMsg"></div>
+      </form>
+    </details>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const FORMATS = ["mp3", "flac", "m4a", "opus", "wav"];
+const NOTIFY_ON = { both: "sempre", success: "solo successo", failure: "solo errore" };
+// Mirrors config.DefaultConcurrency: the fallback when the field is left blank.
+const DEFAULT_CONCURRENCY = 3;
+
+// Live state: the last queue frame plus per-job progress, keyed by spool id.
+let counts = { pending: 0, running: 0, done: 0, failed: 0 };
+let running = [], pending = [];
+const progress = new Map();
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function option(sel, value, label, current) {
+  const o = document.createElement("option");
+  o.value = value; o.textContent = label;
+  if (value === current) o.selected = true;
+  sel.appendChild(o);
+}
+
+function fillSelect(sel, values, current, labels) {
+  sel.textContent = "";
+  for (const v of values) option(sel, v, labels ? labels[v] : v, current);
+}
+
+function renderJobs() {
+  const rEl = $("running"), pEl = $("pending");
+  if (!running.length) {
+    rEl.innerHTML = '<p class="empty">Nessun download in corso.</p>';
+  } else {
+    rEl.innerHTML = running.map((j) => {
+      const p = progress.get(j.id);
+      // The only value interpolated into an attribute rather than through esc():
+      // force it numeric so it can never carry markup, whatever the API sends.
+      const pct = Math.max(0, Math.min(100, Number(p && p.percent) || 0));
+      const title = p && p.title ? p.title : j.url;
+      let line = p ? (p.status === "processing" ? "elaborazione…" :
+        [p.percent >= 0 ? p.percent.toFixed(1) + "%" : null, p.speed, p.eta ? "ETA " + p.eta : null]
+          .filter(Boolean).join(" · ")) : "avvio…";
+      return '<div class="job"><div class="u">' + esc(title) + "</div>" +
+        '<div class="bar"><i style="width:' + pct + '%"></i></div>' +
+        '<div class="meta">' + esc(line) + " · ." + esc(j.format) + "</div></div>";
+    }).join("");
+  }
+  if (!pending.length) {
+    pEl.innerHTML = '<p class="empty">Coda vuota.</p>';
+  } else {
+    pEl.innerHTML = pending.map((j) =>
+      '<div class="job"><div class="u">' + esc(j.url) + "</div>" +
+      '<div class="meta">.' + esc(j.format) + (j.playlist ? " · playlist" : "") + "</div></div>").join("");
+  }
+}
+
+function renderHistory(items) {
+  const el = $("history");
+  if (!items || !items.length) {
+    el.innerHTML = '<p class="empty">Nessun download registrato.</p>';
+    return;
+  }
+  el.innerHTML = items.map((h) => {
+    const when = new Date(h.time).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" });
+    const mark = h.success ? '<span class="ok">✓</span>' : '<span class="bad">✗</span>';
+    return '<div class="job"><div class="u">' + mark + " " + esc(h.title || h.url) + "</div>" +
+      '<div class="meta">' + esc(when) + " · ." + esc(h.format) + " · " + esc(h.mode) + "</div></div>";
+  }).join("");
+}
+
+function applyQueue(q) {
+  counts = q.counts;
+  running = q.running || [];
+  pending = q.pending || [];
+  // Drop progress for jobs that are no longer running, so the map stays bounded.
+  const live = new Set(running.map((j) => j.id));
+  for (const id of progress.keys()) if (!live.has(id)) progress.delete(id);
+  renderJobs();
+}
+
+function setDaemon(on) {
+  $("daemonDot").className = "dot" + (on ? " on" : "");
+  $("daemonTxt").textContent = on ? "motore attivo" : "motore inattivo";
+}
+
+async function loadState() {
+  const r = await fetch("/api/state");
+  const s = await r.json();
+  applyQueue(s.queue);
+  renderHistory(s.history);
+  setDaemon(s.daemonRunning);
+  $("sessionOut").value = s.sessionOutputDir || "";
+}
+
+function connect() {
+  const es = new EventSource("/api/events");
+  es.addEventListener("queue", (e) => {
+    applyQueue(JSON.parse(e.data));
+    // A queue change usually means a job finished: refresh the history too.
+    fetch("/api/state").then((r) => r.json()).then((s) => {
+      renderHistory(s.history);
+      setDaemon(s.daemonRunning);
+    }).catch(() => {});
+  });
+  es.addEventListener("progress", (e) => {
+    const p = JSON.parse(e.data);
+    progress.set(p.id, p);
+    renderJobs();
+  });
+  es.onerror = () => setDaemon(false);
+}
+
+$("dl").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const body = {
+    url: $("url").value.trim(),
+    format: $("format").value || null,
+    outputDir: $("outDir").value.trim() || null,
+    playlist: $("playlist").checked,
+  };
+  if (!body.url) return;
+  $("go").disabled = true;
+  $("msg").textContent = "";
+  try {
+    const r = await fetch("/api/downloads", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "errore");
+    $("msg").innerHTML = '<span class="ok">✓ Accodato.</span>';
+    $("url").value = "";
+    if (data.queue) applyQueue(data.queue);
+  } catch (err) {
+    $("msg").innerHTML = '<span class="bad">✗ ' + esc(err.message) + "</span>";
+  } finally {
+    $("go").disabled = false;
+  }
+});
+
+$("saveSession").addEventListener("click", async () => {
+  const dir = $("sessionOut").value.trim();
+  await fetch("/api/session", {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ outputDir: dir }),
+  });
+  $("settingsMsg").innerHTML = '<span class="ok">✓ Cartella di sessione aggiornata.</span>';
+});
+
+const SETTING_IDS = ["outputDir", "format", "audioQuality", "playlistDefault", "nameTemplate",
+  "stripBrackets", "stripTags", "embedThumbnail", "embedMetadata", "logDir", "logRetentionDays",
+  "breadcrumbOnFailure", "notify", "notifyOn", "notifyForeground", "notifySound", "concurrency"];
+
+function fillSettings(s) {
+  // concurrency 0 means "no cap"; show it as an explicit choice rather than as a
+  // number, so an empty box can never silently mean unlimited.
+  $("s_noLimit").checked = s.concurrency === 0;
+  $("s_concurrency").value = s.concurrency === 0 ? "" : s.concurrency;
+  $("s_concurrency").disabled = s.concurrency === 0;
+  fillSelect($("s_format"), FORMATS, s.format);
+  fillSelect($("s_audioQuality"), ["0","1","2","3","4","5","6","7","8","9"], s.audioQuality);
+  fillSelect($("s_notifyOn"), Object.keys(NOTIFY_ON), s.notifyOn, NOTIFY_ON);
+  for (const k of SETTING_IDS) {
+    const el = $("s_" + k);
+    if (!el) continue;
+    if (el.type === "checkbox") el.checked = !!s[k];
+    else el.value = s[k];
+  }
+}
+
+function readSettings() {
+  const out = {};
+  for (const k of SETTING_IDS) {
+    if (k === "concurrency") continue; // handled explicitly below
+    const el = $("s_" + k);
+    if (!el) continue;
+    if (el.type === "checkbox") out[k] = el.checked;
+    else if (el.type === "number") out[k] = parseInt(el.value, 10) || 0;
+    else out[k] = el.value;
+  }
+  // 0 = unlimited, and only when the user ticked the box on purpose. An empty or
+  // unparseable field keeps the recommended default instead.
+  const n = parseInt($("s_concurrency").value, 10);
+  out.concurrency = $("s_noLimit").checked ? 0 : (n >= 1 ? n : DEFAULT_CONCURRENCY);
+  return out;
+}
+
+$("s_noLimit").addEventListener("change", () => {
+  $("s_concurrency").disabled = $("s_noLimit").checked;
+  if (!$("s_noLimit").checked && !$("s_concurrency").value) {
+    $("s_concurrency").value = DEFAULT_CONCURRENCY;
+  }
+});
+
+async function loadSettings() {
+  const r = await fetch("/api/settings");
+  const s = await r.json();
+  fillSettings(s);
+  fillSelect($("format"), FORMATS, s.format);
+}
+
+$("settings").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("saveSettings").disabled = true;
+  try {
+    const r = await fetch("/api/settings", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(readSettings()),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "errore");
+    fillSettings(data);
+    $("settingsMsg").innerHTML = '<span class="ok">✓ Impostazioni salvate.</span>';
+  } catch (err) {
+    $("settingsMsg").innerHTML = '<span class="bad">✗ ' + esc(err.message) + "</span>";
+  } finally {
+    $("saveSettings").disabled = false;
+  }
+});
+
+// ADR-0008: closing the GUI while the queue still has work would leave the
+// daemon draining unattended — warn, as the ADR prescribes.
+window.addEventListener("beforeunload", (e) => {
+  if (counts.pending + counts.running > 0) {
+    e.preventDefault();
+    e.returnValue = "Vuoi uscire? Hai download in coda.";
+    return e.returnValue;
+  }
+});
+
+loadSettings().then(loadState).then(connect).catch(() => {
+  $("msg").innerHTML = '<span class="bad">✗ Motore non raggiungibile.</span>';
+});
+</script>
+</body>
+</html>

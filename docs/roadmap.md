@@ -14,8 +14,9 @@ out to yt-dlp/ffmpeg; the installer stays Bash and Python is not adopted. See
 (2026-07-23; release pending)**; **Cycle 2B-core (queue + on-demand `ytdld` daemon)
 is done and merged to `main` (2026-07-23; release pending)**; **Cycle 2C (CLI UX
 pass — roles, count/history redesign, in-place `--watch`) is done and merged to
-`main` (2026-07-23; release pending)**; next is Cycle 2B-plus (`cancel`/`retry` +
-phase-5 hardening) and Cycle 3 (GUI, phase 6).
+`main` (2026-07-23; release pending)**; **Cycle 3 (the web GUI, phase 6b) is done
+and merged to `main` (2026-07-24; release pending)**; next is Cycle 2B-plus
+(`cancel`/`retry` + phase-5 hardening) and the 6a AppleScript MVP.
 
 ```mermaid
 flowchart LR
@@ -219,7 +220,7 @@ Hardening of the new engine once its features exist: comprehensive error handlin
 edge cases, retries/backoff, YouTube rate-limit handling, and a real test suite
 (Go's `testing`, beyond the golden tests of 3.3).
 
-## Phase 6 — GUI — `planned` (last priority, high user value)
+## Phase 6 — GUI — `in progress` (6b done; 6a planned)
 
 A GUI for non-developer users. It is a **front-end over the Go engine** (config +
 queue + runner already built), not a reimplementation. Runtime is settled by
@@ -230,10 +231,24 @@ queue has work, and exits only when the GUI is closed AND the queue is drained
 (the CLI-only path is the no-GUI special case). No `launchd` always-on service is
 installed by default.
 
-| # | Item | Notes |
-|---|---|---|
-| 6a | AppleScript/Automator MVP: paste/drop URL, pick folder, enqueue | zero-dep, works to Mojave, immediate value for non-devs |
-| 6b | Web UI served by `ytdld`: live foreground progress, format/settings, per-run/session/global output dir, settings editor, queue + in-progress view | `net/http` + SSE; needs 3–4 done |
+| # | Item | Status | Notes |
+|---|---|---|---|
+| 6a | AppleScript/Automator MVP: paste/drop URL, pick folder, enqueue | planned | zero-dep, works to Mojave, immediate value for non-devs |
+| 6b | Web UI served by the daemon: live progress, format/settings, per-run/session/global output dir, settings editor, queue + in-progress view | done (Cycle 3) | `net/http` + SSE; single binary; authenticated local API |
+
+**Cycle 3 (6b) — done, merged to `main` (2026-07-24; release pending).** `ytdl gui`
+opens a self-contained embedded web page served by the same binary (a `__daemon
+--gui` role — no separate `cmd/ytdld`, refining ADR-0008 for installation
+simplicity). Live per-job progress streams over SSE, captured from both of yt-dlp's
+output streams off the golden argv path (`internal/core` byte-unchanged). The
+settings editor persists through the new `config.Save` (whitelist-only, validated,
+atomic). The queue is **read-only** by decision (`cancel`/`retry` stay Cycle
+2B-plus). The local API is authenticated (per-session token + `Origin` +
+`application/json` + URL validation) and only opened by a GUI daemon — `ytdl -b`
+stays headless. Adversarially reviewed (3 reviewers; the real findings —
+progress-on-stdout, a hub close-race that could kill the daemon, a CSRF→argv-
+injection path, and the port-before-lock ordering — all fixed and verified against
+real yt-dlp). See [ADR-0010](decisions/0010-cycle3-web-gui.md).
 
 The settings editor writing the config file is safe precisely because the config
 is parsed with a whitelist, not `source`d (3.5).
@@ -399,15 +414,28 @@ Cycle 3 daemon.
   distinct, truthful semantics; the spool no longer leaks terminal jobs; `-n`
   failures read cleanly; suite green.
 
-### Cycle 3 — GUI (phase 6)
+### Cycle 3 — GUI (phase 6b) — **done, merged to `main` (2026-07-24)**
 
-- **Scope:** AppleScript MVP (paste/drop URL → pick folder → enqueue), then the web
-  UI served by `ytdld` (live foreground progress via SSE, format/settings,
-  per-run/session/global output dir, settings editor, queue + in-progress view).
-- **Entry:** Cycles 1–2 done (config + queue + runner exist).
-- **Done when:** a non-developer starts a foreground download and watches progress,
-  launches background downloads, sees the queue, and edits settings — all without
-  the Terminal.
+- **Scope delivered:** the web UI served by the daemon — `ytdl gui`, a
+  self-contained embedded page, live per-job progress via SSE, format/settings,
+  per-run/session/global output dir, a settings editor (`config.Save`), and a
+  queue + in-progress + recent-history view. The queue is read-only (`cancel`/
+  `retry` deferred to 2B-plus); the 6a AppleScript MVP is deferred.
+- **Entry:** Cycles 1–2 done (config + queue + runner exist). Off the latest `main`.
+- **Done:** a non-developer runs `ytdl gui`, starts a download and watches its
+  progress bar, launches background downloads, sees the queue and history, and edits
+  settings — all without the Terminal. Verified end-to-end against real yt-dlp.
+- **Built as:** `internal/webui` (server + SSE + embedded SPA), `config.Save`, the
+  `internal/run` progress seam (`RunQueued` + splitter), and the daemon lifecycle
+  wiring (`LiveClients`/`FirstClientGrace`, `SpawnGUI`, `Config.Run` takes a
+  `queue.Claim`). Standard library only; `internal/core` byte-unchanged.
+- **Security:** authenticated local API (per-session token + `Origin` +
+  `application/json` + URL validation); the API is only opened by a GUI daemon.
+- **Decisions:** [ADR-0010](decisions/0010-cycle3-web-gui.md) (single binary, SSE
+  progress from both streams, config write API, the local-API security model).
+- **Deferrals recorded in ADR-0010:** an editor `concurrency` change applies to the
+  next GUI session; per-client ~1 Hz spool polling; `PUT /api/settings` is a
+  whole-document overwrite.
 
 Phase 7 (Windows/Linux) stays deferred and is not a scheduled cycle.
 
