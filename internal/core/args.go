@@ -87,6 +87,29 @@ func BuildArgs(o Options) []string {
 	return nil
 }
 
+// TempRedirectArgs returns runtime-only yt-dlp args that route every intermediate
+// file (.part, fragments, the --embed-thumbnail image, the pre-conversion audio)
+// into workDir instead of the destination, so a failed or cancelled download
+// leaves NO residue there — only the final file on success, or the .log
+// breadcrumb (ADR-0011). They are APPENDED after BuildArgs, off the golden path,
+// so the byte-exact argv contract is untouched.
+//
+// The appended bare -o is load-bearing: it overrides BuildArgs's ABSOLUTE -o with
+// the same name template made RELATIVE, because yt-dlp ignores --paths entirely
+// when -o is an absolute path (verified against yt-dlp 2026.07.04 — with an
+// absolute -o the .part/.webp land in the destination regardless of --paths). A
+// duplicate bare -o is last-wins for the default output type. With a relative -o,
+// `home:` then places the final file in OutputDir — the exact path the original
+// absolute -o produced, so after_move/%(filepath)s and every downstream consumer
+// see an unchanged result — while `temp:` collects the intermediates in workDir.
+func TempRedirectArgs(o Options, workDir string) []string {
+	return []string{
+		"-o", relOutputTemplate(o.Settings),
+		"-P", "home:" + o.Settings.OutputDir,
+		"-P", "temp:" + workDir,
+	}
+}
+
 // metaArgs is the metadata-normalization pipeline, shared by every download
 // mode, in the contract's exact order (ytdl lines 206-212). Order is critical:
 // clean title/track, split the title into the xartist/xtrack helper fields
@@ -141,5 +164,13 @@ func baseArgs(s config.Settings, playlist bool) []string {
 // Plain concatenation (not filepath.Join) — the template's %(...) tokens must
 // pass through to yt-dlp untouched.
 func outputTemplate(s config.Settings) string {
-	return s.OutputDir + "/" + s.NameTemplate + ".%(ext)s"
+	return s.OutputDir + "/" + relOutputTemplate(s)
+}
+
+// relOutputTemplate is the filename part of the -o value (NameTemplate.%(ext)s),
+// without the OutputDir. It is the same string outputTemplate embeds, reused as
+// the RELATIVE -o that TempRedirectArgs pairs with `-P home:` so intermediates
+// can be routed to a temp dir (yt-dlp ignores --paths when -o is absolute).
+func relOutputTemplate(s config.Settings) string {
+	return s.NameTemplate + ".%(ext)s"
 }

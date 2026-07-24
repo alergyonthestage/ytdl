@@ -179,8 +179,10 @@ func lastNonEmptyLine(s string) string {
 // line prints only when yt-dlp succeeded (the Bash `set -e` aborts otherwise).
 func runVerbose(o core.Options, w io.Writer) int {
 	fmt.Fprintf(w, "▸ Scarico (.%s) → %s  [verbose]\n\n", o.Settings.Format, o.Settings.OutputDir)
+	work, cleanWork := workDir()
+	defer cleanWork()
 	var errbuf capBuffer
-	cmd := exec.Command(ytDlp, core.BuildArgs(o)...)
+	cmd := exec.Command(ytDlp, withTempRedirect(core.BuildArgs(o), o, work)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = io.MultiWriter(os.Stderr, &errbuf)
 	rc := runCode(cmd)
@@ -206,8 +208,11 @@ func runDefault(o core.Options, w io.Writer) int {
 	defer cleanup()
 	o.SavedFile = saved
 
+	work, cleanWork := workDir()
+	defer cleanWork()
+
 	var errbuf capBuffer
-	cmd := exec.Command(ytDlp, core.BuildArgs(o)...)
+	cmd := exec.Command(ytDlp, withTempRedirect(core.BuildArgs(o), o, work)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = io.MultiWriter(os.Stderr, &errbuf)
 	rc := runCode(cmd)
@@ -278,7 +283,14 @@ func runSilentSink(o core.Options, sink ProgressSink) int {
 	o.TitleFile = title
 	o.SavedFile = saved
 
-	args := core.BuildArgs(o)
+	work, cleanWork := workDir()
+	defer cleanWork()
+
+	// Route intermediates (.part, fragments, the embed thumbnail, pre-conversion
+	// audio) into the scratch dir so a failed/cancelled queued download leaves no
+	// residue in the destination — only the final file on success, or the .log
+	// breadcrumb below (ADR-0011). Appended after BuildArgs, off the golden path.
+	args := withTempRedirect(core.BuildArgs(o), o, work)
 
 	// Per-item playlist tracking (U7): append extra yt-dlp print sinks AFTER
 	// BuildArgs — pure runtime instrumentation, off the golden argv path — only
@@ -507,6 +519,33 @@ func runCode(cmd *exec.Cmd) int {
 func tempFileError(err error) int {
 	fmt.Fprintf(os.Stderr, "✗ Errore file temporaneo: %v\n", err)
 	return 1
+}
+
+// workDir makes a per-download scratch directory for yt-dlp's intermediate files
+// and returns it with a cleanup func. Every mode that downloads routes
+// intermediates here (via core.TempRedirectArgs), so the destination only ever
+// receives the final file — a failed or cancelled download leaves no .part/.webp
+// residue (ADR-0011). The cleanup is deferred in the same goroutine that runs the
+// child, so it fires on every exit path, including a context-cancel/timeout kill.
+// On a mkdir failure it yields "" and a no-op cleanup, and the caller falls back
+// to yt-dlp's default placement (residue possible, but the download still works —
+// degraded, not broken).
+func workDir() (string, func()) {
+	d, err := os.MkdirTemp("", "ytdl-work-*")
+	if err != nil {
+		return "", func() {}
+	}
+	return d, func() { _ = os.RemoveAll(d) }
+}
+
+// withTempRedirect appends the intermediate-file redirection args (see
+// core.TempRedirectArgs) when work is non-empty; an empty work dir leaves args
+// unchanged, so a workDir mkdir failure degrades to the pre-redirection argv.
+func withTempRedirect(args []string, o core.Options, work string) []string {
+	if work == "" {
+		return args
+	}
+	return append(args, core.TempRedirectArgs(o, work)...)
 }
 
 // tempFile creates an empty temp file and returns its path and a cleanup func,

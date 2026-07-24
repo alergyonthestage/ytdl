@@ -93,6 +93,27 @@ func TestBuildArgsGoldens(t *testing.T) {
 	}
 }
 
+func TestTempRedirectArgs(t *testing.T) {
+	s := settings(t, "mp3", "/music/out")
+	o := Options{Mode: ModeSilent, URL: singleURL, Settings: s}
+	got := TempRedirectArgs(o, "/tmp/work-123")
+	want := []string{
+		"-o", s.NameTemplate + ".%(ext)s", // RELATIVE — overrides BuildArgs's absolute -o
+		"-P", "home:/music/out", // final files still land in OutputDir
+		"-P", "temp:/tmp/work-123", // intermediates go to the scratch dir
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("TempRedirectArgs\n got: %#v\nwant: %#v", got, want)
+	}
+
+	// The relative -o must be exactly BuildArgs's absolute -o with the OutputDir
+	// prefix removed — same final path, so after_move and parity are unchanged.
+	rel := TempRedirectArgs(o, "/w")[1]
+	if want := s.OutputDir + "/" + rel; want != outputTemplate(s) {
+		t.Errorf("relative -o %q + OutputDir != absolute -o %q", rel, outputTemplate(s))
+	}
+}
+
 // readGolden reads the NUL-delimited golden byte stream and splits it into the
 // argument slice, dropping only the trailing empty left by the final NUL (the
 // empty-string argument in the metadata pipeline is a legitimate interior token).
