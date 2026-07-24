@@ -155,6 +155,14 @@ func Parse(args []string) (*Parsed, error) {
 			if haveURL {
 				return nil, &ParseError{Msg: fmt.Sprintf(MsgTooManyArguments, p.URL), Usage: true}
 			}
+			// A bare word (no `/ . :`) is not a valid yt-dlp URL — it is almost always
+			// a mistyped subcommand (the reported UX bug: `ytdl queu` tried to
+			// download "queu"). Reject it with a helpful message instead of forwarding
+			// it to yt-dlp's opaque "not a valid URL" (Cycle 4). `--` still forces a
+			// bare token through as the URL (handled above, before this default case).
+			if !looksLikeURL(a) {
+				return nil, notAURLError(a)
+			}
 			p.URL = a
 			haveURL = true
 			i++
@@ -182,6 +190,17 @@ func Parse(args []string) (*Parsed, error) {
 	}
 	p.Action = ActionRun
 	return p, nil
+}
+
+// notAURLError builds the parse error for a bare first positional that is neither
+// a reserved subcommand nor a URL. When it is close to a known command it adds a
+// "did you mean" hint; otherwise it explains what a URL looks like. Both request
+// the usage text, like the other positional errors.
+func notAURLError(tok string) *ParseError {
+	if cmd := nearestCommand(tok); cmd != "" {
+		return &ParseError{Msg: fmt.Sprintf(MsgDidYouMean, tok, cmd), Usage: true}
+	}
+	return &ParseError{Msg: fmt.Sprintf(MsgNotACommandOrURL, tok), Usage: true}
 }
 
 // parseQueue parses `queue [--watch]`. The only accepted option is --watch/-w;

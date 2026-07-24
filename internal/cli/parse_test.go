@@ -35,8 +35,8 @@ func TestParseFlags(t *testing.T) {
 	if !p.Playlist {
 		t.Errorf("Playlist not set")
 	}
-	// long forms
-	p, _ = Parse([]string{"--output", "/o", "--format", "m4a", "--playlist", "u"})
+	// long forms (u.co is a URL-like placeholder: a bare word is now rejected, C4)
+	p, _ = Parse([]string{"--output", "/o", "--format", "m4a", "--playlist", "u.co"})
 	if *p.OutputDir != "/o" || *p.Format != "m4a" || !p.Playlist {
 		t.Errorf("long forms: %+v", p)
 	}
@@ -47,15 +47,15 @@ func TestParseModePriority(t *testing.T) {
 		args []string
 		want core.Mode
 	}{
-		{[]string{"-n", "u"}, core.ModeDryRun},
-		{[]string{"-b", "u"}, core.ModeBackground},
-		{[]string{"-v", "u"}, core.ModeVerbose},
-		{[]string{"-s", "u"}, core.ModeSilent},
-		{[]string{"u"}, core.ModeDefault},
+		{[]string{"-n", "u.co"}, core.ModeDryRun},
+		{[]string{"-b", "u.co"}, core.ModeBackground},
+		{[]string{"-v", "u.co"}, core.ModeVerbose},
+		{[]string{"-s", "u.co"}, core.ModeSilent},
+		{[]string{"u.co"}, core.ModeDefault},
 		// priority when several are set: dry > background > verbose > silent
-		{[]string{"-n", "-b", "-v", "-s", "u"}, core.ModeDryRun},
-		{[]string{"-b", "-v", "-s", "u"}, core.ModeBackground},
-		{[]string{"-v", "-s", "u"}, core.ModeVerbose},
+		{[]string{"-n", "-b", "-v", "-s", "u.co"}, core.ModeDryRun},
+		{[]string{"-b", "-v", "-s", "u.co"}, core.ModeBackground},
+		{[]string{"-v", "-s", "u.co"}, core.ModeVerbose},
 	}
 	for _, c := range cases {
 		p, err := Parse(c.args)
@@ -100,8 +100,9 @@ func TestParseDoubleDash(t *testing.T) {
 	if p.URL != "-weird-url" {
 		t.Errorf("URL = %q, want -weird-url", p.URL)
 	}
-	// -- overwrites an earlier positional and ignores the remainder
-	p, _ = Parse([]string{"first", "--", "second", "third"})
+	// -- overwrites an earlier positional and ignores the remainder (first.co is
+	// URL-like so it is accepted before -- replaces it; a bare word would be C4-rejected)
+	p, _ = Parse([]string{"first.co", "--", "second", "third"})
 	if p.URL != "second" {
 		t.Errorf("URL = %q, want second", p.URL)
 	}

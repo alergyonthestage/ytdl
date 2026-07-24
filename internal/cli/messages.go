@@ -79,4 +79,8 @@ const (
 	MsgTargetAndAll     = "✗ Indica un indice OPPURE --all, non entrambi."
 	MsgTargetNotFound   = "✗ Non trovato: %s (lancia il comando senza argomenti per vedere la lista)." // %s = the token
 	MsgTargetAmbiguous  = "✗ %s è ambiguo: corrisponde a più di un job. Usa più caratteri dell'id."    // %s = the token
+	// Cycle 4: a bare first positional that is neither a subcommand nor a URL. The
+	// first fires when it is close to a known command, the second otherwise.
+	MsgDidYouMean       = "✗ «%s» non è un comando. Forse intendevi «%s»?\n  Per scaricare, passa un URL tra virgolette: ytdl \"https://…\""                                 // %s tok, %s command
+	MsgNotACommandOrURL = "✗ «%s» non è né un comando né un URL valido.\n  Un URL deve contenere «http://» o un dominio (es. youtube.com); i comandi sono in `ytdl --help`." // %s = the token
 )
