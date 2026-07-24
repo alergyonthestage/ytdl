@@ -369,8 +369,6 @@ func runSilentSink(ctx context.Context, o core.Options, sink ProgressSink, cance
 	// resolved "Artist - Track" the moment it lands, so the daemon can name a
 	// still-running job in `ytdl queue`. Runs regardless of sink (headless too),
 	// since the title comes from the metadata pipeline, not the progress stream.
-	// Joined before we return so a SetTitle can never race the daemon's terminal
-	// rename, which happens only after RunQueued returns.
 	var titleWG sync.WaitGroup
 	titleDone := make(chan struct{})
 	if onTitle != nil {
@@ -391,21 +389,26 @@ func runSilentSink(ctx context.Context, o core.Options, sink ProgressSink, cance
 				}
 			}
 		}()
+		// Stop the watcher and report the final resolved title exactly once, on ANY
+		// return path INCLUDING a panic — so a leaked goroutine's SetTitle can never
+		// race the daemon's terminal rename (which happens only after RunQueued
+		// returns). Deferred right after the goroutine starts, so it is LIFO-ordered
+		// before the temp-file cleanups above: the join runs while the before_dl file
+		// still exists, and it precedes the final flush, keeping the watcher's onTitle
+		// and the flush's onTitle mutually exclusive. A fast job that finished before
+		// the first tick is covered by this final flush.
+		defer func() {
+			close(titleDone)
+			titleWG.Wait()
+			if s := lastLine(title); s != "" {
+				onTitle(s)
+			}
+		}()
 	}
 
 	rc := runCode(cmd)
 	if markReaped != nil {
 		markReaped() // child reaped by os/exec — stop the escalation SIGKILL firing
-	}
-	// Stop the watcher and, whether or not it caught the title in time (a fast job
-	// can finish before the first tick), report the final resolved title once — so
-	// a failed job still carries its name into failed/ for `ytdl retry`.
-	close(titleDone)
-	titleWG.Wait()
-	if onTitle != nil {
-		if s := lastLine(title); s != "" {
-			onTitle(s)
-		}
 	}
 	if em != nil {
 		// cmd.Run has already joined os/exec's copy goroutines, so no write can

@@ -377,3 +377,30 @@ func TestRunRetryCmdRequeues(t *testing.T) {
 		t.Fatalf("job should be re-queued: pending=%d failed=%d", len(snap.Pending), len(snap.Failed))
 	}
 }
+
+// enrichTitlesFromHistory must look up each failed job in ITS OWN snapshotted
+// Settings.LogDir (ADR-0007), not a single global dir — otherwise a job whose title
+// was recorded in a different log dir is missed. It also preserves an existing
+// title and skips playlists.
+func TestEnrichTitlesFromHistoryPerJobLogDir(t *testing.T) {
+	dirA, dirB := t.TempDir(), t.TempDir()
+	base := time.Now()
+	if err := logstore.Append(dirA, logstore.Job{URL: "https://youtu.be/A", Title: "Title A", Time: base}); err != nil {
+		t.Fatal(err)
+	}
+	if err := logstore.Append(dirB, logstore.Job{URL: "https://youtu.be/B", Title: "Title B", Time: base}); err != nil {
+		t.Fatal(err)
+	}
+	entries := []queue.Entry{
+		{ID: "a", State: queue.Failed, Job: queue.Job{URL: "https://youtu.be/A", Settings: config.Settings{LogDir: dirA}}},
+		{ID: "b", State: queue.Failed, Job: queue.Job{URL: "https://youtu.be/B", Settings: config.Settings{LogDir: dirB}}},
+		{ID: "c", State: queue.Failed, Job: queue.Job{URL: "https://youtu.be/A", Title: "Already", Settings: config.Settings{LogDir: dirA}}},
+		{ID: "d", State: queue.Failed, Job: queue.Job{URL: "https://youtu.be/L", Playlist: true, Settings: config.Settings{LogDir: dirA}}},
+	}
+	enrichTitlesFromHistory(entries)
+	for i, want := range []string{"Title A", "Title B", "Already", ""} {
+		if got := entries[i].Job.Title; got != want {
+			t.Errorf("entry[%d].Title = %q, want %q", i, got, want)
+		}
+	}
+}

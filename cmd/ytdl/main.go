@@ -690,8 +690,7 @@ func runRetryCmd(p *cli.Parsed) int {
 		return 1
 	}
 	failed := snap.Failed
-	settings, _ := resolveWithFlags(config.Partial{})
-	enrichTitlesFromHistory(failed, settings.LogDir)
+	enrichTitlesFromHistory(failed)
 
 	if !p.All && p.Target == "" {
 		fmt.Print(term.Colorize(cli.RenderRetryList(failed), colorStdout()))
@@ -742,17 +741,31 @@ func runRetryCmd(p *cli.Parsed) int {
 // enrichTitlesFromHistory fills in a display title for failed jobs that never got
 // a run-time write-back — those that failed before yt-dlp resolved the metadata,
 // or were queued before the write-back existed — by looking the URL up in the
-// durable history (a prior attempt may have recorded it). Playlists are skipped:
-// their per-item title would misrepresent the whole job. Best-effort — a miss just
-// leaves the URL as the label. Only `retry` (a one-shot command) calls this, so the
-// single history scan never burdens the live `queue --watch` redraw.
-func enrichTitlesFromHistory(entries []queue.Entry, logDir string) {
+// durable history (a prior attempt may have recorded it). Each job is looked up in
+// ITS OWN snapshotted Settings.LogDir (ADR-0007), not the current global one, so a
+// config edit between enqueue and retry does not hide a title that exists in the
+// job's own log dir. History is loaded at most once per distinct log dir and reused
+// across entries. Playlists are skipped (their per-item title would misrepresent
+// the whole job). Best-effort — a miss just leaves the URL as the label. Only the
+// one-shot `retry` command calls this, never the live `queue --watch` redraw.
+func enrichTitlesFromHistory(entries []queue.Entry) {
+	cache := map[string][]logstore.Entry{} // log dir → history, loaded at most once
 	for i := range entries {
 		e := &entries[i]
-		if e.Job.Title == "" && !e.Job.Playlist && e.Job.URL != "" {
-			if t := logstore.TitleForURL(logDir, e.Job.URL); t != "" {
-				e.Job.Title = t
-			}
+		if e.Job.Title != "" || e.Job.Playlist || e.Job.URL == "" {
+			continue
+		}
+		dir := e.Job.Settings.LogDir
+		if dir == "" {
+			continue
+		}
+		hist, ok := cache[dir]
+		if !ok {
+			hist, _ = logstore.Load(dir, logstore.QueryOpts{})
+			cache[dir] = hist
+		}
+		if t := logstore.TitleIn(hist, e.Job.URL); t != "" {
+			e.Job.Title = t
 		}
 	}
 }
