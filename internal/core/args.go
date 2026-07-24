@@ -4,7 +4,11 @@
 // web UI (Phase 6) import this same builder (ADR-0004).
 package core
 
-import "github.com/alergyonthestage/ytdl/internal/config"
+import (
+	"strings"
+
+	"github.com/alergyonthestage/ytdl/internal/config"
+)
 
 // Mode is an execution mode that produces a yt-dlp argument vector. Help,
 // Version and Update are CLI concerns handled before reaching the builder.
@@ -103,8 +107,15 @@ func BuildArgs(o Options) []string {
 // absolute -o produced, so after_move/%(filepath)s and every downstream consumer
 // see an unchanged result — while `temp:` collects the intermediates in workDir.
 func TempRedirectArgs(o Options, workDir string) []string {
+	// The appended -o MUST stay relative: yt-dlp ignores --paths when -o is
+	// absolute, and an absolute -o would also drop the final file OUTSIDE
+	// OutputDir. A name_template beginning with "/" (unvalidated by the config
+	// layer, reachable via the file or the web editor) would make it absolute, so
+	// strip any leading separators defensively here — the golden -o (built by
+	// outputTemplate, always rooted under OutputDir) is untouched.
+	rel := strings.TrimLeft(relOutputTemplate(o.Settings), "/")
 	return []string{
-		"-o", relOutputTemplate(o.Settings),
+		"-o", rel,
 		"-P", "home:" + o.Settings.OutputDir,
 		"-P", "temp:" + workDir,
 	}

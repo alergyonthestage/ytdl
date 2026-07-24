@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -533,20 +534,26 @@ func updateFailed() int {
 // generic 1 (also under-reporting the cause in silent mode's .log).
 func runCode(cmd *exec.Cmd) int {
 	err := cmd.Run()
-	if err == nil {
-		return 0
-	}
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		if code := ee.ExitCode(); code >= 0 {
+	// Read the exit status from ProcessState, NOT from err: for an
+	// exec.CommandContext whose ctx was cancelled (a cancel or the job timeout),
+	// os/exec returns the context error from Run() even when the child actually
+	// exited 0 — because our Cancel func returns nil rather than ErrProcessDone. A
+	// job that finishes cleanly within the SIGTERM grace window would otherwise be
+	// misreported as a failure. ProcessState carries the true wait status
+	// regardless of how Cancel decorates the returned error.
+	if ps := cmd.ProcessState; ps != nil {
+		if code := ps.ExitCode(); code >= 0 {
 			return code
 		}
 		// ExitCode() is -1 for a signal death; recover the shell's 128+signal.
-		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		if ws, ok := ps.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
 			return 128 + int(ws.Signal())
 		}
 	}
-	return 1
+	if err != nil {
+		return 1 // never started (ProcessState is nil), or an unusual non-exit error
+	}
+	return 0
 }
 
 // killGrace is how long a cancelled or timed-out job's process group is given to
@@ -560,24 +567,44 @@ const killGrace = 5 * time.Second
 // SIGTERM the group, then SIGKILL it after killGrace so a process ignoring
 // SIGTERM cannot linger holding a file open in the destination. It returns a
 // markReaped func the caller MUST invoke right after the child is reaped
-// (cmd.Run returns): it disarms the escalation SIGKILL, so it can never land on a
-// reused pgid. WaitDelay is set past killGrace so os/exec keeps the leader
-// un-reaped until the SIGKILL has had its chance.
+// (cmd.Run returns): it stops the escalation timer and disarms it, so the
+// group-SIGKILL only ever fires while the process is genuinely still alive.
+// WaitDelay is set past killGrace so os/exec keeps the leader un-reaped until the
+// SIGKILL has had its chance.
+//
+// Residual (accepted): a group-SIGKILL keyed by pgid could in principle hit a
+// reused pgid if the child is reaped in the sub-microsecond gap between cmd.Run
+// reaping it and markReaped disarming the timer, AND a concurrent job reuses that
+// exact pid as a group leader in the same instant. Stopping the timer on reap
+// plus the reaped guard narrows this to a few instructions; fully closing it needs
+// pidfd (Linux ≥5.3), which the macOS target lacks, so it is left as documented risk.
 func cancellableProcessGroup(cmd *exec.Cmd) (markReaped func()) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var reaped atomic.Bool
+	var timer *time.Timer
+	var mu sync.Mutex
 	cmd.Cancel = func() error {
 		pgid := cmd.Process.Pid // == pgid, since Setpgid made the child a group leader
 		_ = syscall.Kill(-pgid, syscall.SIGTERM)
-		time.AfterFunc(killGrace, func() {
+		t := time.AfterFunc(killGrace, func() {
 			if !reaped.Load() {
-				_ = syscall.Kill(-pgid, syscall.SIGKILL)
+				_ = syscall.Kill(-pgid, syscall.SIGKILL) // group SIGKILL; child still alive at killGrace
 			}
 		})
+		mu.Lock()
+		timer = t
+		mu.Unlock()
 		return nil
 	}
 	cmd.WaitDelay = killGrace + 2*time.Second
-	return func() { reaped.Store(true) }
+	return func() {
+		reaped.Store(true)
+		mu.Lock()
+		if timer != nil {
+			timer.Stop() // child reaped before the grace elapsed → cancel the escalation
+		}
+		mu.Unlock()
+	}
 }
 
 func tempFileError(err error) int {

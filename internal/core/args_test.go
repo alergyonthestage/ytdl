@@ -114,6 +114,19 @@ func TestTempRedirectArgs(t *testing.T) {
 	}
 }
 
+// The appended redirect -o must stay RELATIVE even if name_template starts with a
+// "/" (unvalidated config): an absolute -o would make yt-dlp ignore --paths and
+// drop the final file outside OutputDir.
+func TestTempRedirectArgsStaysRelative(t *testing.T) {
+	s := settings(t, "mp3", "/music/out")
+	s.NameTemplate = "/etc/evil/%(title)s"
+	o := Options{Mode: ModeSilent, Settings: s}
+	rel := TempRedirectArgs(o, "/w")[1]
+	if filepath.IsAbs(rel) {
+		t.Errorf("appended -o must be relative, got absolute %q", rel)
+	}
+}
+
 // readGolden reads the NUL-delimited golden byte stream and splits it into the
 // argument slice, dropping only the trailing empty left by the final NUL (the
 // empty-string argument in the metadata pipeline is a legitimate interior token).

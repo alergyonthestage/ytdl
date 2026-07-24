@@ -56,6 +56,47 @@ func TestRunQueuedCancelKillsProcessGroup(t *testing.T) {
 	}
 }
 
+// A job that finishes cleanly (writes its file, exits 0) WITHIN the SIGTERM grace
+// after a cancel must be recorded as SUCCESS, not a false failure. runCode reads
+// the real exit status from ProcessState, not the ctx-decorated Run() error, so a
+// graceful finish inside the grace window is rc 0 with no breadcrumb.
+func TestRunQueuedGracefulFinishWithinCancelIsSuccess(t *testing.T) {
+	bin := t.TempDir()
+	// Fake yt-dlp: on SIGTERM, write the after_move sink (so a file "saved") and
+	// exit 0 — modelling ffmpeg finishing postprocessing during the grace window.
+	script := `#!/usr/bin/env bash
+saved=""
+args=("$@"); i=0
+while [ $i -lt ${#args[@]} ]; do
+  if [ "${args[$i]}" = "--print-to-file" ] && [[ "${args[$((i+1))]}" == after_move:*filepath* ]]; then
+    saved="${args[$((i+2))]}"; i=$((i+3)); continue
+  fi
+  i=$((i+1))
+done
+finish() { [ -n "$saved" ] && printf '%s\n' "/out/track.mp3" > "$saved"; exit 0; }
+trap finish TERM
+sleep 300 &
+wait
+`
+	if err := os.WriteFile(filepath.Join(bin, "yt-dlp"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	dest := t.TempDir()
+	o := runOptions(t, core.ModeSilent, dest)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(60 * time.Millisecond); cancel() }()
+
+	if rc := RunQueued(ctx, o, nil); rc != 0 {
+		t.Errorf("a graceful finish within the grace window: rc = %d, want 0 (success)", rc)
+	}
+	// Success ⇒ no failure breadcrumb in the destination.
+	if m, _ := filepath.Glob(filepath.Join(dest, "*.log")); len(m) != 0 {
+		t.Errorf("a successful (raced) job left a breadcrumb: %v", m)
+	}
+}
+
 // waitFor polls until path exists or the timeout elapses.
 func waitFor(t *testing.T, path string, timeout time.Duration, msg string) {
 	t.Helper()
