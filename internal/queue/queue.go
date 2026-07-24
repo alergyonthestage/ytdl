@@ -49,11 +49,18 @@ var stateDirs = []string{string(Pending), string(Running), string(Done), string(
 // Job is one enqueued download. The resolved settings are snapshotted at enqueue
 // time so a later config edit cannot retroactively change a queued job (ADR-0007).
 type Job struct {
-	URL        string          `json:"url"`
-	Playlist   bool            `json:"playlist"`
-	Settings   config.Settings `json:"settings"`
-	EnqueuedAt time.Time       `json:"enqueued_at"`
-	// Reserved for Cycle 2B-plus (retry/backoff): Attempts, LastError.
+	URL      string          `json:"url"`
+	Playlist bool            `json:"playlist"`
+	Settings config.Settings `json:"settings"`
+	// Title is the resolved "Artist - Track", filled in by the daemon (via
+	// SetTitle) once yt-dlp resolves the metadata mid-run, so the queue/retry views
+	// can name the video rather than only show its URL. Empty until known — and
+	// deliberately left empty for a playlist job, whose per-item title would
+	// misrepresent the whole job (Cycle 4). omitempty keeps legacy job files
+	// (written before this field existed) parsing unchanged.
+	Title      string    `json:"title,omitempty"`
+	EnqueuedAt time.Time `json:"enqueued_at"`
+	// Reserved for a dedicated Phase-5 cycle (retry/backoff): Attempts, LastError.
 }
 
 // Claim is a job atomically moved from pending/ to running/ by ClaimNext, ready
@@ -184,6 +191,54 @@ func (s *Spool) MarkFailed(id string) error { return s.moveRunning(id, Failed) }
 
 func (s *Spool) moveRunning(id string, to State) error {
 	return os.Rename(filepath.Join(s.dir(Running), id+".json"), filepath.Join(s.dir(to), id+".json"))
+}
+
+// SetTitle records the resolved display title on a RUNNING job, so the queue and
+// (once it moves to failed/) the retry view can name the video instead of only
+// showing its URL. It read-modify-writes running/<id>.json via a tmp file + atomic
+// os.Rename, so a concurrent reader (List from `ytdl status`/`queue`) never
+// observes a half-written body. It is best-effort and idempotent:
+//   - an empty title, or one already stored, is a no-op;
+//   - a job no longer in running/ (already moved to a terminal state) yields
+//     os.ErrNotExist, which is swallowed as nil — the title just missed the window.
+//
+// The daemon calls this from the worker that OWNS the running job, before the
+// terminal MarkDone/MarkFailed rename, so the rewrite cannot race that move; the
+// title then travels into done/ or failed/ with the file (a pure rename).
+func (s *Spool) SetTitle(id, title string) error {
+	if title == "" {
+		return nil
+	}
+	path := filepath.Join(s.dir(Running), id+".json")
+	j, err := readJob(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil // already terminal (or never running): missed the window, not an error
+		}
+		return err
+	}
+	if j.Title == title {
+		return nil
+	}
+	j.Title = title
+	data, err := json.MarshalIndent(j, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Join(s.root, tmpSub), "title-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op after a successful rename; cleanup on any early return
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // RequeueRunning moves every job stranded in running/ back to pending/ and
