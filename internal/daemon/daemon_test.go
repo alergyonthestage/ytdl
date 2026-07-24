@@ -386,6 +386,34 @@ func TestWatcherCancelsRunningJob(t *testing.T) {
 	}
 }
 
+// End-to-end regression: a cancel marker that outlived its run (job failed, then
+// was retried, keeping its id) must NOT delete the fresh retried job. Retry clears
+// the stale marker, so processCancels sees nothing to act on.
+func TestStaleMarkerDoesNotDeleteRetriedJob(t *testing.T) {
+	sp := queue.Open(t.TempDir())
+	id, err := sp.Enqueue(queue.Job{URL: "https://youtu.be/x", EnqueuedAt: time.Unix(1, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sp.ClaimNext(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sp.MarkFailed(id); err != nil {
+		t.Fatal(err)
+	}
+	if err := sp.RequestCancel(id); err != nil { // marker left by a cancel that raced the failure
+		t.Fatal(err)
+	}
+	if err := sp.Retry(id); err != nil {
+		t.Fatal(err)
+	}
+	processCancels(Config{Spool: sp}, newCancelRegistry(), nil)
+	snap, _ := sp.List()
+	if len(snap.Pending) != 1 {
+		t.Fatalf("retried job was deleted by a stale marker: pending=%d", len(snap.Pending))
+	}
+}
+
 // A marker for an id that is neither pending nor running (terminal or gone) is
 // swept, so stale markers cannot accumulate.
 func TestWatcherClearsStaleMarker(t *testing.T) {

@@ -107,3 +107,45 @@ func TestRetry(t *testing.T) {
 		t.Fatalf("Retry(missing) = %v, want ErrNotExist", err)
 	}
 }
+
+// Retry starts a fresh run, so it must drop a stale cancel marker left by the
+// previous (cancelled) attempt — otherwise the daemon's watcher would see a
+// marker on the now-pending id and delete the just-retried job.
+func TestRetryClearsStaleCancelMarker(t *testing.T) {
+	s := Open(t.TempDir())
+	id := mustEnqueue(t, s, job("https://youtu.be/A", time.Unix(1, 0)))
+	if _, err := s.ClaimNext(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkFailed(id); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RequestCancel(id); err != nil { // a stale marker from a prior cancel attempt
+		t.Fatal(err)
+	}
+	if err := s.Retry(id); err != nil {
+		t.Fatal(err)
+	}
+	if ids, _ := s.CancelRequests(); len(ids) != 0 {
+		t.Fatalf("Retry left a stale cancel marker (would delete the retried job): %v", ids)
+	}
+}
+
+// Crash recovery is also a fresh run: RequeueRunning must drop a stale marker so
+// a recovered job is not deleted by the watcher.
+func TestRequeueRunningClearsStaleCancelMarker(t *testing.T) {
+	s := Open(t.TempDir())
+	id := mustEnqueue(t, s, job("https://youtu.be/A", time.Unix(1, 0)))
+	if _, err := s.ClaimNext(); err != nil { // now running
+		t.Fatal(err)
+	}
+	if err := s.RequestCancel(id); err != nil { // cancel of the running job; daemon then "crashes"
+		t.Fatal(err)
+	}
+	if _, err := s.RequeueRunning(); err != nil {
+		t.Fatal(err)
+	}
+	if ids, _ := s.CancelRequests(); len(ids) != 0 {
+		t.Fatalf("RequeueRunning left a stale cancel marker (would delete the recovered job): %v", ids)
+	}
+}

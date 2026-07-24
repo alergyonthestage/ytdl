@@ -212,6 +212,9 @@ func (s *Spool) RequeueRunning() (int, error) {
 			}
 			continue
 		}
+		// Crash recovery is a fresh run of the id: drop a stale cancel marker left
+		// by the crashed daemon, so the watcher does not delete the recovered job.
+		_ = s.ClearCancel(id)
 		n++
 	}
 	return n, firstErr
@@ -294,14 +297,36 @@ func (s *Spool) ClearCancel(id string) error {
 // original id, so it sorts by its first-enqueue time and is claimed ahead of
 // newer pending work — matching "retry it now". Returns os.ErrNotExist if id is
 // not in failed/ (e.g. it was pruned or already retried).
+//
+// It clears any leftover cancel marker for the id: retry starts a FRESH run, so a
+// marker from the previous (cancelled) run must not carry over — otherwise the
+// daemon's watcher, seeing a marker on the now-pending id, would delete the
+// just-retried job.
 func (s *Spool) Retry(id string) error {
 	if err := s.EnsureDirs(); err != nil {
 		return err
 	}
-	return os.Rename(
+	if err := os.Rename(
 		filepath.Join(s.dir(Failed), id+".json"),
 		filepath.Join(s.dir(Pending), id+".json"),
-	)
+	); err != nil {
+		return err
+	}
+	_ = s.ClearCancel(id) // fresh run: drop a stale marker from the previous attempt
+	return nil
+}
+
+// LiveIDs returns the ids currently in pending/ and running/, WITHOUT parsing the
+// job bodies — a cheap membership check for the daemon's cancel watcher, which
+// only needs each marker id's state, not its Job. A missing dir yields no ids.
+func (s *Spool) LiveIDs() (pending, running []string, err error) {
+	if pending, err = s.sortedIDs(Pending); err != nil {
+		return nil, nil, err
+	}
+	if running, err = s.sortedIDs(Running); err != nil {
+		return nil, nil, err
+	}
+	return pending, running, nil
 }
 
 // PruneTerminal removes done/ and failed/ job files older than maxAgeDays (by

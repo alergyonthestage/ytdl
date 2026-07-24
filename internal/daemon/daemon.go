@@ -339,13 +339,18 @@ func processCancels(cfg Config, reg *cancelRegistry, d *diag) {
 	if err != nil || len(ids) == 0 {
 		return
 	}
-	snap, _ := cfg.Spool.List()
-	state := make(map[string]queue.State, len(snap.Pending)+len(snap.Running))
-	for _, e := range snap.Pending {
-		state[e.ID] = queue.Pending
+	// Cheap state lookup: only pending/running membership is needed, so avoid
+	// parsing every job body in the spool (including done/failed) each tick.
+	pend, run, err := cfg.Spool.LiveIDs()
+	if err != nil {
+		return
 	}
-	for _, e := range snap.Running {
-		state[e.ID] = queue.Running
+	state := make(map[string]queue.State, len(pend)+len(run))
+	for _, id := range pend {
+		state[id] = queue.Pending
+	}
+	for _, id := range run {
+		state[id] = queue.Running
 	}
 	for _, id := range ids {
 		if cancel := reg.get(id); cancel != nil {
@@ -364,7 +369,11 @@ func processCancels(cfg Config, reg *cancelRegistry, d *diag) {
 		case queue.Running:
 			// just claimed; the worker will register momentarily → next poll
 		default:
-			_ = cfg.Spool.ClearCancel(id) // terminal or gone: stale marker
+			// Terminal or gone: a stale marker. Log a persistent clear failure so it
+			// is not retried silently every poll forever (the daemon is otherwise mute).
+			if err := cfg.Spool.ClearCancel(id); err != nil {
+				d.logf("could not clear stale cancel marker %s: %v", id, err)
+			}
 		}
 	}
 }
