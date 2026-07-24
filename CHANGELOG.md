@@ -136,6 +136,36 @@ byte-unchanged (golden parity holds). See
 - The web server runs **only** in a GUI daemon (`ytdl gui`). A daemon spawned by
   `ytdl -b` stays headless and opens no socket — unchanged from before Cycle 3.
 
+Cycle 2B-plus — queue completion (cancel/retry) + phase-5 hardening. Runtime/CLI
+layer; `core.BuildArgs` and the golden parity tests stay byte-unchanged (the
+residue redirect is appended off the golden path). See
+[ADR-0011](docs/decisions/0011-cycle2b-plus-cancel-retry-hardening.md).
+
+### Added
+
+- **`ytdl cancel [<n> | <id> | --all]`** — stop live work. A pending job is
+  removed; a running one is torn down (yt-dlp *and* its ffmpeg child, via a
+  process-group kill) by the daemon. `<n>` is the index from the no-argument
+  listing; `<id>` is a stable id-prefix (prefer it in scripts).
+- **`ytdl retry [<n> | <id> | --all]`** — re-queue a failed download and resume the
+  daemon to drain it. No argument lists the retryable failures.
+- **`job_timeout`** config key (seconds; `0` = no limit = default) — a per-job
+  wall-clock cap; a job that exceeds it is killed and marked failed.
+- **Daemon diagnostics log** at `${XDG_STATE_HOME:-~/.local/state}/ytdl/daemon.log`
+  — lifecycle, orphan recovery, cancel/timeout/panic kills and persistent spool
+  errors, otherwise invisible for a detached daemon. Size-capped; `ytdl status`
+  points at it once it exists.
+
+### Changed
+
+- **No residue on failure/cancel.** Every download mode now routes yt-dlp's
+  intermediate files (`.part`, fragments, the embed thumbnail, pre-conversion
+  audio) to a per-job scratch directory, so the destination only ever receives the
+  final file on success — or the `.log` breadcrumb on a genuine failure. A cancel
+  or a timeout leaves nothing behind and drops no breadcrumb.
+- The dead `core.ReExecArgs` and the three `background-*` golden references (unused
+  since `-b` began enqueuing in Cycle 2B-core) are removed.
+
 ## [2.0.0] — 2026-07-23
 
 A clean break from the Bash `1.x` line: ytdl is now a single compiled Go binary

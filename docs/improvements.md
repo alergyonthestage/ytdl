@@ -86,9 +86,13 @@ the daemon is **on-demand** — the same `ytdl` binary self-exec'd into a hidden
 cap, and idle-exiting when the queue empties; there is no always-on service or
 launchd agent (deferred to the GUI cycle). `ytdl -b` enqueues (superseding the old
 unbounded `Setsid` detach); `ytdl queue [--watch]` and `ytdl status` inspect the
-spool, and `ytdl queue` also restarts a stalled daemon. Deferred to **2B-plus**:
-`cancel`/`retry` (already just spool `mv`s), retries/backoff, a per-job timeout, and
-a daemon logging seam.
+spool, and `ytdl queue` also restarts a stalled daemon.
+
+**Done in Cycle 2B-plus** ([ADR-0011](decisions/0011-cycle2b-plus-cancel-retry-hardening.md)):
+`ytdl cancel`/`retry` (index or stable id-prefix, `--all`), a per-job execution
+timeout (`job_timeout`, default off), a daemon diagnostics log, and a "no residue in
+the destination" guarantee for failed/cancelled downloads. **Still deferred to a
+dedicated Phase-5 cycle:** automatic retries/backoff and YouTube rate-limit handling.
 
 ### U6 — completion notification
 
