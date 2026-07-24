@@ -205,7 +205,7 @@ func runDaemon(daemonArgs []string) int {
 		// Set explicitly (Serve would only default its own copy) because serveGUI
 		// reads it too, to decide how long to keep retrying the queue lock.
 		cfg.FirstClientGrace = daemon.DefaultFirstClientGrace
-		cfg.Run = jobRunner(srv)
+		cfg.Run = jobRunner(sp, srv)
 
 		// The user asked for the interface, so THIS process owns the port and
 		// serves immediately — publishing the token first, so `ytdl gui` can read
@@ -218,7 +218,7 @@ func runDaemon(daemonArgs []string) int {
 		return serveGUI(cfg, srv)
 	}
 
-	cfg.Run = jobRunner(nil) // headless: no GUI, so no progress sink
+	cfg.Run = jobRunner(sp, nil) // headless: no GUI, so no progress sink (title write-back still runs)
 	if err := daemon.Serve(cfg); err != nil && !errors.Is(err, daemon.ErrAlreadyRunning) {
 		return 1
 	}
@@ -291,7 +291,7 @@ func readGUIToken(path string) string {
 // a progress sink keyed by its spool id, so the browser can draw a live bar. A
 // headless daemon (every `ytdl -b`) passes a nil srv, so the sink is nil, no
 // progress flags are added and execution is byte-for-byte the pre-GUI path.
-func jobRunner(srv *webui.Server) func(context.Context, queue.Claim) int {
+func jobRunner(sp *queue.Spool, srv *webui.Server) func(context.Context, queue.Claim) int {
 	return func(ctx context.Context, cl queue.Claim) int {
 		j := cl.Job
 		o := core.Options{Mode: core.ModeSilent, URL: j.URL, Settings: j.Settings, Playlist: j.Playlist}
@@ -307,7 +307,15 @@ func jobRunner(srv *webui.Server) func(context.Context, queue.Claim) int {
 				})
 			}
 		}
-		return run.RunQueued(ctx, o, sink)
+		// Persist the resolved title onto the running spool job, so `ytdl queue`
+		// names the in-flight job and `ytdl retry` names a failed one, rather than
+		// only showing a URL (Cycle 4). Skipped for a playlist, whose per-item
+		// before_dl title would misrepresent the whole job.
+		var onTitle func(string)
+		if !j.Playlist {
+			onTitle = func(title string) { _ = sp.SetTitle(cl.ID, title) }
+		}
+		return run.RunQueued(ctx, o, sink, onTitle)
 	}
 }
 

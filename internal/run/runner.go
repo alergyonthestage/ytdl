@@ -246,7 +246,7 @@ func runDefault(o core.Options, w io.Writer) int {
 // The interactive `ytdl -s` is not cancellable — it runs in the foreground under
 // the user's own shell, so a background context and no process-group isolation
 // preserve its pre-2B-plus behaviour (Ctrl-C reaches it via the terminal group).
-func runSilent(o core.Options) int { return runSilentSink(context.Background(), o, nil, false) }
+func runSilent(o core.Options) int { return runSilentSink(context.Background(), o, nil, false, nil) }
 
 // RunQueued executes a queued job in silent mode with optional live-progress
 // capture — the daemon's execution entry point (Cycle 3 GUI; Cycle 2B-plus
@@ -258,12 +258,18 @@ func runSilent(o core.Options) int { return runSilentSink(context.Background(), 
 // process group. A nil sink still behaves like runSilent for output, but the run
 // is cancellable. It performs the pre-download mkdir that Dispatch does for the
 // interactive silent mode.
-func RunQueued(ctx context.Context, o core.Options, sink ProgressSink) int {
+//
+// onTitle, when non-nil, is invoked with the resolved "Artist - Track" as soon as
+// yt-dlp's before_dl hook writes it (and once more at the end), so the daemon can
+// persist it onto the running job — naming it in `ytdl queue`/`retry` (Cycle 4).
+// It works regardless of sink, since the title comes from the before_dl temp file
+// that is part of the ordinary metadata pipeline, not from the progress stream.
+func RunQueued(ctx context.Context, o core.Options, sink ProgressSink, onTitle func(string)) int {
 	if err := os.MkdirAll(o.Settings.OutputDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "✗ Impossibile creare la cartella %s: %v\n", o.Settings.OutputDir, err)
 		return 1
 	}
-	return runSilentSink(ctx, o, sink, true)
+	return runSilentSink(ctx, o, sink, true, onTitle)
 }
 
 // runSilentSink is runSilent's body, parameterised by an optional progress sink
@@ -273,7 +279,7 @@ func RunQueued(ctx context.Context, o core.Options, sink ProgressSink) int {
 // the whole yt-dlp/ffmpeg tree. A ctx-driven stop (cancel or timeout) is NOT a
 // genuine download failure: it drops no .log breadcrumb and is recorded under a
 // distinct mode ("cancelled"/"timeout") so history shows what happened.
-func runSilentSink(ctx context.Context, o core.Options, sink ProgressSink, cancellable bool) int {
+func runSilentSink(ctx context.Context, o core.Options, sink ProgressSink, cancellable bool, onTitle func(string)) int {
 	// Register each cleanup immediately after its own successful creation, so a
 	// later failure still removes the temp files already made.
 	saved, cleanSaved, err := tempFile("ytdl-saved-")
@@ -359,9 +365,47 @@ func runSilentSink(ctx context.Context, o core.Options, sink ProgressSink, cance
 		perr = newProgressSplitter(ef, em)
 		cmd.Stdout, cmd.Stderr = pout, perr
 	}
+	// Title write-back (Cycle 4): watch the before_dl temp file and report the
+	// resolved "Artist - Track" the moment it lands, so the daemon can name a
+	// still-running job in `ytdl queue`. Runs regardless of sink (headless too),
+	// since the title comes from the metadata pipeline, not the progress stream.
+	// Joined before we return so a SetTitle can never race the daemon's terminal
+	// rename, which happens only after RunQueued returns.
+	var titleWG sync.WaitGroup
+	titleDone := make(chan struct{})
+	if onTitle != nil {
+		titleWG.Add(1)
+		go func() {
+			defer titleWG.Done()
+			tk := time.NewTicker(300 * time.Millisecond)
+			defer tk.Stop()
+			for {
+				select {
+				case <-titleDone:
+					return
+				case <-tk.C:
+					if s := lastLine(title); s != "" {
+						onTitle(s)
+						return
+					}
+				}
+			}
+		}()
+	}
+
 	rc := runCode(cmd)
 	if markReaped != nil {
 		markReaped() // child reaped by os/exec — stop the escalation SIGKILL firing
+	}
+	// Stop the watcher and, whether or not it caught the title in time (a fast job
+	// can finish before the first tick), report the final resolved title once — so
+	// a failed job still carries its name into failed/ for `ytdl retry`.
+	close(titleDone)
+	titleWG.Wait()
+	if onTitle != nil {
+		if s := lastLine(title); s != "" {
+			onTitle(s)
+		}
 	}
 	if em != nil {
 		// cmd.Run has already joined os/exec's copy goroutines, so no write can
