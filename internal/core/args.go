@@ -43,8 +43,9 @@ const silentBeforeDL = "before_dl:%(artist,creator,uploader)s - %(track,title)s"
 const afterMove = "after_move:%(filepath)s"
 
 // BuildArgs returns the yt-dlp argument vector for the download-ish modes
-// (default, dry-run, verbose, silent). Background does not call yt-dlp directly;
-// see ReExecArgs.
+// (default, dry-run, verbose, silent). Background does not call yt-dlp directly:
+// it enqueues onto the spool (run.runBackground), and the daemon later drains the
+// job in silent mode — so there is no separate background argv to build.
 func BuildArgs(o Options) []string {
 	s := o.Settings
 	switch o.Mode {
@@ -84,18 +85,6 @@ func BuildArgs(o Options) []string {
 		return append(a, o.URL)
 	}
 	return nil
-}
-
-// ReExecArgs returns the argument vector the background mode re-executes itself
-// with: self as argv[0], then `-s -f FMT -o DIR [-p] URL` (ytdl lines 246-248).
-// Building it here once means the Bash flaw C4 (a hand-maintained re-exec flag
-// list) cannot recur.
-func ReExecArgs(o Options, self string) []string {
-	a := []string{self, "-s", "-f", o.Settings.Format, "-o", o.Settings.OutputDir}
-	if o.Playlist {
-		a = append(a, "-p")
-	}
-	return append(a, o.URL)
 }
 
 // metaArgs is the metadata-normalization pipeline, shared by every download
