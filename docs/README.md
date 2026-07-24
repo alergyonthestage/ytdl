@@ -46,6 +46,7 @@ golden parity reference.
 | [0007](decisions/0007-cycle2b-queue-daemon.md) | Cycle 2B-core: filesystem queue + on-demand `ytdld` daemon | accepted |
 | [0008](decisions/0008-daemon-lifecycle.md) | Daemon lifecycle: long-lived, session-scoped — no always-on service | accepted |
 | [0009](decisions/0009-cycle2c-cli-ux.md) | Cycle 2C: CLI UX pass (roles, count/history redesign, in-place watch) | accepted |
+| [0010](decisions/0010-cycle3-web-gui.md) | Cycle 3: web GUI — single binary, SSE progress, authenticated local API | accepted |
 
 ## Reading order
 

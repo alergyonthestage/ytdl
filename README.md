@@ -36,10 +36,15 @@ ytdl -p "https://youtube.com/playlist?list=YYYY"    # a whole playlist
 ytdl -f flac -o ~/Desktop "https://youtu.be/XXXX"   # FLAC onto the Desktop
 ytdl -n "https://youtu.be/XXXX"                     # preview names, download nothing
 ytdl -b "https://youtu.be/XXXX"                     # background, returns immediately
+ytdl gui                                            # open the web interface in a browser
 ```
 
 **Always put the URL in quotes.** YouTube URLs contain `&`, which the terminal
 would otherwise read as "run this in the background".
+
+Prefer not to use the Terminal? `ytdl gui` opens a local web interface (on your
+own machine, at `127.0.0.1`) to paste a link, watch live progress, see the queue
+and history, and edit settings — no Terminal needed.
 
 Music is saved to `~/Music/ytdl` by default. Run `ytdl --help` for every option.
 

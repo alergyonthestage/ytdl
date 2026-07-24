@@ -98,6 +98,44 @@ See [ADR-0009](docs/decisions/0009-cycle2c-cli-ux.md) and the
   loses newer records or blocks pruning), URLs/titles are truncated on rune
   boundaries (valid UTF-8), and colour never splices into a track title.
 
+Cycle 3 — the web GUI (roadmap Phase 6, improvement E2): a browser interface for
+non-developer users, served by the queue daemon. A front-end over the existing
+engine (spool + config + log store), standard library only. `internal/core` stays
+byte-unchanged (golden parity holds). See
+[ADR-0010](docs/decisions/0010-cycle3-web-gui.md).
+
+### Added
+
+- **`ytdl gui`** — opens a local web interface in the browser: paste a link and
+  start a download (format, playlist, per-run folder), watch **live progress**
+  bars, see the queue and recent history, and edit every setting — all without the
+  Terminal. The engine stays up while the page is open and closes itself when the
+  page is closed and the queue is empty (ADR-0008); the page warns on close if work
+  is still queued.
+- **`internal/webui`** — the interface: one self-contained embedded page (no CDN,
+  works offline) plus a small JSON + Server-Sent-Events API over the same spool,
+  config file and log store the CLI uses.
+- **Live per-job progress** — the queued runner captures yt-dlp progress from both
+  of its output streams and streams it over SSE; parsed from yt-dlp's raw numeric
+  fields, so it is immune to a user's `--color always`.
+- **`config.Save`** — the settings editor persists changes atomically, whitelist
+  keys only, validating before writing; it follows a symlinked config, preserves
+  the file mode, and writes `$HOME`-relative paths so a saved config stays portable.
+- **Per-session output directory** — settable from the GUI separately from the
+  global default, alongside per-run (this download) and global (config) folders.
+- `$YTDL_GUI_PORT` overrides the default loopback port (8765).
+
+### Security
+
+- The local API is **authenticated** with a per-session token (a `0600` file
+  exchanged for a `SameSite=Strict` cookie), plus an `Origin` check, a mandatory
+  `application/json` content type on writes, and `http`/`https`-only URL
+  validation. Together these close a cross-site-request path that could otherwise
+  reach yt-dlp's argument vector from any web page the user visited. The server
+  binds `127.0.0.1` only and rejects non-loopback `Host` headers.
+- The web server runs **only** in a GUI daemon (`ytdl gui`). A daemon spawned by
+  `ytdl -b` stays headless and opens no socket — unchanged from before Cycle 3.
+
 ## [2.0.0] — 2026-07-23
 
 A clean break from the Bash `1.x` line: ytdl is now a single compiled Go binary
