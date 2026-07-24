@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -219,6 +220,50 @@ func TestSettingsRoundTrip(t *testing.T) {
 	reloaded, _ := config.Resolve(config.Partial{}, config.Partial{}, fp, config.Env{})
 	if reloaded.Format != "flac" || reloaded.Concurrency != 5 || reloaded.NotifyOn != "failure" {
 		t.Errorf("config not persisted: %+v", reloaded)
+	}
+}
+
+// job_timeout has no GUI control this cycle, but the editor rewrites the whole
+// config file. A save must NOT reset a CLI-set job_timeout to 0.
+func TestSettingsSavePreservesJobTimeout(t *testing.T) {
+	srv, _, cfgPath := newTestServer(t)
+	if err := os.WriteFile(cfgPath, []byte("job_timeout = 300\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// GET then PUT — the DTO carries no job_timeout, exactly as the SPA form doesn't.
+	resp, err := http.Get(ts.URL + "/api/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dto settingsDTO
+	json.NewDecoder(resp.Body).Decode(&dto)
+	resp.Body.Close()
+	dto.Format = "flac"
+	buf, _ := json.Marshal(dto)
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/settings", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	putResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer putResp.Body.Close()
+	if putResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(putResp.Body)
+		t.Fatalf("PUT status = %d: %s", putResp.StatusCode, body)
+	}
+	fp, _, err := config.LoadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, _ := config.Resolve(config.Partial{}, config.Partial{}, fp, config.Env{})
+	if reloaded.JobTimeout != 300 {
+		t.Errorf("GUI save reset job_timeout to %d, want 300 preserved", reloaded.JobTimeout)
+	}
+	if reloaded.Format != "flac" {
+		t.Errorf("GUI edit not saved: format = %q", reloaded.Format)
 	}
 }
 
