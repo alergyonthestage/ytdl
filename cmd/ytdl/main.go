@@ -556,7 +556,10 @@ func watchQueue(sp *queue.Spool) int {
 			return 0
 		}
 
-		spinnerLine := fmt.Sprintf("  %c aggiornamento · Ctrl-C per uscire\n", spin[frame%len(spin)])
+		// Clip the spinner line to the width too: it is a fixed literal that
+		// RenderQueue does not see, so it would otherwise wrap on a narrow terminal
+		// and desync the redraw just like an over-long job line.
+		spinnerLine := term.Clip(fmt.Sprintf("  %c aggiornamento · Ctrl-C per uscire", spin[frame%len(spin)]), width) + "\n"
 		switch {
 		case lastLines == 0:
 			fmt.Print(term.Colorize(content, color) + spinnerLine)

@@ -3,9 +3,9 @@ package cli
 import (
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/alergyonthestage/ytdl/internal/queue"
+	"github.com/alergyonthestage/ytdl/internal/term"
 )
 
 // enqueuedTimeFormat is the compact local-time stamp shown next to each job.
@@ -28,23 +28,42 @@ func RenderQueue(snap queue.Snapshot, full bool, width int) string {
 
 	if len(snap.Running) == 0 && len(snap.Pending) == 0 {
 		b.WriteString("  (coda vuota) · accoda con  ytdl -b <url>\n")
-		return b.String()
-	}
-	if len(snap.Running) > 0 {
-		fmt.Fprintf(&b, "  in corso (%d):\n", len(snap.Running))
-		for _, e := range snap.Running {
-			writeJobEntry(&b, "    ▸ ", e, full, width)
+	} else {
+		if len(snap.Running) > 0 {
+			fmt.Fprintf(&b, "  in corso (%d):\n", len(snap.Running))
+			for _, e := range snap.Running {
+				writeJobEntry(&b, "    ▸ ", e)
+			}
 		}
-	}
-	if len(snap.Pending) > 0 {
-		fmt.Fprintf(&b, "  in attesa (%d):\n", len(snap.Pending))
-		for _, e := range snap.Pending {
-			writeJobEntry(&b, "    • ", e, full, width)
+		if len(snap.Pending) > 0 {
+			fmt.Fprintf(&b, "  in attesa (%d):\n", len(snap.Pending))
+			for _, e := range snap.Pending {
+				writeJobEntry(&b, "    • ", e)
+			}
 		}
+		p, r, _, _ := snap.Counts()
+		fmt.Fprintf(&b, "In coda: %d in attesa · %d in corso\n", p, r)
 	}
-	p, r, _, _ := snap.Counts()
-	fmt.Fprintf(&b, "In coda: %d in attesa · %d in corso\n", p, r)
-	return b.String()
+
+	out := b.String()
+	// In --watch (full=false), clip EVERY line — job lines and the fixed header/
+	// section/footer alike — to the terminal width, so nothing wraps onto a second
+	// physical row and desyncs the region redraw's logical-line accounting.
+	if !full && width > 0 {
+		out = clipLines(out, width)
+	}
+	return out
+}
+
+// clipLines caps each line of s to width terminal COLUMNS (term.Clip), counting
+// East-Asian-wide and emoji runes as two columns. It is the single choke point that
+// guarantees the --watch redraw never wraps, whatever the content or terminal size.
+func clipLines(s string, width int) string {
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		lines[i] = term.Clip(ln, width)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // LiveOrdered flattens the live queue into the SAME order the cancel list numbers
@@ -70,7 +89,7 @@ func RenderCancelList(snap queue.Snapshot) string {
 		if e.State == queue.Running {
 			state = "in corso"
 		}
-		writeJobEntry(&b, fmt.Sprintf("  [%d] %-9s ", i+1, state), e, true, 0)
+		writeJobEntry(&b, fmt.Sprintf("  [%d] %-9s ", i+1, state), e)
 	}
 	b.WriteString("Annulla con:  ytdl cancel <n>   ·   tutto:  ytdl cancel --all\n")
 	b.WriteString("  (l'indice riflette la coda ora; negli script usa il prefisso dell'id)\n")
@@ -87,7 +106,7 @@ func RenderRetryList(failed []queue.Entry) string {
 		return b.String()
 	}
 	for i, e := range failed {
-		writeJobEntry(&b, fmt.Sprintf("  [%d] ", i+1), e, true, 0)
+		writeJobEntry(&b, fmt.Sprintf("  [%d] ", i+1), e)
 	}
 	b.WriteString("Riprova con:  ytdl retry <n>   ·   tutti:  ytdl retry --all\n")
 	b.WriteString("  (l'indice riflette la lista ora; negli script usa il prefisso dell'id)\n")
@@ -172,35 +191,15 @@ func jobURLCell(e queue.Entry) string {
 	return fmt.Sprintf("%s  (accodato %s)", url, e.Job.EnqueuedAt.Format(enqueuedTimeFormat))
 }
 
-// clip caps s to fit within width columns after an indent of `indent` columns,
-// appending an ellipsis when it truncates (rune-safe, so a multi-byte character is
-// never split). full=true — the one-shot views, where wrapping onto a second
-// physical row is harmless — or a non-positive width returns s unchanged. full=
-// false is the --watch path: its region redraw counts logical newlines, so a
-// physically-wrapped line would desync the cursor-up math.
-func clip(s string, full bool, width, indent int) string {
-	if full || width <= 0 {
-		return s
-	}
-	budget := width - indent
-	if budget < 8 {
-		budget = 8 // never clip to nothing on a pathologically narrow terminal
-	}
-	if utf8.RuneCountInString(s) <= budget {
-		return s
-	}
-	return string([]rune(s)[:budget-1]) + "…"
-}
-
 // writeJobEntry writes one job under prefix: a title line plus an indented URL line
-// when the title is known, else a single URL line. full/width drive the --watch
-// no-wrap clipping (see clip). Indents are measured in runes (≈ columns) so a
-// multi-byte glyph like ▸ in the prefix does not over-count the budget.
-func writeJobEntry(b *strings.Builder, prefix string, e queue.Entry, full bool, width int) {
+// when the title is known, else a single URL line. It always writes the FULL text;
+// the --watch caller caps each finished line to the terminal width (RenderQueue's
+// clipLines), so clipping lives in one place instead of being threaded per field.
+func writeJobEntry(b *strings.Builder, prefix string, e queue.Entry) {
 	if title := jobTitle(e); title != "" {
-		fmt.Fprintf(b, "%s%s\n", prefix, clip(title, full, width, utf8.RuneCountInString(prefix)))
-		fmt.Fprintf(b, "%s%s\n", contIndent, clip(jobURLCell(e), full, width, len(contIndent)))
+		fmt.Fprintf(b, "%s%s\n", prefix, title)
+		fmt.Fprintf(b, "%s%s\n", contIndent, jobURLCell(e))
 		return
 	}
-	fmt.Fprintf(b, "%s%s\n", prefix, clip(jobURLCell(e), full, width, utf8.RuneCountInString(prefix)))
+	fmt.Fprintf(b, "%s%s\n", prefix, jobURLCell(e))
 }

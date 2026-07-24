@@ -14,14 +14,17 @@ type winsize struct {
 	row, col, xpixel, ypixel uint16
 }
 
-// tiocgwinsz is the "get window size" ioctl request number, which differs between
-// the BSD-derived (macOS) and Linux kernels. macOS is the primary target; Linux is
-// the dev/CI host.
+// tiocgwinsz is the "get window size" ioctl request number. It differs between the
+// BSD-derived (macOS) and Linux kernels. The supported build matrix is darwin and
+// linux on amd64/arm64, where these two constants are correct; a few exotic Linux
+// arches (mips, ppc64) actually use the BSD value, so this would mis-probe there —
+// harmless (Width returns a wrong-but-bounded number, or the caller's 80 fallback),
+// and those arches are not targets. If the matrix ever widens, switch on GOARCH too.
 func tiocgwinsz() uintptr {
 	if runtime.GOOS == "darwin" {
 		return 0x40087468
 	}
-	return 0x5413 // linux
+	return 0x5413 // linux (386/amd64/arm/arm64)
 }
 
 // Width returns stdout's terminal column count, or 0 when it cannot be determined

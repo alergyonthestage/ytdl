@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/alergyonthestage/ytdl/internal/queue"
+	"github.com/alergyonthestage/ytdl/internal/term"
 )
 
 // A one-shot queue view shows the resolved title AND the full, untruncated URL, so
@@ -41,18 +41,27 @@ func TestRenderQueuePlaylistFlagNoTitle(t *testing.T) {
 	}
 }
 
-// In --watch (full=false), every rendered line must fit the width so the in-place
-// region redraw never wraps a line and desyncs its logical-newline math.
+// In --watch (full=false), every rendered line must fit the width in DISPLAY
+// COLUMNS so the in-place region redraw never wraps a line onto a second physical
+// row (which desyncs its logical-newline cursor math). This must hold for wide
+// scripts too — CJK and emoji titles are ordinary on YouTube (review CRITICAL).
 func TestRenderQueueWatchClipsToWidth(t *testing.T) {
 	longURL := "https://www.youtube.com/watch?v=" + strings.Repeat("A", 200)
-	snap := queue.Snapshot{Running: []queue.Entry{
-		{ID: "r", State: queue.Running, Job: queue.Job{URL: longURL, Title: strings.Repeat("T", 200)}},
-	}}
+	titles := []string{
+		strings.Repeat("T", 200),       // ASCII
+		strings.Repeat("テスト動画タイトル", 5), // CJK (2 columns per rune)
+		strings.Repeat("😀", 60),        // emoji (2 columns)
+	}
 	const width = 40
-	got := RenderQueue(snap, false, width)
-	for _, line := range strings.Split(strings.TrimRight(got, "\n"), "\n") {
-		if n := utf8.RuneCountInString(line); n > width {
-			t.Errorf("line exceeds width %d (would wrap in --watch): %q (%d runes)", width, line, n)
+	for _, title := range titles {
+		snap := queue.Snapshot{Running: []queue.Entry{
+			{ID: "r", State: queue.Running, Job: queue.Job{URL: longURL, Title: title}},
+		}}
+		got := RenderQueue(snap, false, width)
+		for _, line := range strings.Split(strings.TrimRight(got, "\n"), "\n") {
+			if w := term.DisplayWidth(line); w > width {
+				t.Errorf("line exceeds %d display columns (would wrap): %q (%d cols)", width, line, w)
+			}
 		}
 	}
 }
