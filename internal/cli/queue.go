@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/alergyonthestage/ytdl/internal/queue"
 )
@@ -15,7 +16,13 @@ const enqueuedTimeFormat = "02/01 15:04"
 // completed/failed counts are deliberately absent: they belong to history
 // (`ytdl history`/`status`), not to a "what is happening now" view (ADR-0009).
 // It is pure — the caller reads the spool and handles the --watch redraw loop.
-func RenderQueue(snap queue.Snapshot) string {
+//
+// Each job is shown title-first (the resolved "Artist - Track", once known) with
+// its full URL on the line below, so the user can tell which video a job is (Cycle
+// 4). full=true prints the whole URL (the one-shot view, where a wrapped line is
+// harmless); full=false caps each line to width for the in-place --watch redraw,
+// whose region math counts logical newlines and would desync if a line wrapped.
+func RenderQueue(snap queue.Snapshot, full bool, width int) string {
 	var b strings.Builder
 	b.WriteString("CODA ytdl\n")
 
@@ -26,13 +33,13 @@ func RenderQueue(snap queue.Snapshot) string {
 	if len(snap.Running) > 0 {
 		fmt.Fprintf(&b, "  in corso (%d):\n", len(snap.Running))
 		for _, e := range snap.Running {
-			fmt.Fprintf(&b, "    ▸ %s\n", jobLine(e))
+			writeJobEntry(&b, "    ▸ ", e, full, width)
 		}
 	}
 	if len(snap.Pending) > 0 {
 		fmt.Fprintf(&b, "  in attesa (%d):\n", len(snap.Pending))
 		for _, e := range snap.Pending {
-			fmt.Fprintf(&b, "    • %s\n", jobLine(e))
+			writeJobEntry(&b, "    • ", e, full, width)
 		}
 	}
 	p, r, _, _ := snap.Counts()
@@ -63,7 +70,7 @@ func RenderCancelList(snap queue.Snapshot) string {
 		if e.State == queue.Running {
 			state = "in corso"
 		}
-		fmt.Fprintf(&b, "  [%d] %-9s %s\n", i+1, state, jobLine(e))
+		writeJobEntry(&b, fmt.Sprintf("  [%d] %-9s ", i+1, state), e, true, 0)
 	}
 	b.WriteString("Annulla con:  ytdl cancel <n>   ·   tutto:  ytdl cancel --all\n")
 	b.WriteString("  (l'indice riflette la coda ora; negli script usa il prefisso dell'id)\n")
@@ -80,7 +87,7 @@ func RenderRetryList(failed []queue.Entry) string {
 		return b.String()
 	}
 	for i, e := range failed {
-		fmt.Fprintf(&b, "  [%d] %s\n", i+1, jobLine(e))
+		writeJobEntry(&b, fmt.Sprintf("  [%d] ", i+1), e, true, 0)
 	}
 	b.WriteString("Riprova con:  ytdl retry <n>   ·   tutti:  ytdl retry --all\n")
 	b.WriteString("  (l'indice riflette la lista ora; negli script usa il prefisso dell'id)\n")
@@ -133,19 +140,67 @@ func retentionWindow(retentionDays int) string {
 	}
 }
 
-// jobLine is the per-job "<url>  (accodato <time>)" cell, tolerant of an
-// unreadable job spec (URL empty). The label is shortened (scheme trimmed +
-// length-capped) so the whole line stays within one terminal row — a wrapped
-// line would break the --watch region redraw's line accounting (it counts
-// logical newlines, not physical rows).
-func jobLine(e queue.Entry) string {
-	label := e.Job.URL
-	if label == "" {
-		label = "job illeggibile: " + e.ID
+// contIndent aligns a job's continuation (URL) line under its title line.
+const contIndent = "      "
+
+// jobTitle is the display title for an entry: the resolved "Artist - Track" once
+// known. It is deliberately empty for a playlist (its per-item before_dl title
+// misrepresents the whole job) and for an unreadable spec, so the caller shows the
+// URL as the primary label instead.
+func jobTitle(e queue.Entry) string {
+	if e.Job.Playlist {
+		return ""
 	}
-	label = shortenURL(label)
+	return e.Job.Title
+}
+
+// jobURLCell is the "<full-url>  (accodato <time>)" detail for an entry, tolerant
+// of an unreadable spec (URL empty → the job id). A playlist is flagged, since it
+// pulls more than the single URL implies. The URL is NOT shortened here — callers
+// cap the whole line to the terminal width only for the --watch redraw (see clip).
+func jobURLCell(e queue.Entry) string {
+	url := e.Job.URL
+	switch {
+	case url == "":
+		url = "job illeggibile: " + e.ID
+	case e.Job.Playlist:
+		url += "  (playlist)"
+	}
 	if e.Job.EnqueuedAt.IsZero() {
-		return label
+		return url
 	}
-	return fmt.Sprintf("%s  (accodato %s)", label, e.Job.EnqueuedAt.Format(enqueuedTimeFormat))
+	return fmt.Sprintf("%s  (accodato %s)", url, e.Job.EnqueuedAt.Format(enqueuedTimeFormat))
+}
+
+// clip caps s to fit within width columns after an indent of `indent` columns,
+// appending an ellipsis when it truncates (rune-safe, so a multi-byte character is
+// never split). full=true — the one-shot views, where wrapping onto a second
+// physical row is harmless — or a non-positive width returns s unchanged. full=
+// false is the --watch path: its region redraw counts logical newlines, so a
+// physically-wrapped line would desync the cursor-up math.
+func clip(s string, full bool, width, indent int) string {
+	if full || width <= 0 {
+		return s
+	}
+	budget := width - indent
+	if budget < 8 {
+		budget = 8 // never clip to nothing on a pathologically narrow terminal
+	}
+	if utf8.RuneCountInString(s) <= budget {
+		return s
+	}
+	return string([]rune(s)[:budget-1]) + "…"
+}
+
+// writeJobEntry writes one job under prefix: a title line plus an indented URL line
+// when the title is known, else a single URL line. full/width drive the --watch
+// no-wrap clipping (see clip). Indents are measured in runes (≈ columns) so a
+// multi-byte glyph like ▸ in the prefix does not over-count the budget.
+func writeJobEntry(b *strings.Builder, prefix string, e queue.Entry, full bool, width int) {
+	if title := jobTitle(e); title != "" {
+		fmt.Fprintf(b, "%s%s\n", prefix, clip(title, full, width, utf8.RuneCountInString(prefix)))
+		fmt.Fprintf(b, "%s%s\n", contIndent, clip(jobURLCell(e), full, width, len(contIndent)))
+		return
+	}
+	fmt.Fprintf(b, "%s%s\n", prefix, clip(jobURLCell(e), full, width, utf8.RuneCountInString(prefix)))
 }

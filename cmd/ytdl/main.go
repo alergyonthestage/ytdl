@@ -487,7 +487,8 @@ func printQueueOnce(sp *queue.Spool) int {
 		return 1
 	}
 	resumeIfStalled(sp, snap)
-	fmt.Print(term.Colorize(cli.RenderQueue(snap), colorStdout()))
+	// One-shot: show full URLs (a wrapped line is harmless without a redraw).
+	fmt.Print(term.Colorize(cli.RenderQueue(snap, true, 0), colorStdout()))
 	return 0
 }
 
@@ -530,7 +531,14 @@ func watchQueue(sp *queue.Spool) int {
 		if p > 0 || r > 0 {
 			sawWork = true
 		}
-		content := cli.RenderQueue(snap)
+		// --watch redraws its region in place, counting logical newlines, so each
+		// line must fit one physical row: cap to the terminal width (80 fallback if
+		// the ioctl can't tell). Re-read per frame so a mid-watch resize is honoured.
+		width := term.Width()
+		if width <= 0 {
+			width = 80
+		}
+		content := cli.RenderQueue(snap, false, width)
 
 		// Auto-exit once the queue has drained: clear the region, print the final
 		// (empty) queue, and — if we actually watched work finish — a session summary.
@@ -810,12 +818,17 @@ func isIndex(s string) bool {
 	return true
 }
 
-// jobLabel is a short human label for a cancel/retry confirmation line.
+// jobLabel is a human label for a cancel/retry confirmation line: "Title — URL"
+// when the title is known (and not a playlist, whose per-item title would
+// mislead), else the full URL, falling back to the id for an unreadable spec.
 func jobLabel(e queue.Entry) string {
-	if e.Job.URL != "" {
-		return e.Job.URL
+	if e.Job.URL == "" {
+		return e.ID
 	}
-	return e.ID
+	if t := e.Job.Title; t != "" && !e.Job.Playlist {
+		return t + " — " + e.Job.URL
+	}
+	return e.Job.URL
 }
 
 // runStatusCmd prints a one-shot summary: daemon liveness (informational), the
