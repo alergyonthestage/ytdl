@@ -22,9 +22,10 @@ CODA
   ytdl queue [--watch]                 Download in attesa e in corso (--watch aggiorna sul posto)
   ytdl status                          Stato del daemon + riepilogo recente
   ytdl history [--failed] [--limit N]  Storico dei download (anche in primo piano)
-  ytdl cancel [<n> | --all]            Annulla un download in corso o in attesa
-  ytdl retry  [<n> | --all]            Rimette in coda un download fallito
-      (lancia cancel/retry senza argomenti per vedere la lista numerata)
+  ytdl cancel [<n> | <id> | --all]     Annulla un download in corso o in attesa
+  ytdl retry  [<n> | <id> | --all]     Rimette in coda un download fallito
+      (senza argomenti: lista numerata. <n> = indice del momento, <id> = prefisso
+       dell'id, stabile — preferiscilo negli script)
 
 INTERFACCIA GRAFICA
   ytdl gui                             Apre l'interfaccia web nel browser
@@ -77,4 +78,5 @@ const (
 	MsgTooManyTargets   = "✗ Un solo indice per volta (oppure --all)."
 	MsgTargetAndAll     = "✗ Indica un indice OPPURE --all, non entrambi."
 	MsgTargetNotFound   = "✗ Non trovato: %s (lancia il comando senza argomenti per vedere la lista)." // %s = the token
+	MsgTargetAmbiguous  = "✗ %s è ambiguo: corrisponde a più di un job. Usa più caratteri dell'id."    // %s = the token
 )

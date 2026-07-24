@@ -66,6 +66,7 @@ func RenderCancelList(snap queue.Snapshot) string {
 		fmt.Fprintf(&b, "  [%d] %-9s %s\n", i+1, state, jobLine(e))
 	}
 	b.WriteString("Annulla con:  ytdl cancel <n>   ·   tutto:  ytdl cancel --all\n")
+	b.WriteString("  (l'indice riflette la coda ora; negli script usa il prefisso dell'id)\n")
 	return b.String()
 }
 
@@ -82,6 +83,7 @@ func RenderRetryList(failed []queue.Entry) string {
 		fmt.Fprintf(&b, "  [%d] %s\n", i+1, jobLine(e))
 	}
 	b.WriteString("Riprova con:  ytdl retry <n>   ·   tutti:  ytdl retry --all\n")
+	b.WriteString("  (l'indice riflette la lista ora; negli script usa il prefisso dell'id)\n")
 	return b.String()
 }
 

@@ -604,40 +604,56 @@ func runCancelCmd(p *cli.Parsed) int {
 			return 0
 		}
 	} else {
-		e, ok := resolveTarget(p.Target, ordered)
-		if !ok {
-			fmt.Fprintf(os.Stderr, cli.MsgTargetNotFound+"\n", p.Target)
-			return 1
+		e, res := resolveTarget(p.Target, ordered)
+		if res != targetOK {
+			return reportUnresolved(p.Target, res)
 		}
 		targets = []queue.Entry{e}
 	}
 
-	n := 0
+	failures := 0
 	for _, e := range targets {
-		if cancelOne(sp, e) {
+		was, err := cancelOne(sp, e)
+		if err != nil {
+			// The marker is how the daemon stops a running job, so a failure to write
+			// it means the cancel is a no-op — say so rather than claim success.
+			fmt.Fprintf(os.Stderr, "! Impossibile annullare %s: %v\n", jobLabel(e), err)
+			failures++
+			continue
+		}
+		if was {
 			fmt.Printf("▸ Annullato (era in attesa): %s\n", jobLabel(e))
 		} else {
 			fmt.Printf("▸ Annullamento richiesto: %s\n", jobLabel(e))
 		}
-		n++
 	}
 	if p.All {
-		fmt.Printf("▸ %d annullati o in annullamento.\n", n)
+		fmt.Printf("▸ %d annullati o in annullamento.\n", len(targets)-failures)
+	}
+	if failures > 0 {
+		return 1
 	}
 	return 0
 }
 
 // cancelOne cancels a single live entry: it drops the marker FIRST (so a job the
 // daemon claims in the meantime is still stopped by the watcher), then deletes it
-// if it is still pending. Returns true if it was pending (deleted now), false if
-// it was already running/gone (the marker is left for the daemon's watcher).
-func cancelOne(sp *queue.Spool, e queue.Entry) bool {
-	_ = sp.RequestCancel(e.ID)
-	was, _ := sp.CancelPending(e.ID)
+// if it is still pending. Returns wasPending=true if it was pending (deleted now),
+// false if it was already running/gone (the marker is left for the daemon's
+// watcher). A non-nil error means the cancel did NOT take effect (the marker
+// could not be written, or the pending-delete hit a real filesystem error).
+func cancelOne(sp *queue.Spool, e queue.Entry) (wasPending bool, err error) {
+	if err := sp.RequestCancel(e.ID); err != nil {
+		return false, err
+	}
+	was, err := sp.CancelPending(e.ID)
+	if err != nil {
+		return false, err
+	}
 	if was {
 		_ = sp.ClearCancel(e.ID) // deleted before it ran → the marker is unneeded
 	}
-	return was
+	return was, nil
 }
 
 // runRetryCmd re-queues failed jobs (failed/ → pending/) and resumes the daemon to
@@ -668,44 +684,61 @@ func runRetryCmd(p *cli.Parsed) int {
 			return 0
 		}
 	} else {
-		e, ok := resolveTarget(p.Target, failed)
-		if !ok {
-			fmt.Fprintf(os.Stderr, cli.MsgTargetNotFound+"\n", p.Target)
-			return 1
+		e, res := resolveTarget(p.Target, failed)
+		if res != targetOK {
+			return reportUnresolved(p.Target, res)
 		}
 		targets = []queue.Entry{e}
 	}
 
-	n := 0
+	failures := 0
 	for _, e := range targets {
 		if err := sp.Retry(e.ID); err != nil {
+			// TOCTOU: the job may have been pruned or already retried since the
+			// listing (queue.Spool.Retry returns ErrNotExist). Report it and let the
+			// exit code reflect it, so a script's `|| alert` actually fires.
 			fmt.Fprintf(os.Stderr, "! Non riprovato %s: %v\n", jobLabel(e), err)
+			failures++
 			continue
 		}
 		fmt.Printf("▸ Rimesso in coda: %s\n", jobLabel(e))
-		n++
 	}
-	if n > 0 {
+	succeeded := len(targets) - failures
+	if succeeded > 0 {
 		if fresh, err := sp.List(); err == nil {
 			resumeIfStalled(sp, fresh) // start a daemon to drain the re-queued jobs
 		}
 		if p.All {
-			fmt.Printf("▸ %d rimessi in coda.\n", n)
+			fmt.Printf("▸ %d rimessi in coda.\n", succeeded)
 		}
+	}
+	if failures > 0 {
+		return 1
 	}
 	return 0
 }
 
+// targetResult is the outcome of resolving a cancel/retry target.
+type targetResult int
+
+const (
+	targetOK        targetResult = iota // resolved to exactly one entry
+	targetNotFound                      // no index/prefix match
+	targetAmbiguous                     // an id-prefix matched more than one entry
+)
+
 // resolveTarget maps a cancel/retry target to an entry: a short integer (1-3
 // digits) is a 1-based index into the numbered list the command prints; anything
-// else is an id-prefix, accepted only when it uniquely identifies one entry.
-func resolveTarget(target string, entries []queue.Entry) (queue.Entry, bool) {
+// else is an id-prefix, accepted only when it UNIQUELY identifies one entry. It
+// distinguishes not-found from ambiguous so the caller can advise the user
+// precisely (type more characters vs. it isn't there).
+func resolveTarget(target string, entries []queue.Entry) (queue.Entry, targetResult) {
 	if isIndex(target) {
 		n, _ := strconv.Atoi(target)
 		if n >= 1 && n <= len(entries) {
-			return entries[n-1], true
+			return entries[n-1], targetOK
 		}
-		return queue.Entry{}, false
+		return queue.Entry{}, targetNotFound
 	}
 	var match queue.Entry
 	count := 0
@@ -714,10 +747,24 @@ func resolveTarget(target string, entries []queue.Entry) (queue.Entry, bool) {
 			match, count = e, count+1
 		}
 	}
-	if count == 1 {
-		return match, true
+	switch count {
+	case 1:
+		return match, targetOK
+	case 0:
+		return queue.Entry{}, targetNotFound
+	default:
+		return queue.Entry{}, targetAmbiguous
 	}
-	return queue.Entry{}, false // unknown or ambiguous
+}
+
+// reportUnresolved prints the right message for a non-OK resolution and returns 1.
+func reportUnresolved(target string, res targetResult) int {
+	if res == targetAmbiguous {
+		fmt.Fprintf(os.Stderr, cli.MsgTargetAmbiguous+"\n", target)
+	} else {
+		fmt.Fprintf(os.Stderr, cli.MsgTargetNotFound+"\n", target)
+	}
+	return 1
 }
 
 // isIndex reports whether s is a short list index (1-3 digits) rather than an
