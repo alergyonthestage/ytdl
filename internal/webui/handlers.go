@@ -347,6 +347,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		settings := dto.toSettings()
+		// job_timeout has no GUI control this cycle (Cycle 2B-plus is CLI-only), and
+		// the editor rewrites the whole document — so without this a save would reset
+		// a CLI-set job_timeout to 0. Carry the current persisted value through
+		// untouched. Drop this override when a GUI control lands.
+		cur, _ := s.deps.Resolve(config.Partial{})
+		settings.JobTimeout = cur.JobTimeout
 		if err := validateSettings(settings); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return

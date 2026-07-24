@@ -15,8 +15,11 @@ out to yt-dlp/ffmpeg; the installer stays Bash and Python is not adopted. See
 is done and merged to `main` (2026-07-23; release pending)**; **Cycle 2C (CLI UX
 pass — roles, count/history redesign, in-place `--watch`) is done and merged to
 `main` (2026-07-23; release pending)**; **Cycle 3 (the web GUI, phase 6b) is done
-and merged to `main` (2026-07-24; release pending)**; next is Cycle 2B-plus
-(`cancel`/`retry` + phase-5 hardening) and the 6a AppleScript MVP.
+and merged to `main` (2026-07-24; release pending)**; **Cycle 2B-plus
+(`cancel`/`retry`, per-job timeout, no-residue downloads, daemon diagnostics) is
+done and merged to `main` (2026-07-24; release pending)**; next is a dedicated
+Phase-5 cycle (auto-retry/backoff + YouTube rate-limit), the deferred GUI wiring of
+cancel/retry, and the 6a AppleScript MVP.
 
 ```mermaid
 flowchart LR
@@ -193,7 +196,7 @@ Cycle 2A (logs + notifications, done) and Cycle 2B (queue + daemon, planned).
 | 4.4 | System notification on completion, toggleable (`notify`, `notify_on`, …) | done (2A) | U6 |
 | 4.5 | Real queue + daemon (`ytdld`): filesystem spool with atomic state transitions | done (2B-core) | U5 |
 | 4.6 | Bounded concurrency (default cap 3; `unlimited` allowed but discouraged) | done (2B-core) | U5 |
-| 4.7 | Job inspection: `queue [--watch]`, `status`, `history`, in-place watch + count/history redesign (done 2B-core + 2C); `cancel`, `retry` (2B-plus) | partial | U5 |
+| 4.7 | Job inspection: `queue [--watch]`, `status`, `history`, in-place watch + count/history redesign (done 2B-core + 2C); `cancel`, `retry` (done 2B-plus) | done | U5 |
 
 **Cycle 2A (done, merged to `main` 2026-07-23):** `internal/logstore`
 (central store + retention + breadcrumb + per-item playlist reconcile) and
@@ -214,11 +217,20 @@ reviewers; the real findings — per-job panic isolation, escaping a persistent-
 daemon wedge, best-effort recovery, `queue`-resumes-a-stalled-daemon — fixed).
 Decisions in [ADR-0007](decisions/0007-cycle2b-queue-daemon.md). Release pending.
 
-## Phase 5 — Robustness & tests (Go) — `planned`
+## Phase 5 — Robustness & tests (Go) — `in progress`
 
 Hardening of the new engine once its features exist: comprehensive error handling,
 edge cases, retries/backoff, YouTube rate-limit handling, and a real test suite
 (Go's `testing`, beyond the golden tests of 3.3).
+
+**Started in Cycle 2B-plus (2026-07-24):** a per-job execution timeout (`job_timeout`,
+default off) that kills a hung download via a process-group teardown; a daemon
+diagnostics log surfacing the previously-invisible failures ADR-0007 flagged; and a
+"no residue in the destination" guarantee (intermediates routed to a scratch dir).
+See [ADR-0011](decisions/0011-cycle2b-plus-cancel-retry-hardening.md). **Still
+planned as a dedicated cycle:** automatic retries/backoff (`Attempts`/`NotBefore`)
+and YouTube rate-limit handling — the riskiest hardening, deliberately separated
+from the manual cancel/retry above.
 
 ## Phase 6 — GUI — `in progress` (6b done; 6a planned)
 
@@ -378,15 +390,28 @@ See [ADR-0007](decisions/0007-cycle2b-queue-daemon.md). Release pending.
 - **Done when:** queued/background downloads run under a concurrency cap with
   inspectable status. ✓
 
-**Cycle 2B-plus — queue completion + hardening — planned.** `ytdl cancel`/`retry`
-(already just spool `mv` transitions), phase-5 hardening (retries/backoff,
-YouTube rate-limit handling, a per-job execution timeout for hung downloads), a
-daemon logging/diagnostics seam, and removing the now-unused `core.ReExecArgs` +
-`background-*` goldens (retained in 2B-core to keep the parity gate byte-identical).
+**Cycle 2B-plus — queue completion + hardening — done, merged to `main`
+(2026-07-24).** `ytdl cancel`/`retry` (index or stable id-prefix, `--all`), a
+per-job execution timeout (`job_timeout`, default off) that kills hung downloads via
+a process-group teardown, a "no residue in the destination" guarantee (yt-dlp
+intermediates routed to a per-job scratch dir; a cancel/timeout also drops no
+breadcrumb), a daemon diagnostics log, and the removal of the dead `core.ReExecArgs`
++ `background-*` goldens. Cross-process cancel is a filesystem marker the daemon's
+watcher turns into a ctx cancel; `Retry`/`RequeueRunning` clear stale markers so a
+fresh run is never retroactively cancelled. Runtime/CLI layer only —
+`core.BuildArgs` and the goldens stay byte-unchanged (the residue redirect is
+appended off the golden path; verified against real yt-dlp that an absolute `-o`
+ignores `--paths`, hence the relative-`-o` override). Adversarially reviewed (3
+reviewers; the real findings — a stale-marker delete, a raced-success mis-recorded
+as failed, retry/cancel exit codes and error surfacing — all fixed).
+[ADR-0011](decisions/0011-cycle2b-plus-cancel-retry-hardening.md). Release pending.
 
-- **Entry:** Cycle 2B-core merged to `main`. Base off the latest `main`.
-- **Done when:** failed jobs can be retried and pending/running jobs cancelled from
-  the CLI; hung/erroring downloads are bounded and surfaced; test suite green.
+- **Entry:** Cycle 2B-core merged to `main`. Based off the latest `main`.
+- **Done:** failed jobs can be retried and pending/running jobs cancelled from the
+  CLI; hung downloads are bounded and surfaced; failed/cancelled downloads leave no
+  residue; test suite green under `-race`. ✓
+- **Deferred to a dedicated Phase-5 cycle:** automatic retries/backoff and YouTube
+  rate-limit handling; wiring cancel/retry into the web GUI (still read-only).
 
 **Cycle 2C — CLI UX pass — done, merged to `main` (2026-07-23).** A dedicated
 polish of the command-line surface exposed by Cycle 2B-core, driven by real-use

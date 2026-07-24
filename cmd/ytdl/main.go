@@ -77,6 +77,10 @@ func realMain(args []string) int {
 		return runHistoryCmd(parsed)
 	case cli.ActionGUI:
 		return runGUICmd()
+	case cli.ActionCancel:
+		return runCancelCmd(parsed)
+	case cli.ActionRetry:
+		return runRetryCmd(parsed)
 	}
 
 	// ActionRun. C1: a bad -f flag fails fast (unlike the config file, which
@@ -176,6 +180,8 @@ func runDaemon(daemonArgs []string) int {
 		Spool:         sp,
 		Concurrency:   settings.Concurrency,
 		RetentionDays: settings.LogRetentionDays,
+		JobTimeout:    time.Duration(settings.JobTimeout) * time.Second,
+		LogPath:       daemonLogPath(stateDir),
 	}
 
 	var srv *webui.Server
@@ -251,6 +257,10 @@ func serveGUI(cfg daemon.Config, srv *webui.Server) int {
 // `ytdl gui` to hand to the browser. It never leaves the user's state dir.
 func guiTokenPath(stateDir string) string { return filepath.Join(stateDir, "gui.token") }
 
+// daemonLogPath is the daemon's diagnostics log, beside the queue/logs in the
+// state dir. `ytdl status` points the user at it.
+func daemonLogPath(stateDir string) string { return filepath.Join(stateDir, "daemon.log") }
+
 func newGUIToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -281,8 +291,8 @@ func readGUIToken(path string) string {
 // a progress sink keyed by its spool id, so the browser can draw a live bar. A
 // headless daemon (every `ytdl -b`) passes a nil srv, so the sink is nil, no
 // progress flags are added and execution is byte-for-byte the pre-GUI path.
-func jobRunner(srv *webui.Server) func(queue.Claim) int {
-	return func(cl queue.Claim) int {
+func jobRunner(srv *webui.Server) func(context.Context, queue.Claim) int {
+	return func(ctx context.Context, cl queue.Claim) int {
 		j := cl.Job
 		o := core.Options{Mode: core.ModeSilent, URL: j.URL, Settings: j.Settings, Playlist: j.Playlist}
 		var sink run.ProgressSink
@@ -297,7 +307,7 @@ func jobRunner(srv *webui.Server) func(queue.Claim) int {
 				})
 			}
 		}
-		return run.RunQueued(o, sink)
+		return run.RunQueued(ctx, o, sink)
 	}
 }
 
@@ -563,6 +573,223 @@ func resumeIfStalled(sp *queue.Spool, snap queue.Snapshot) {
 	}
 }
 
+// runCancelCmd cancels live work. A pending job is deleted outright; a running one
+// gets a cancel marker the daemon turns into a process-group kill (ADR-0011). With
+// neither a target nor --all it prints the numbered live queue to read an index
+// off. A running job is already owned by a live daemon, so its watcher will act on
+// the marker — no daemon needs starting here.
+func runCancelCmd(p *cli.Parsed) int {
+	stateDir := config.StatePath()
+	if stateDir == "" {
+		fmt.Fprintln(os.Stderr, "✗ Impossibile individuare la coda: $HOME non è impostata.")
+		return 1
+	}
+	sp := queue.Open(stateDir)
+	snap, err := sp.List()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "✗ Impossibile leggere la coda: %v\n", err)
+		return 1
+	}
+	ordered := cli.LiveOrdered(snap)
+
+	if !p.All && p.Target == "" {
+		fmt.Print(term.Colorize(cli.RenderCancelList(snap), colorStdout()))
+		return 0
+	}
+
+	var targets []queue.Entry
+	if p.All {
+		if targets = ordered; len(targets) == 0 {
+			fmt.Println("▸ Niente da annullare.")
+			return 0
+		}
+	} else {
+		e, res := resolveTarget(p.Target, ordered)
+		if res != targetOK {
+			return reportUnresolved(p.Target, res)
+		}
+		targets = []queue.Entry{e}
+	}
+
+	failures := 0
+	for _, e := range targets {
+		was, err := cancelOne(sp, e)
+		if err != nil {
+			// The marker is how the daemon stops a running job, so a failure to write
+			// it means the cancel is a no-op — say so rather than claim success.
+			fmt.Fprintf(os.Stderr, "! Impossibile annullare %s: %v\n", jobLabel(e), err)
+			failures++
+			continue
+		}
+		if was {
+			fmt.Printf("▸ Annullato (era in attesa): %s\n", jobLabel(e))
+		} else {
+			fmt.Printf("▸ Annullamento richiesto: %s\n", jobLabel(e))
+		}
+	}
+	if p.All {
+		fmt.Printf("▸ %d annullati o in annullamento.\n", len(targets)-failures)
+	}
+	if failures > 0 {
+		return 1
+	}
+	return 0
+}
+
+// cancelOne cancels a single live entry: it drops the marker FIRST (so a job the
+// daemon claims in the meantime is still stopped by the watcher), then deletes it
+// if it is still pending. Returns wasPending=true if it was pending (deleted now),
+// false if it was already running/gone (the marker is left for the daemon's
+// watcher). A non-nil error means the cancel did NOT take effect (the marker
+// could not be written, or the pending-delete hit a real filesystem error).
+func cancelOne(sp *queue.Spool, e queue.Entry) (wasPending bool, err error) {
+	if err := sp.RequestCancel(e.ID); err != nil {
+		return false, err
+	}
+	was, err := sp.CancelPending(e.ID)
+	if err != nil {
+		return false, err
+	}
+	if was {
+		_ = sp.ClearCancel(e.ID) // deleted before it ran → the marker is unneeded
+	}
+	return was, nil
+}
+
+// runRetryCmd re-queues failed jobs (failed/ → pending/) and resumes the daemon to
+// drain them. With neither a target nor --all it prints the numbered failed list.
+func runRetryCmd(p *cli.Parsed) int {
+	stateDir := config.StatePath()
+	if stateDir == "" {
+		fmt.Fprintln(os.Stderr, "✗ Impossibile individuare la coda: $HOME non è impostata.")
+		return 1
+	}
+	sp := queue.Open(stateDir)
+	snap, err := sp.List()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "✗ Impossibile leggere la coda: %v\n", err)
+		return 1
+	}
+	failed := snap.Failed
+
+	if !p.All && p.Target == "" {
+		fmt.Print(term.Colorize(cli.RenderRetryList(failed), colorStdout()))
+		return 0
+	}
+
+	var targets []queue.Entry
+	if p.All {
+		if targets = failed; len(targets) == 0 {
+			fmt.Println("▸ Nessun download fallito da riprovare.")
+			return 0
+		}
+	} else {
+		e, res := resolveTarget(p.Target, failed)
+		if res != targetOK {
+			return reportUnresolved(p.Target, res)
+		}
+		targets = []queue.Entry{e}
+	}
+
+	failures := 0
+	for _, e := range targets {
+		if err := sp.Retry(e.ID); err != nil {
+			// TOCTOU: the job may have been pruned or already retried since the
+			// listing (queue.Spool.Retry returns ErrNotExist). Report it and let the
+			// exit code reflect it, so a script's `|| alert` actually fires.
+			fmt.Fprintf(os.Stderr, "! Non riprovato %s: %v\n", jobLabel(e), err)
+			failures++
+			continue
+		}
+		fmt.Printf("▸ Rimesso in coda: %s\n", jobLabel(e))
+	}
+	succeeded := len(targets) - failures
+	if succeeded > 0 {
+		if fresh, err := sp.List(); err == nil {
+			resumeIfStalled(sp, fresh) // start a daemon to drain the re-queued jobs
+		}
+		if p.All {
+			fmt.Printf("▸ %d rimessi in coda.\n", succeeded)
+		}
+	}
+	if failures > 0 {
+		return 1
+	}
+	return 0
+}
+
+// targetResult is the outcome of resolving a cancel/retry target.
+type targetResult int
+
+const (
+	targetOK        targetResult = iota // resolved to exactly one entry
+	targetNotFound                      // no index/prefix match
+	targetAmbiguous                     // an id-prefix matched more than one entry
+)
+
+// resolveTarget maps a cancel/retry target to an entry: a short integer (1-3
+// digits) is a 1-based index into the numbered list the command prints; anything
+// else is an id-prefix, accepted only when it UNIQUELY identifies one entry. It
+// distinguishes not-found from ambiguous so the caller can advise the user
+// precisely (type more characters vs. it isn't there).
+func resolveTarget(target string, entries []queue.Entry) (queue.Entry, targetResult) {
+	if isIndex(target) {
+		n, _ := strconv.Atoi(target)
+		if n >= 1 && n <= len(entries) {
+			return entries[n-1], targetOK
+		}
+		return queue.Entry{}, targetNotFound
+	}
+	var match queue.Entry
+	count := 0
+	for _, e := range entries {
+		if strings.HasPrefix(e.ID, target) {
+			match, count = e, count+1
+		}
+	}
+	switch count {
+	case 1:
+		return match, targetOK
+	case 0:
+		return queue.Entry{}, targetNotFound
+	default:
+		return queue.Entry{}, targetAmbiguous
+	}
+}
+
+// reportUnresolved prints the right message for a non-OK resolution and returns 1.
+func reportUnresolved(target string, res targetResult) int {
+	if res == targetAmbiguous {
+		fmt.Fprintf(os.Stderr, cli.MsgTargetAmbiguous+"\n", target)
+	} else {
+		fmt.Fprintf(os.Stderr, cli.MsgTargetNotFound+"\n", target)
+	}
+	return 1
+}
+
+// isIndex reports whether s is a short list index (1-3 digits) rather than an
+// id-prefix. Spool ids begin with a long nanosecond number, so capping the index
+// at three digits keeps a pasted numeric id from being misread as an index.
+func isIndex(s string) bool {
+	if len(s) == 0 || len(s) > 3 {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// jobLabel is a short human label for a cancel/retry confirmation line.
+func jobLabel(e queue.Entry) string {
+	if e.Job.URL != "" {
+		return e.Job.URL
+	}
+	return e.ID
+}
+
 // runStatusCmd prints a one-shot summary: daemon liveness (informational), the
 // live queue, and a recent windowed outcome tally from the log store (which
 // includes foreground downloads, unlike the background-only spool).
@@ -582,7 +809,18 @@ func runStatusCmd() int {
 	pruneStores(sp, settings)
 	recent := recentSummary(settings.LogDir, settings.LogRetentionDays)
 	fmt.Print(term.Colorize(cli.RenderStatus(snap, daemon.IsRunning(sp.LockPath()), recent, settings.LogRetentionDays), colorStdout()))
+	// Point at the daemon's diagnostics log, but only once it exists — nothing to
+	// cite before the daemon has ever run.
+	if lp := daemonLogPath(stateDir); fileExists(lp) {
+		fmt.Printf("  diagnostica: %s\n", lp)
+	}
 	return 0
+}
+
+// fileExists reports whether path is a regular, statable file.
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // runHistoryCmd prints the durable download history from the log store —

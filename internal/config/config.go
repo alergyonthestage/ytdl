@@ -38,6 +38,11 @@ type Settings struct {
 	// by core.BuildArgs, so it never affects the yt-dlp argv or the golden parity;
 	// it only bounds how many queued downloads the daemon runs at once.
 	Concurrency int // default: 3; ConcurrencyUnlimited (0) = no cap (discouraged)
+
+	// Cycle 2B-plus backend setting: a per-job wall-clock timeout in seconds for a
+	// daemon-drained download. 0 (the default) means no limit — a hung yt-dlp is
+	// only stopped by an explicit `ytdl cancel`. Not read by core.BuildArgs.
+	JobTimeout int // default: 0 (no timeout); seconds
 }
 
 // Defaults copied verbatim from the Bash ytdl (lines 31-41, 196).
@@ -56,6 +61,11 @@ const (
 	// config keyword `unlimited`. It reintroduces the pre-2B unbounded background
 	// behaviour (U5) and is deliberately discouraged.
 	ConcurrencyUnlimited = 0
+	// DefaultJobTimeout is the per-job wall-clock cap in seconds for daemon-drained
+	// downloads; 0 (the default) disables it. Off by default so a legitimately long
+	// download (a big playlist, a slow link) is never truncated unless the user
+	// opts in (ADR-0011).
+	DefaultJobTimeout = 0
 	// ConcurrencyAdvisoryThreshold is the point above which a resolved concurrency
 	// draws an advisory warning: many parallel downloads risk being throttled or
 	// blocked by YouTube. It is only advice — there is no hard cap (a deliberate
@@ -121,6 +131,7 @@ func Defaults() Settings {
 		NotifySound:         true,
 
 		Concurrency: DefaultConcurrency,
+		JobTimeout:  DefaultJobTimeout,
 	}
 }
 
@@ -166,6 +177,7 @@ type Partial struct {
 	NotifySound         *bool
 
 	Concurrency *int
+	JobTimeout  *int
 }
 
 // Env is the environment layer. For parity with the Bash tool only
@@ -261,6 +273,9 @@ func apply(s *Settings, p Partial) {
 	if p.Concurrency != nil {
 		s.Concurrency = *p.Concurrency
 	}
+	if p.JobTimeout != nil {
+		s.JobTimeout = *p.JobTimeout
+	}
 }
 
 func applyEnv(s *Settings, env Env) {
@@ -287,6 +302,9 @@ func validate(s Settings) []Warning {
 	}
 	if s.Concurrency < 0 {
 		w = append(w, Warning{Msg: fmt.Sprintf("resolved concurrency %d is negative", s.Concurrency)})
+	}
+	if s.JobTimeout < 0 {
+		w = append(w, Warning{Msg: fmt.Sprintf("resolved job_timeout %d is negative", s.JobTimeout)})
 	}
 	// Advisory only (no hard cap): warn when parallelism is aggressive enough to
 	// risk YouTube throttling/blocking. Fires for `unlimited` and for values well

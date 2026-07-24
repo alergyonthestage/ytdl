@@ -1,10 +1,12 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -20,7 +22,7 @@ func fastCfg(sp *queue.Spool, concurrency int, run func(queue.Job) int) Config {
 		Concurrency: concurrency,
 		// Serve hands the whole Claim to Run; tests care only about the job, so
 		// adapt here and leave every call site expressed in terms of queue.Job.
-		Run:          func(cl queue.Claim) int { return run(cl.Job) },
+		Run:          func(_ context.Context, cl queue.Claim) int { return run(cl.Job) },
 		IdleTimeout:  40 * time.Millisecond,
 		PollInterval: 5 * time.Millisecond,
 	}
@@ -218,7 +220,7 @@ func TestServeIdleExitsOnPersistentClaimError(t *testing.T) {
 }
 
 func TestServeRejectsNilConfig(t *testing.T) {
-	if err := Serve(Config{Run: func(queue.Claim) int { return 0 }}); err == nil {
+	if err := Serve(Config{Run: func(context.Context, queue.Claim) int { return 0 }}); err == nil {
 		t.Error("Serve without a Spool returned nil error")
 	}
 	if err := Serve(Config{Spool: queue.Open(t.TempDir())}); err == nil {
@@ -304,6 +306,144 @@ func TestServeIdleExitsWithoutGUIHook(t *testing.T) {
 	}
 }
 
+// JobTimeout cancels a job's ctx after the deadline; the runner tears the process
+// group down and the daemon marks the job failed, all without wedging.
+func TestJobTimeoutCancelsRun(t *testing.T) {
+	sp := queue.Open(t.TempDir())
+	enqueueN(t, sp, 1)
+
+	cfg := fastCfg(sp, 1, func(queue.Job) int { return 0 })
+	cfg.JobTimeout = 30 * time.Millisecond
+	// A job that only ends when its ctx is cancelled: without the timeout it would
+	// run for 5s (far past the test), so a prompt finish proves the timeout fired.
+	cfg.Run = func(ctx context.Context, _ queue.Claim) int {
+		select {
+		case <-ctx.Done():
+			return 1 // ctx cancelled → the runner would report a signal death
+		case <-time.After(5 * time.Second):
+			return 0
+		}
+	}
+
+	start := time.Now()
+	if err := Serve(cfg); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("job not cancelled by the timeout; Serve took %v", elapsed)
+	}
+	snap, _ := sp.List()
+	if _, _, _, f := snap.Counts(); f != 1 {
+		t.Fatalf("timed-out job should be in failed/; counts failed=%d", f)
+	}
+}
+
+// A cancel marker dropped by another process (`ytdl cancel`) must stop the
+// matching RUNNING job: the watcher looks it up in the registry and cancels its
+// ctx. The job then ends and the marker is cleared.
+func TestWatcherCancelsRunningJob(t *testing.T) {
+	sp := queue.Open(t.TempDir())
+	enqueueN(t, sp, 1)
+
+	var gotID atomic.Value
+	running := make(chan struct{})
+	cfg := fastCfg(sp, 1, func(queue.Job) int { return 0 })
+	cfg.Run = func(ctx context.Context, cl queue.Claim) int {
+		gotID.Store(cl.ID)
+		close(running) // the job is now executing and registered
+		<-ctx.Done()   // block until the watcher cancels us
+		return 1
+	}
+
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- Serve(cfg) }()
+
+	select {
+	case <-running:
+	case <-time.After(2 * time.Second):
+		t.Fatal("job never started")
+	}
+	id, _ := gotID.Load().(string)
+	if err := sp.RequestCancel(id); err != nil {
+		t.Fatalf("RequestCancel: %v", err)
+	}
+
+	select {
+	case err := <-serveDone:
+		if err != nil {
+			t.Fatalf("Serve: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("watcher did not cancel the running job")
+	}
+
+	snap, _ := sp.List()
+	if _, _, _, f := snap.Counts(); f != 1 {
+		t.Fatalf("cancelled job should be in failed/; failed=%d", f)
+	}
+	if ids, _ := sp.CancelRequests(); len(ids) != 0 {
+		t.Errorf("cancel marker not cleared: %v", ids)
+	}
+}
+
+// End-to-end regression: a cancel marker that outlived its run (job failed, then
+// was retried, keeping its id) must NOT delete the fresh retried job. Retry clears
+// the stale marker, so processCancels sees nothing to act on.
+func TestStaleMarkerDoesNotDeleteRetriedJob(t *testing.T) {
+	sp := queue.Open(t.TempDir())
+	id, err := sp.Enqueue(queue.Job{URL: "https://youtu.be/x", EnqueuedAt: time.Unix(1, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sp.ClaimNext(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sp.MarkFailed(id); err != nil {
+		t.Fatal(err)
+	}
+	if err := sp.RequestCancel(id); err != nil { // marker left by a cancel that raced the failure
+		t.Fatal(err)
+	}
+	if err := sp.Retry(id); err != nil {
+		t.Fatal(err)
+	}
+	processCancels(Config{Spool: sp}, newCancelRegistry(), nil)
+	snap, _ := sp.List()
+	if len(snap.Pending) != 1 {
+		t.Fatalf("retried job was deleted by a stale marker: pending=%d", len(snap.Pending))
+	}
+}
+
+// A marker for an id that is neither pending nor running (terminal or gone) is
+// swept, so stale markers cannot accumulate.
+func TestWatcherClearsStaleMarker(t *testing.T) {
+	sp := queue.Open(t.TempDir())
+	if err := sp.RequestCancel("ghost-id"); err != nil {
+		t.Fatal(err)
+	}
+	processCancels(Config{Spool: sp}, newCancelRegistry(), nil) // nil diag → logf no-ops
+	if ids, _ := sp.CancelRequests(); len(ids) != 0 {
+		t.Errorf("stale marker not cleared: %v", ids)
+	}
+}
+
+// The daemon's diagnostics log records lifecycle events (it is otherwise silent).
+func TestDiagLogWritesLifecycle(t *testing.T) {
+	dir := t.TempDir()
+	cfg := fastCfg(queue.Open(dir), 1, func(queue.Job) int { return 0 })
+	cfg.LogPath = filepath.Join(dir, "daemon.log")
+	if err := Serve(cfg); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	b, err := os.ReadFile(cfg.LogPath)
+	if err != nil {
+		t.Fatalf("daemon.log not written: %v", err)
+	}
+	if !strings.Contains(string(b), "daemon start") || !strings.Contains(string(b), "daemon exit") {
+		t.Errorf("daemon.log missing lifecycle lines:\n%s", b)
+	}
+}
+
 // Run receives the whole Claim, so the GUI can key live progress by spool id.
 func TestRunReceivesClaimID(t *testing.T) {
 	sp := queue.Open(t.TempDir())
@@ -311,7 +451,7 @@ func TestRunReceivesClaimID(t *testing.T) {
 
 	var gotID atomic.Value
 	cfg := fastCfg(sp, 1, func(queue.Job) int { return 0 })
-	cfg.Run = func(cl queue.Claim) int { gotID.Store(cl.ID); return 0 }
+	cfg.Run = func(_ context.Context, cl queue.Claim) int { gotID.Store(cl.ID); return 0 }
 	if err := Serve(cfg); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}

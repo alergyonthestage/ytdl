@@ -4,7 +4,11 @@
 // web UI (Phase 6) import this same builder (ADR-0004).
 package core
 
-import "github.com/alergyonthestage/ytdl/internal/config"
+import (
+	"strings"
+
+	"github.com/alergyonthestage/ytdl/internal/config"
+)
 
 // Mode is an execution mode that produces a yt-dlp argument vector. Help,
 // Version and Update are CLI concerns handled before reaching the builder.
@@ -43,8 +47,9 @@ const silentBeforeDL = "before_dl:%(artist,creator,uploader)s - %(track,title)s"
 const afterMove = "after_move:%(filepath)s"
 
 // BuildArgs returns the yt-dlp argument vector for the download-ish modes
-// (default, dry-run, verbose, silent). Background does not call yt-dlp directly;
-// see ReExecArgs.
+// (default, dry-run, verbose, silent). Background does not call yt-dlp directly:
+// it enqueues onto the spool (run.runBackground), and the daemon later drains the
+// job in silent mode — so there is no separate background argv to build.
 func BuildArgs(o Options) []string {
 	s := o.Settings
 	switch o.Mode {
@@ -86,16 +91,34 @@ func BuildArgs(o Options) []string {
 	return nil
 }
 
-// ReExecArgs returns the argument vector the background mode re-executes itself
-// with: self as argv[0], then `-s -f FMT -o DIR [-p] URL` (ytdl lines 246-248).
-// Building it here once means the Bash flaw C4 (a hand-maintained re-exec flag
-// list) cannot recur.
-func ReExecArgs(o Options, self string) []string {
-	a := []string{self, "-s", "-f", o.Settings.Format, "-o", o.Settings.OutputDir}
-	if o.Playlist {
-		a = append(a, "-p")
+// TempRedirectArgs returns runtime-only yt-dlp args that route every intermediate
+// file (.part, fragments, the --embed-thumbnail image, the pre-conversion audio)
+// into workDir instead of the destination, so a failed or cancelled download
+// leaves NO residue there — only the final file on success, or the .log
+// breadcrumb (ADR-0011). They are APPENDED after BuildArgs, off the golden path,
+// so the byte-exact argv contract is untouched.
+//
+// The appended bare -o is load-bearing: it overrides BuildArgs's ABSOLUTE -o with
+// the same name template made RELATIVE, because yt-dlp ignores --paths entirely
+// when -o is an absolute path (verified against yt-dlp 2026.07.04 — with an
+// absolute -o the .part/.webp land in the destination regardless of --paths). A
+// duplicate bare -o is last-wins for the default output type. With a relative -o,
+// `home:` then places the final file in OutputDir — the exact path the original
+// absolute -o produced, so after_move/%(filepath)s and every downstream consumer
+// see an unchanged result — while `temp:` collects the intermediates in workDir.
+func TempRedirectArgs(o Options, workDir string) []string {
+	// The appended -o MUST stay relative: yt-dlp ignores --paths when -o is
+	// absolute, and an absolute -o would also drop the final file OUTSIDE
+	// OutputDir. A name_template beginning with "/" (unvalidated by the config
+	// layer, reachable via the file or the web editor) would make it absolute, so
+	// strip any leading separators defensively here — the golden -o (built by
+	// outputTemplate, always rooted under OutputDir) is untouched.
+	rel := strings.TrimLeft(relOutputTemplate(o.Settings), "/")
+	return []string{
+		"-o", rel,
+		"-P", "home:" + o.Settings.OutputDir,
+		"-P", "temp:" + workDir,
 	}
-	return append(a, o.URL)
 }
 
 // metaArgs is the metadata-normalization pipeline, shared by every download
@@ -152,5 +175,13 @@ func baseArgs(s config.Settings, playlist bool) []string {
 // Plain concatenation (not filepath.Join) — the template's %(...) tokens must
 // pass through to yt-dlp untouched.
 func outputTemplate(s config.Settings) string {
-	return s.OutputDir + "/" + s.NameTemplate + ".%(ext)s"
+	return s.OutputDir + "/" + relOutputTemplate(s)
+}
+
+// relOutputTemplate is the filename part of the -o value (NameTemplate.%(ext)s),
+// without the OutputDir. It is the same string outputTemplate embeds, reused as
+// the RELATIVE -o that TempRedirectArgs pairs with `-P home:` so intermediates
+// can be routed to a temp dir (yt-dlp ignores --paths when -o is absolute).
+func relOutputTemplate(s config.Settings) string {
+	return s.NameTemplate + ".%(ext)s"
 }

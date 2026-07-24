@@ -152,6 +152,42 @@ ytdl history --limit 50
 Il riepilogo di `status` e la cronologia coprono un periodo (di default gli ultimi
 30 giorni); l'etichetta accanto ai numeri te lo ricorda sempre.
 
+### Annullare un download
+
+Per fermare un download **in corso o in attesa**, lancia `ytdl cancel` senza
+argomenti: mostra la lista numerata. Poi indica il numero:
+
+```
+ytdl cancel        # mostra la lista
+ytdl cancel 2      # annulla il numero 2
+ytdl cancel --all  # annulla tutto
+```
+
+Un download in attesa viene rimosso subito; uno già in corso viene interrotto (con
+anche l'eventuale conversione), **senza lasciare file a metà** nella cartella.
+
+### Riprovare un download fallito
+
+`ytdl retry` (senza argomenti) elenca i download falliti; indica il numero per
+rimetterlo in coda:
+
+```
+ytdl retry         # mostra i falliti
+ytdl retry 1       # riprova il numero 1
+ytdl retry --all   # riprova tutti
+```
+
+> Il numero riflette la lista **in quel momento**. Se scrivi degli script, usa il
+> prefisso dell'identificatore (l'`id` che vedi nella lista) invece del numero: è
+> stabile nel tempo.
+
+### Fermare i download troppo lunghi
+
+Di norma non c'è un limite di durata (un album grosso o una connessione lenta non
+vengono interrotti). Se vuoi un tetto, imposta `job_timeout` (in secondi) nel file
+di configurazione: un download che lo supera viene interrotto e segnato come
+fallito. `0` (default) significa nessun limite.
+
 ## L'interfaccia grafica (senza Terminale)
 
 Se preferisci non usare il Terminale, ytdl ha un'interfaccia nel browser. Aprila
@@ -251,4 +287,6 @@ ytdl --help
 | `ytdl queue [--watch]` | Download in attesa e in corso (con `--watch` si aggiorna dal vivo e si chiude a coda finita) |
 | `ytdl status` | Stato del servizio di download + riepilogo recente |
 | `ytdl history [--failed] [--limit N]` | Cronologia dei download, anche in primo piano |
+| `ytdl cancel [<n> \| --all]` | Annulla un download in corso o in attesa (senza argomenti: lista numerata) |
+| `ytdl retry [<n> \| --all]` | Rimette in coda un download fallito (senza argomenti: lista numerata) |
 | `ytdl gui` | Apre l'interfaccia grafica nel browser |

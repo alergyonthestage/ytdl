@@ -200,6 +200,12 @@ func assign(p *Partial, key, value string, line int) *Warning {
 			return &Warning{Line: line, Msg: fmt.Sprintf("invalid concurrency %q (want %s); ignoring", value, ConcurrencyList)}
 		}
 		p.Concurrency = &n
+	case "job_timeout":
+		n, ok := parseNonNegInt(value)
+		if !ok {
+			return &Warning{Line: line, Msg: fmt.Sprintf("invalid job_timeout %q (want a non-negative integer, seconds; 0 = no limit); ignoring", value)}
+		}
+		p.JobTimeout = &n
 	default:
 		return &Warning{Line: line, Msg: fmt.Sprintf("unknown key %q; ignoring", key)}
 	}

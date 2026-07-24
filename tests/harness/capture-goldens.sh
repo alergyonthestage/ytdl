@@ -37,7 +37,6 @@ TEST_OUT="$WORK/out"            # normalized to {{OUTPUT_DIR}}
 TEST_BIN="$WORK/bin"            # holds the shims, first on PATH
 TEST_TMP="$WORK/tmp"            # ytdl's mktemp files land here
 YTDLP_CAP="$WORK/cap-ytdlp"     # yt-dlp shim writes the captured argv here
-NOHUP_CAP="$WORK/cap-nohup"     # nohup shim writes the re-exec argv here
 mkdir -p "$TEST_HOME" "$TEST_OUT" "$TEST_BIN" "$TEST_TMP"
 
 # ──────────────────────────────────────────────────────────────────
@@ -55,18 +54,7 @@ cat > "$TEST_BIN/ffmpeg" <<'SHIM'
 #!/usr/bin/env bash
 exit 0
 SHIM
-# nohup: ytdl's background mode runs `nohup "$0" <reexec-args> "$URL" & `. The
-# shim records that argv (the re-exec vector, which is what we golden) and
-# returns without launching anything. Written via a temp + atomic rename so the
-# reader never sees a half-written file despite the caller backgrounding it.
-cat > "$TEST_BIN/nohup" <<'SHIM'
-#!/usr/bin/env bash
-tmp="$(mktemp)"
-for arg in "$@"; do printf '%s\0' "$arg"; done > "$tmp"
-mv -f "$tmp" "$NOHUP_CAP"
-exit 0
-SHIM
-chmod +x "$TEST_BIN/yt-dlp" "$TEST_BIN/ffmpeg" "$TEST_BIN/nohup"
+chmod +x "$TEST_BIN/yt-dlp" "$TEST_BIN/ffmpeg"
 
 # ──────────────────────────────────────────────────────────────────
 #  Normalizer
@@ -126,7 +114,7 @@ PY
 export PATH="$TEST_BIN:$PATH"
 export HOME="$TEST_HOME"
 export TMPDIR="$TEST_TMP"
-export YTDLP_CAP NOHUP_CAP
+export YTDLP_CAP
 unset YTDL_OUT_DIR YTDL_REPO YTDL_BRANCH 2>/dev/null || true
 
 COUNT=0
@@ -139,20 +127,6 @@ capture() {
   bash "$YTDL" "$@" >/dev/null 2>&1 || true
   [ -s "$YTDLP_CAP" ] || { echo "no yt-dlp capture for '$name' (args: $*)" >&2; exit 1; }
   python3 "$NORMALIZER" "$YTDLP_CAP" "$TEST_OUT" "$TEST_HOME" "" > "$TESTDATA/$name.args"
-  COUNT=$((COUNT + 1))
-  printf '  captured %s\n' "$name.args"
-}
-
-# capture_bg NAME [ytdl args...] — records the background re-exec argv (nohup).
-capture_bg() {
-  local name="$1"; shift
-  rm -f "$NOHUP_CAP"
-  bash "$YTDL" "$@" >/dev/null 2>&1 || true
-  # nohup runs backgrounded; poll (bounded, ~5s max) for the atomic rename.
-  local n=0
-  while [ ! -e "$NOHUP_CAP" ] && [ "$n" -lt 500 ]; do sleep 0.01; n=$((n + 1)); done
-  [ -s "$NOHUP_CAP" ] || { echo "no nohup capture for '$name' (args: $*)" >&2; exit 1; }
-  python3 "$NORMALIZER" "$NOHUP_CAP" "$TEST_OUT" "$TEST_HOME" "$YTDL" > "$TESTDATA/$name.args"
   COUNT=$((COUNT + 1))
   printf '  captured %s\n' "$name.args"
 }
@@ -195,10 +169,9 @@ capture silent-mp3-defaultdir   -s            "$SINGLE"
 # Note: the -o trailing-slash strip (ytdl line 169) is a config.Resolve concern,
 # not a BuildArgs one — after the strip the argv is identical to the plain -o
 # case, so it is covered by an internal/config unit test, not a golden here.
-
-# ── background (re-exec argv via nohup; argv[0] normalized to {{SELF}}) ──
-capture_bg background-mp3-single    -b            -o "$TEST_OUT" "$SINGLE"
-capture_bg background-flac-single   -b -f flac    -o "$TEST_OUT" "$SINGLE"
-capture_bg background-playlist      -b -p         -o "$TEST_OUT" "$PLAYLIST"
+#
+# Background mode is deliberately NOT goldened: `ytdl -b` no longer re-execs a
+# yt-dlp argv (Cycle 2B enqueues onto the spool; the daemon later drains the job
+# in silent mode, whose argv IS goldened above). See ADR-0007/ADR-0011.
 
 printf '\n%d golden files written.\n' "$COUNT"

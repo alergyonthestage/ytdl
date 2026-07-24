@@ -3,10 +3,13 @@ package main
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/alergyonthestage/ytdl/internal/cli"
 	"github.com/alergyonthestage/ytdl/internal/config"
 	"github.com/alergyonthestage/ytdl/internal/logstore"
 	"github.com/alergyonthestage/ytdl/internal/queue"
@@ -178,5 +181,199 @@ func TestRealMainAbsoluteOutputBypassesHomeGuard(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "non trovato") {
 		t.Errorf("expected the missing-dependency path, got:\n%s", stderr)
+	}
+}
+
+func TestIsIndex(t *testing.T) {
+	for _, s := range []string{"1", "42", "999"} {
+		if !isIndex(s) {
+			t.Errorf("isIndex(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"", "1000", "1a", "100-aaa", "-1"} {
+		if isIndex(s) {
+			t.Errorf("isIndex(%q) = true, want false", s)
+		}
+	}
+}
+
+func TestResolveTarget(t *testing.T) {
+	es := []queue.Entry{{ID: "100-aaa"}, {ID: "200-bbb"}, {ID: "100-ccc"}}
+
+	// A short integer is a 1-based index.
+	if e, res := resolveTarget("2", es); res != targetOK || e.ID != "200-bbb" {
+		t.Errorf("index 2 = %+v, %v", e, res)
+	}
+	// Out-of-range index is not found.
+	if _, res := resolveTarget("9", es); res != targetNotFound {
+		t.Errorf("index 9 should be not-found, got %v", res)
+	}
+	// A long numeric-plus id is an id-prefix, not an index — and unique here.
+	if e, res := resolveTarget("200-bbb", es); res != targetOK || e.ID != "200-bbb" {
+		t.Errorf("id-prefix = %+v, %v", e, res)
+	}
+	// An ambiguous id-prefix (matches two) is distinguished from not-found.
+	if _, res := resolveTarget("100-", es); res != targetAmbiguous {
+		t.Errorf("prefix 100- should be ambiguous, got %v", res)
+	}
+	// A truly-absent prefix is not-found.
+	if _, res := resolveTarget("zzz", es); res != targetNotFound {
+		t.Errorf("prefix zzz should be not-found, got %v", res)
+	}
+	// A unique id-prefix resolves.
+	if e, res := resolveTarget("100-a", es); res != targetOK || e.ID != "100-aaa" {
+		t.Errorf("unique prefix = %+v, %v", e, res)
+	}
+}
+
+func TestRunCancelCmdAll(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	sp := queue.Open(config.StatePath())
+	for i, u := range []string{"https://a", "https://b"} {
+		if _, err := sp.Enqueue(queue.Job{URL: u, EnqueuedAt: time.Unix(int64(i+1), 0)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rc, out := captureStdout(t, func() int {
+		return runCancelCmd(&cli.Parsed{Action: cli.ActionCancel, All: true})
+	})
+	if rc != 0 {
+		t.Errorf("rc = %d, want 0", rc)
+	}
+	if !strings.Contains(out, "2 annullati") {
+		t.Errorf("--all summary missing:\n%s", out)
+	}
+	if snap, _ := sp.List(); len(snap.Pending) != 0 {
+		t.Errorf("all pending should be cancelled, got %d", len(snap.Pending))
+	}
+}
+
+// Cancelling a RUNNING job leaves a marker for the daemon's watcher (it can't be
+// deleted from under a live daemon) and reports the async "richiesto" wording.
+func TestRunCancelCmdRunningLeavesMarker(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	sp := queue.Open(config.StatePath())
+	id, err := sp.Enqueue(queue.Job{URL: "https://a", EnqueuedAt: time.Unix(1, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sp.ClaimNext(); err != nil { // now running
+		t.Fatal(err)
+	}
+	rc, out := captureStdout(t, func() int {
+		return runCancelCmd(&cli.Parsed{Action: cli.ActionCancel, Target: "1"})
+	})
+	if rc != 0 {
+		t.Errorf("rc = %d, want 0", rc)
+	}
+	if !strings.Contains(out, "Annullamento richiesto") {
+		t.Errorf("running cancel should read as async-requested:\n%s", out)
+	}
+	if ids, _ := sp.CancelRequests(); len(ids) != 1 || ids[0] != id {
+		t.Errorf("running cancel did not leave a marker for the daemon: %v", ids)
+	}
+}
+
+// A retry that fails to re-queue (TOCTOU / filesystem error) must exit non-zero,
+// so a script's `ytdl retry ... || alert` actually fires.
+func TestRunRetryCmdReportsFailureExitCode(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions; cannot force a rename failure")
+	}
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	sp := queue.Open(config.StatePath())
+	id, err := sp.Enqueue(queue.Job{URL: "https://a", EnqueuedAt: time.Unix(1, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sp.ClaimNext(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sp.MarkFailed(id); err != nil {
+		t.Fatal(err)
+	}
+	// Make pending/ read-only so Retry's rename INTO it fails — same failure the
+	// caller must surface as the TOCTOU ErrNotExist, easier to force deterministically.
+	pendDir := filepath.Join(config.StatePath(), "queue", "pending")
+	if err := os.Chmod(pendDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(pendDir, 0o755) })
+
+	rc, _ := captureStdout(t, func() int {
+		return runRetryCmd(&cli.Parsed{Action: cli.ActionRetry, Target: "1"})
+	})
+	if rc != 1 {
+		t.Errorf("a failed retry should exit 1, got %d", rc)
+	}
+	if snap, _ := sp.List(); len(snap.Failed) != 1 {
+		t.Errorf("the failed job must remain (not lost): failed=%d", len(snap.Failed))
+	}
+}
+
+func TestRunCancelCmdDeletesPending(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	sp := queue.Open(config.StatePath())
+	if _, err := sp.Enqueue(queue.Job{URL: "https://a", EnqueuedAt: time.Unix(1, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	id2, err := sp.Enqueue(queue.Job{URL: "https://b", EnqueuedAt: time.Unix(2, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rc, out := captureStdout(t, func() int {
+		return runCancelCmd(&cli.Parsed{Action: cli.ActionCancel, Target: "1"})
+	})
+	if rc != 0 {
+		t.Errorf("rc = %d, want 0", rc)
+	}
+	if !strings.Contains(out, "Annullato") {
+		t.Errorf("cancel output missing confirmation:\n%s", out)
+	}
+	snap, _ := sp.List()
+	if len(snap.Pending) != 1 || snap.Pending[0].ID != id2 {
+		t.Fatalf("only the second job should remain pending: %+v", snap.Pending)
+	}
+}
+
+func TestRunRetryCmdRequeues(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	sp := queue.Open(config.StatePath())
+	id, err := sp.Enqueue(queue.Job{URL: "https://a", EnqueuedAt: time.Unix(1, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sp.ClaimNext(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sp.MarkFailed(id); err != nil {
+		t.Fatal(err)
+	}
+
+	// Hold the daemon lock so resumeIfStalled sees a live daemon and does NOT
+	// self-exec a real one from the test binary.
+	lf, err := os.OpenFile(sp.LockPath(), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lf.Close()
+	if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
+
+	rc, out := captureStdout(t, func() int {
+		return runRetryCmd(&cli.Parsed{Action: cli.ActionRetry, Target: "1"})
+	})
+	if rc != 0 {
+		t.Errorf("rc = %d, want 0", rc)
+	}
+	if !strings.Contains(out, "Rimesso in coda") {
+		t.Errorf("retry output missing confirmation:\n%s", out)
+	}
+	snap, _ := sp.List()
+	if len(snap.Pending) != 1 || len(snap.Failed) != 0 {
+		t.Fatalf("job should be re-queued: pending=%d failed=%d", len(snap.Pending), len(snap.Failed))
 	}
 }

@@ -64,6 +64,7 @@ func Save(path string, s Settings) error {
 		{"notify_foreground", strconv.FormatBool(s.NotifyForeground)},
 		{"notify_sound", strconv.FormatBool(s.NotifySound)},
 		{"concurrency", concurrencyValue(s.Concurrency)},
+		{"job_timeout", strconv.Itoa(s.JobTimeout)},
 	}
 
 	var b strings.Builder
@@ -114,6 +115,9 @@ func validateForSave(s Settings) error {
 	}
 	if s.Concurrency < 0 {
 		return fmt.Errorf("config: concurrency %d is negative (0 = unlimited)", s.Concurrency)
+	}
+	if s.JobTimeout < 0 {
+		return fmt.Errorf("config: job_timeout %d is negative (0 = no limit)", s.JobTimeout)
 	}
 	return nil
 }

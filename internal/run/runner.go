@@ -8,6 +8,7 @@ package run
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -179,8 +182,10 @@ func lastNonEmptyLine(s string) string {
 // line prints only when yt-dlp succeeded (the Bash `set -e` aborts otherwise).
 func runVerbose(o core.Options, w io.Writer) int {
 	fmt.Fprintf(w, "▸ Scarico (.%s) → %s  [verbose]\n\n", o.Settings.Format, o.Settings.OutputDir)
+	work, cleanWork := workDir()
+	defer cleanWork()
 	var errbuf capBuffer
-	cmd := exec.Command(ytDlp, core.BuildArgs(o)...)
+	cmd := exec.Command(ytDlp, withTempRedirect(core.BuildArgs(o), o, work)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = io.MultiWriter(os.Stderr, &errbuf)
 	rc := runCode(cmd)
@@ -206,8 +211,11 @@ func runDefault(o core.Options, w io.Writer) int {
 	defer cleanup()
 	o.SavedFile = saved
 
+	work, cleanWork := workDir()
+	defer cleanWork()
+
 	var errbuf capBuffer
-	cmd := exec.Command(ytDlp, core.BuildArgs(o)...)
+	cmd := exec.Command(ytDlp, withTempRedirect(core.BuildArgs(o), o, work)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = io.MultiWriter(os.Stderr, &errbuf)
 	rc := runCode(cmd)
@@ -235,28 +243,37 @@ func runDefault(o core.Options, w io.Writer) int {
 // playlist item), keyed by a stable hash so a later success cleans it up (U7).
 // A completion notification fires per config (U6). It is also the mode the
 // background launcher re-executes into, so background inherits all of this.
-func runSilent(o core.Options) int { return runSilentSink(o, nil) }
+// The interactive `ytdl -s` is not cancellable — it runs in the foreground under
+// the user's own shell, so a background context and no process-group isolation
+// preserve its pre-2B-plus behaviour (Ctrl-C reaches it via the terminal group).
+func runSilent(o core.Options) int { return runSilentSink(context.Background(), o, nil, false) }
 
 // RunQueued executes a queued job in silent mode with optional live-progress
-// capture — the daemon's execution entry point when serving the web GUI (Cycle
-// 3). With a non-nil sink, yt-dlp is asked to emit machine-parseable progress
-// (appended AFTER core.BuildArgs, off the golden argv path) and every update is
-// forwarded to sink for SSE streaming, while the failure .log stays free of
-// progress lines. A nil sink is exactly runSilent — byte-identical behaviour —
-// so a CLI-spawned daemon with no GUI connected pays nothing. It performs the
-// pre-download mkdir that Dispatch does for the interactive silent mode.
-func RunQueued(o core.Options, sink ProgressSink) int {
+// capture — the daemon's execution entry point (Cycle 3 GUI; Cycle 2B-plus
+// cancel/timeout). With a non-nil sink, yt-dlp is asked to emit machine-parseable
+// progress (appended AFTER core.BuildArgs, off the golden argv path) and every
+// update is forwarded to sink for SSE streaming, while the failure .log stays
+// free of progress lines. ctx is the daemon's per-job context: cancelling it (an
+// external `ytdl cancel` or the job timeout) tears down the whole yt-dlp/ffmpeg
+// process group. A nil sink still behaves like runSilent for output, but the run
+// is cancellable. It performs the pre-download mkdir that Dispatch does for the
+// interactive silent mode.
+func RunQueued(ctx context.Context, o core.Options, sink ProgressSink) int {
 	if err := os.MkdirAll(o.Settings.OutputDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "✗ Impossibile creare la cartella %s: %v\n", o.Settings.OutputDir, err)
 		return 1
 	}
-	return runSilentSink(o, sink)
+	return runSilentSink(ctx, o, sink, true)
 }
 
-// runSilentSink is runSilent's body, parameterised by an optional progress sink.
-// A nil sink is the interactive `ytdl -s` path (no progress args; yt-dlp stderr
-// goes straight to the failure log, unchanged); a non-nil sink is the GUI path.
-func runSilentSink(o core.Options, sink ProgressSink) int {
+// runSilentSink is runSilent's body, parameterised by an optional progress sink
+// and whether the run is cancellable. A nil sink means no progress args (yt-dlp
+// stderr goes straight to the failure log, unchanged); cancellable=true wires
+// ctx to a process-group teardown so an external cancel or the job timeout stops
+// the whole yt-dlp/ffmpeg tree. A ctx-driven stop (cancel or timeout) is NOT a
+// genuine download failure: it drops no .log breadcrumb and is recorded under a
+// distinct mode ("cancelled"/"timeout") so history shows what happened.
+func runSilentSink(ctx context.Context, o core.Options, sink ProgressSink, cancellable bool) int {
 	// Register each cleanup immediately after its own successful creation, so a
 	// later failure still removes the temp files already made.
 	saved, cleanSaved, err := tempFile("ytdl-saved-")
@@ -278,7 +295,14 @@ func runSilentSink(o core.Options, sink ProgressSink) int {
 	o.TitleFile = title
 	o.SavedFile = saved
 
-	args := core.BuildArgs(o)
+	work, cleanWork := workDir()
+	defer cleanWork()
+
+	// Route intermediates (.part, fragments, the embed thumbnail, pre-conversion
+	// audio) into the scratch dir so a failed/cancelled queued download leaves no
+	// residue in the destination — only the final file on success, or the .log
+	// breadcrumb below (ADR-0011). Appended after BuildArgs, off the golden path.
+	args := withTempRedirect(core.BuildArgs(o), o, work)
 
 	// Per-item playlist tracking (U7): append extra yt-dlp print sinks AFTER
 	// BuildArgs — pure runtime instrumentation, off the golden argv path — only
@@ -315,7 +339,11 @@ func runSilentSink(o core.Options, sink ProgressSink) int {
 		fmt.Fprintf(os.Stderr, "✗ Errore file temporaneo: %v\n", err)
 		return 1
 	}
-	cmd := exec.Command(ytDlp, args...)
+	cmd := exec.CommandContext(ctx, ytDlp, args...)
+	var markReaped func()
+	if cancellable {
+		markReaped = cancellableProcessGroup(cmd)
+	}
 	cmd.Stdout = nil // → /dev/null
 	cmd.Stderr = ef
 	var em *progressEmitter
@@ -332,6 +360,9 @@ func runSilentSink(o core.Options, sink ProgressSink) int {
 		cmd.Stdout, cmd.Stderr = pout, perr
 	}
 	rc := runCode(cmd)
+	if markReaped != nil {
+		markReaped() // child reaped by os/exec — stop the escalation SIGKILL firing
+	}
 	if em != nil {
 		// cmd.Run has already joined os/exec's copy goroutines, so no write can
 		// land after this point.
@@ -348,15 +379,30 @@ func runSilentSink(o core.Options, sink ProgressSink) int {
 	// case, ytdl lines 290-293).
 	_, count := readSavedPaths(saved)
 	success := rc == 0 && count > 0
+
+	// A ctx cancel or timeout that stopped an unfinished job is not a genuine
+	// download failure: record it under a distinct mode and skip the .log
+	// breadcrumb, so a user-initiated cancel or a policy timeout never litters the
+	// destination with a failure log (ADR-0011). Only intermediates in the scratch
+	// dir are cleaned; a job that actually saved a file stays "silent".
+	mode, stopped := "silent", false
+	if cancellable && !success {
+		switch {
+		case errors.Is(ctx.Err(), context.DeadlineExceeded):
+			mode, stopped = "timeout", true
+		case ctx.Err() != nil:
+			mode, stopped = "cancelled", true
+		}
+	}
 	now := time.Now()
 
 	// Title from the dedicated before_dl temp file (the "Artist - Track" contract,
 	// core.silentBeforeDL), NOT the saved filename — the latter depends on the
 	// user's name_template, the former does not. Empty on an early failure → the
 	// history falls back to the URL.
-	recordJob(o, "silent", lastLine(title), rc, success, readCapped(errlog, stderrCap), now)
+	recordJob(o, mode, lastLine(title), rc, success, readCapped(errlog, stderrCap), now)
 
-	if o.Settings.BreadcrumbOnFailure {
+	if o.Settings.BreadcrumbOnFailure && !stopped {
 		if o.Playlist {
 			logstore.ReconcilePlaylist(o.Settings.OutputDir, o.URL, rc, now,
 				logstore.ParseAttempted(attemptedFile), logstore.ParseSucceededIDs(succeededFile))
@@ -488,25 +534,109 @@ func updateFailed() int {
 // generic 1 (also under-reporting the cause in silent mode's .log).
 func runCode(cmd *exec.Cmd) int {
 	err := cmd.Run()
-	if err == nil {
-		return 0
-	}
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		if code := ee.ExitCode(); code >= 0 {
+	// Read the exit status from ProcessState, NOT from err: for an
+	// exec.CommandContext whose ctx was cancelled (a cancel or the job timeout),
+	// os/exec returns the context error from Run() even when the child actually
+	// exited 0 — because our Cancel func returns nil rather than ErrProcessDone. A
+	// job that finishes cleanly within the SIGTERM grace window would otherwise be
+	// misreported as a failure. ProcessState carries the true wait status
+	// regardless of how Cancel decorates the returned error.
+	if ps := cmd.ProcessState; ps != nil {
+		if code := ps.ExitCode(); code >= 0 {
 			return code
 		}
 		// ExitCode() is -1 for a signal death; recover the shell's 128+signal.
-		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		if ws, ok := ps.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
 			return 128 + int(ws.Signal())
 		}
 	}
-	return 1
+	if err != nil {
+		return 1 // never started (ProcessState is nil), or an unusual non-exit error
+	}
+	return 0
+}
+
+// killGrace is how long a cancelled or timed-out job's process group is given to
+// exit on SIGTERM before it is SIGKILLed.
+const killGrace = 5 * time.Second
+
+// cancellableProcessGroup wires cmd — which MUST be an exec.CommandContext — so a
+// context cancel (an external `ytdl cancel` or the per-job timeout) tears down the
+// WHOLE process group: yt-dlp AND the ffmpeg child it spawns, not just yt-dlp.
+// Setpgid makes the child its own group leader (pgid == its pid); on cancel we
+// SIGTERM the group, then SIGKILL it after killGrace so a process ignoring
+// SIGTERM cannot linger holding a file open in the destination. It returns a
+// markReaped func the caller MUST invoke right after the child is reaped
+// (cmd.Run returns): it stops the escalation timer and disarms it, so the
+// group-SIGKILL only ever fires while the process is genuinely still alive.
+// WaitDelay is set past killGrace so os/exec keeps the leader un-reaped until the
+// SIGKILL has had its chance.
+//
+// Residual (accepted): a group-SIGKILL keyed by pgid could in principle hit a
+// reused pgid if the child is reaped in the sub-microsecond gap between cmd.Run
+// reaping it and markReaped disarming the timer, AND a concurrent job reuses that
+// exact pid as a group leader in the same instant. Stopping the timer on reap
+// plus the reaped guard narrows this to a few instructions; fully closing it needs
+// pidfd (Linux ≥5.3), which the macOS target lacks, so it is left as documented risk.
+func cancellableProcessGroup(cmd *exec.Cmd) (markReaped func()) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var reaped atomic.Bool
+	var timer *time.Timer
+	var mu sync.Mutex
+	cmd.Cancel = func() error {
+		pgid := cmd.Process.Pid // == pgid, since Setpgid made the child a group leader
+		_ = syscall.Kill(-pgid, syscall.SIGTERM)
+		t := time.AfterFunc(killGrace, func() {
+			if !reaped.Load() {
+				_ = syscall.Kill(-pgid, syscall.SIGKILL) // group SIGKILL; child still alive at killGrace
+			}
+		})
+		mu.Lock()
+		timer = t
+		mu.Unlock()
+		return nil
+	}
+	cmd.WaitDelay = killGrace + 2*time.Second
+	return func() {
+		reaped.Store(true)
+		mu.Lock()
+		if timer != nil {
+			timer.Stop() // child reaped before the grace elapsed → cancel the escalation
+		}
+		mu.Unlock()
+	}
 }
 
 func tempFileError(err error) int {
 	fmt.Fprintf(os.Stderr, "✗ Errore file temporaneo: %v\n", err)
 	return 1
+}
+
+// workDir makes a per-download scratch directory for yt-dlp's intermediate files
+// and returns it with a cleanup func. Every mode that downloads routes
+// intermediates here (via core.TempRedirectArgs), so the destination only ever
+// receives the final file — a failed or cancelled download leaves no .part/.webp
+// residue (ADR-0011). The cleanup is deferred in the same goroutine that runs the
+// child, so it fires on every exit path, including a context-cancel/timeout kill.
+// On a mkdir failure it yields "" and a no-op cleanup, and the caller falls back
+// to yt-dlp's default placement (residue possible, but the download still works —
+// degraded, not broken).
+func workDir() (string, func()) {
+	d, err := os.MkdirTemp("", "ytdl-work-*")
+	if err != nil {
+		return "", func() {}
+	}
+	return d, func() { _ = os.RemoveAll(d) }
+}
+
+// withTempRedirect appends the intermediate-file redirection args (see
+// core.TempRedirectArgs) when work is non-empty; an empty work dir leaves args
+// unchanged, so a workDir mkdir failure degrades to the pre-redirection argv.
+func withTempRedirect(args []string, o core.Options, work string) []string {
+	if work == "" {
+		return args
+	}
+	return append(args, core.TempRedirectArgs(o, work)...)
 }
 
 // tempFile creates an empty temp file and returns its path and a cleanup func,

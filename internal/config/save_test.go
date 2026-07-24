@@ -21,6 +21,7 @@ func sampleSettings(dir string) Settings {
 	s.NotifyOn = "failure"
 	s.NotifyForeground = true
 	s.Concurrency = 4
+	s.JobTimeout = 300
 	return s
 }
 
@@ -166,6 +167,7 @@ func TestSaveRejectsValuesThatWouldNotReload(t *testing.T) {
 		"invalid audio_quality":    func(s *Settings) { s.AudioQuality = "12" },
 		"negative retention":       func(s *Settings) { s.LogRetentionDays = -5 },
 		"negative concurrency":     func(s *Settings) { s.Concurrency = -1 },
+		"negative job_timeout":     func(s *Settings) { s.JobTimeout = -1 },
 		"empty output_dir":         func(s *Settings) { s.OutputDir = "" },
 		"empty name_template":      func(s *Settings) { s.NameTemplate = "" },
 		"padded name_template":     func(s *Settings) { s.NameTemplate = "  %(title)s  " },

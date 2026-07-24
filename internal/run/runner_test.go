@@ -123,7 +123,7 @@ func fakeYtDlp(t *testing.T) {
 	t.Helper()
 	bin := t.TempDir()
 	script := `#!/usr/bin/env bash
-titlefile=""; savedfile=""; attfile=""; sucfile=""
+titlefile=""; savedfile=""; attfile=""; sucfile=""; otmpl=""; tempdir=""
 args=("$@"); i=0
 while [ $i -lt ${#args[@]} ]; do
   if [ "${args[$i]}" = "--print-to-file" ]; then
@@ -136,8 +136,24 @@ while [ $i -lt ${#args[@]} ]; do
     esac
     i=$((i+3)); continue
   fi
+  if [ "${args[$i]}" = "-o" ]; then
+    [ -z "$otmpl" ] && otmpl="${args[$((i+1))]}"   # first -o = the absolute one
+    i=$((i+2)); continue
+  fi
+  if [ "${args[$i]}" = "-P" ]; then
+    case "${args[$((i+1))]}" in temp:*) tempdir="${args[$((i+1))]#temp:}" ;; esac
+    i=$((i+2)); continue
+  fi
   i=$((i+1))
 done
+# Residue emulation (opt-in): mimic yt-dlp leaving an intermediate file. It lands
+# wherever yt-dlp would put it — the temp path when --paths is honoured (relative
+# -o), else beside the absolute -o (the destination). The runner redirects temp
+# away from the destination, so with the redirection the destination stays clean.
+if [ -n "$YTDLP_FAKE_RESIDUE" ]; then
+  rdir="$tempdir"; [ -z "$rdir" ] && rdir="$(dirname "$otmpl")"
+  [ -d "$rdir" ] && : > "$rdir/leftover.part"
+fi
 [ -n "$titlefile" ] && printf '%s\n' "${YTDLP_FAKE_TITLE:-Artist - Track}" > "$titlefile"
 n="${YTDLP_FAKE_NLINES:-0}"
 if [ -n "$savedfile" ] && [ "$n" -gt 0 ]; then
@@ -201,6 +217,35 @@ func withNotifier(t *testing.T, f notify.Notifier) {
 	old := notifier
 	notifier = f
 	t.Cleanup(func() { notifier = old })
+}
+
+// A failed download must leave NO intermediate residue (.part, thumbnail, …) in
+// the destination — only the .log breadcrumb (silent mode) is allowed there
+// (ADR-0011). The fake leaves its residue wherever yt-dlp would: the --paths temp
+// dir when the runner redirects, else the destination. So a clean destination
+// proves the redirection sent intermediates to the scratch dir, which the runner
+// then removed.
+func TestNoResidueInDestination(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mode core.Mode
+	}{
+		{"default", core.ModeDefault},
+		{"verbose", core.ModeVerbose},
+		{"silent", core.ModeSilent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeYtDlp(t)
+			t.Setenv("YTDLP_FAKE_RESIDUE", "1")
+			t.Setenv("YTDLP_FAKE_RC", "1") // a failed download is when residue is left behind
+			dest := t.TempDir()
+			var buf bytes.Buffer
+			Dispatch(runOptions(t, tc.mode, dest), &buf, &buf)
+			if got, _ := filepath.Glob(filepath.Join(dest, "*.part")); len(got) != 0 {
+				t.Errorf("%s mode left residue in the destination: %v", tc.name, got)
+			}
+		})
+	}
 }
 
 func TestDispatchDefaultReporting(t *testing.T) {

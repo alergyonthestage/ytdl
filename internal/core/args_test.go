@@ -21,7 +21,6 @@ const (
 	// Placeholders the capture harness normalizes real paths to.
 	outDirPH = "{{OUTPUT_DIR}}"
 	homePH   = "{{HOME}}"
-	selfPH   = "{{SELF}}"
 	titlePH  = "{{TITLEFILE}}"
 	savedPH  = "{{SAVEDFILE}}"
 )
@@ -50,34 +49,29 @@ func TestBuildArgsGoldens(t *testing.T) {
 		outDir   string
 		playlist bool
 		url      string
-		reexec   bool // background: compare ReExecArgs instead of BuildArgs
 	}{
 		// dry-run
-		{"dryrun-mp3-single", ModeDryRun, "mp3", outDirPH, false, singleURL, false},
-		{"dryrun-mp3-playlist", ModeDryRun, "mp3", outDirPH, true, playlistURL, false},
-		{"dryrun-flac-single", ModeDryRun, "flac", outDirPH, false, singleURL, false},
-		{"dryrun-flac-playlist", ModeDryRun, "flac", outDirPH, true, playlistURL, false},
+		{"dryrun-mp3-single", ModeDryRun, "mp3", outDirPH, false, singleURL},
+		{"dryrun-mp3-playlist", ModeDryRun, "mp3", outDirPH, true, playlistURL},
+		{"dryrun-flac-single", ModeDryRun, "flac", outDirPH, false, singleURL},
+		{"dryrun-flac-playlist", ModeDryRun, "flac", outDirPH, true, playlistURL},
 		// verbose
-		{"verbose-mp3-single", ModeVerbose, "mp3", outDirPH, false, singleURL, false},
-		{"verbose-m4a-single", ModeVerbose, "m4a", outDirPH, false, singleURL, false},
-		{"verbose-flac-playlist", ModeVerbose, "flac", outDirPH, true, playlistURL, false},
+		{"verbose-mp3-single", ModeVerbose, "mp3", outDirPH, false, singleURL},
+		{"verbose-m4a-single", ModeVerbose, "m4a", outDirPH, false, singleURL},
+		{"verbose-flac-playlist", ModeVerbose, "flac", outDirPH, true, playlistURL},
 		// silent
-		{"silent-mp3-single", ModeSilent, "mp3", outDirPH, false, singleURL, false},
-		{"silent-mp3-playlist", ModeSilent, "mp3", outDirPH, true, playlistURL, false},
-		{"silent-opus-single", ModeSilent, "opus", outDirPH, false, singleURL, false},
-		{"silent-wav-playlist", ModeSilent, "wav", outDirPH, true, playlistURL, false},
+		{"silent-mp3-single", ModeSilent, "mp3", outDirPH, false, singleURL},
+		{"silent-mp3-playlist", ModeSilent, "mp3", outDirPH, true, playlistURL},
+		{"silent-opus-single", ModeSilent, "opus", outDirPH, false, singleURL},
+		{"silent-wav-playlist", ModeSilent, "wav", outDirPH, true, playlistURL},
 		// default
-		{"normal-mp3-single", ModeDefault, "mp3", outDirPH, false, singleURL, false},
-		{"normal-mp3-playlist", ModeDefault, "mp3", outDirPH, true, playlistURL, false},
-		{"normal-flac-single", ModeDefault, "flac", outDirPH, false, singleURL, false},
-		{"normal-m4a-playlist", ModeDefault, "m4a", outDirPH, true, playlistURL, false},
+		{"normal-mp3-single", ModeDefault, "mp3", outDirPH, false, singleURL},
+		{"normal-mp3-playlist", ModeDefault, "mp3", outDirPH, true, playlistURL},
+		{"normal-flac-single", ModeDefault, "flac", outDirPH, false, singleURL},
+		{"normal-m4a-playlist", ModeDefault, "m4a", outDirPH, true, playlistURL},
 		// default output dir ($HOME/Music/ytdl)
-		{"normal-mp3-defaultdir", ModeDefault, "mp3", homePH + "/Music/ytdl", false, singleURL, false},
-		{"silent-mp3-defaultdir", ModeSilent, "mp3", homePH + "/Music/ytdl", false, singleURL, false},
-		// background (re-exec argv)
-		{"background-mp3-single", ModeBackground, "mp3", outDirPH, false, singleURL, true},
-		{"background-flac-single", ModeBackground, "flac", outDirPH, false, singleURL, true},
-		{"background-playlist", ModeBackground, "mp3", outDirPH, true, playlistURL, true},
+		{"normal-mp3-defaultdir", ModeDefault, "mp3", homePH + "/Music/ytdl", false, singleURL},
+		{"silent-mp3-defaultdir", ModeSilent, "mp3", homePH + "/Music/ytdl", false, singleURL},
 	}
 
 	for _, c := range cases {
@@ -90,17 +84,46 @@ func TestBuildArgsGoldens(t *testing.T) {
 				TitleFile: titlePH,
 				SavedFile: savedPH,
 			}
-			var got []string
-			if c.reexec {
-				got = ReExecArgs(o, selfPH)
-			} else {
-				got = BuildArgs(o)
-			}
+			got := BuildArgs(o)
 			want := readGolden(t, c.golden)
 			if !slices.Equal(got, want) {
 				t.Errorf("argv mismatch for %s\n got: %#v\nwant: %#v", c.golden, got, want)
 			}
 		})
+	}
+}
+
+func TestTempRedirectArgs(t *testing.T) {
+	s := settings(t, "mp3", "/music/out")
+	o := Options{Mode: ModeSilent, URL: singleURL, Settings: s}
+	got := TempRedirectArgs(o, "/tmp/work-123")
+	want := []string{
+		"-o", s.NameTemplate + ".%(ext)s", // RELATIVE — overrides BuildArgs's absolute -o
+		"-P", "home:/music/out", // final files still land in OutputDir
+		"-P", "temp:/tmp/work-123", // intermediates go to the scratch dir
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("TempRedirectArgs\n got: %#v\nwant: %#v", got, want)
+	}
+
+	// The relative -o must be exactly BuildArgs's absolute -o with the OutputDir
+	// prefix removed — same final path, so after_move and parity are unchanged.
+	rel := TempRedirectArgs(o, "/w")[1]
+	if want := s.OutputDir + "/" + rel; want != outputTemplate(s) {
+		t.Errorf("relative -o %q + OutputDir != absolute -o %q", rel, outputTemplate(s))
+	}
+}
+
+// The appended redirect -o must stay RELATIVE even if name_template starts with a
+// "/" (unvalidated config): an absolute -o would make yt-dlp ignore --paths and
+// drop the final file outside OutputDir.
+func TestTempRedirectArgsStaysRelative(t *testing.T) {
+	s := settings(t, "mp3", "/music/out")
+	s.NameTemplate = "/etc/evil/%(title)s"
+	o := Options{Mode: ModeSilent, Settings: s}
+	rel := TempRedirectArgs(o, "/w")[1]
+	if filepath.IsAbs(rel) {
+		t.Errorf("appended -o must be relative, got absolute %q", rel)
 	}
 }
 

@@ -40,9 +40,11 @@ is *built and extended*, not an end-user guide (that is
 ## 2. Command → action map
 
 `realMain` dispatches in this order: `__daemon` (hidden, intercepted before the
-parser) → reserved subcommand keywords (`queue`, `status`, `history`, `gui`) → the
-download parser (a URL never collides with a keyword). Exit codes: `0` success,
-`1` user/parse/setup error, yt-dlp's own code (incl. `128+signal`) for a download.
+parser) → reserved subcommand keywords (`queue`, `status`, `history`, `gui`,
+`cancel`, `retry`) → the download parser (a URL never collides with a keyword).
+Exit codes: `0` success, `1` user/parse/setup error (incl. a cancel/retry whose
+target could not be acted on), yt-dlp's own code (incl. `128+signal`) for a
+download.
 
 | Invocation | Action | Reads / writes | Output |
 |---|---|---|---|
@@ -55,6 +57,8 @@ download parser (a URL never collides with a keyword). Exit codes: `0` success,
 | `ytdl queue --watch` | live queue, in-place | reads: spool (loop) | region redraw; **auto-exit** on drain (§4) |
 | `ytdl status` | health summary | reads: spool (live) + log store (recent) | daemon (informational) + live + windowed recent |
 | `ytdl history [--failed] [--limit N]` | durable history | reads: log store `history.jsonl` | chronological list, title-first (§3.4) |
+| `ytdl cancel [<n>\|<id>\|--all]` | stop live work | writes: spool `cancel/` marker; deletes `pending/` | numbered list (no arg), or a per-target `▸ Annullato/Annullamento richiesto` line; exit 1 if any target failed |
+| `ytdl retry [<n>\|<id>\|--all]` | re-queue failed | moves `failed/`→`pending/`; resumes daemon | numbered failed list (no arg), or `▸ Rimesso in coda`; exit 1 if any re-queue failed |
 | `ytdl gui` | open the web interface | spawns a GUI daemon (`__daemon --gui`) if none is listening, then opens the browser | `▸ Interfaccia ytdl su http://127.0.0.1:8765/` |
 | `ytdl -V` / `--version` | version | — | `ytdl X` + `yt-dlp Y` |
 | `ytdl -h` / `--help` | help | — | usage |
@@ -67,7 +71,9 @@ background > verbose > silent > default). `--` takes the next token as the URL.
 **Where each part lives** (keep this separation when extending):
 
 - **Parsing** → `internal/cli/parse.go` (`Parse`, `parseQueue`, `parseStatus`,
-  `parseHistory`). Pure: string args → `Parsed`. No I/O.
+  `parseHistory`, `parseTargeted` for `cancel`/`retry`). Pure: string args →
+  `Parsed`. No I/O. Target resolution (index vs. unique id-prefix, tri-state) lives
+  in `cmd/ytdl` (`resolveTarget`), since it needs the live spool snapshot.
 - **Rendering** → `internal/cli/*.go` (`RenderQueue`, `RenderStatus`,
   `RenderHistory`). **Pure functions over snapshots/records** → string. No I/O, no
   time-now, no colour decision inside (colour is applied by a passed-in styler).
