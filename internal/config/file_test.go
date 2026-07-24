@@ -192,6 +192,42 @@ func TestLoadFileConcurrency(t *testing.T) {
 	}
 }
 
+func TestLoadFileJobTimeout(t *testing.T) {
+	// Valid: any non-negative integer (seconds), 0 meaning "no limit".
+	for _, good := range []struct {
+		in   string
+		want int
+	}{{"0", 0}, {"300", 300}} {
+		t.Run("valid "+good.in, func(t *testing.T) {
+			p, warns, err := LoadFile(writeConfig(t, "job_timeout = "+good.in+"\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(warns) != 0 {
+				t.Fatalf("unexpected warnings: %v", warns)
+			}
+			if p.JobTimeout == nil || *p.JobTimeout != good.want {
+				t.Errorf("JobTimeout = %v, want %d", p.JobTimeout, good.want)
+			}
+		})
+	}
+	// Invalid: negatives and non-integers warn and fall through (nil).
+	for _, bad := range []string{"-1", "x", "1.5", ""} {
+		t.Run("invalid "+bad, func(t *testing.T) {
+			p, warns, err := LoadFile(writeConfig(t, "job_timeout = "+bad+"\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(warns) != 1 {
+				t.Fatalf("want 1 invalid-job_timeout warning for %q, got %d: %v", bad, len(warns), warns)
+			}
+			if p.JobTimeout != nil {
+				t.Errorf("invalid job_timeout %q was kept: %v", bad, *p.JobTimeout)
+			}
+		})
+	}
+}
+
 func TestLoadFileBackendKeys(t *testing.T) {
 	t.Setenv("HOME", "/home/tester")
 	path := writeConfig(t, `
