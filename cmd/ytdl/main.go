@@ -679,6 +679,8 @@ func runRetryCmd(p *cli.Parsed) int {
 		return 1
 	}
 	failed := snap.Failed
+	settings, _ := resolveWithFlags(config.Partial{})
+	enrichTitlesFromHistory(failed, settings.LogDir)
 
 	if !p.All && p.Target == "" {
 		fmt.Print(term.Colorize(cli.RenderRetryList(failed), colorStdout()))
@@ -724,6 +726,24 @@ func runRetryCmd(p *cli.Parsed) int {
 		return 1
 	}
 	return 0
+}
+
+// enrichTitlesFromHistory fills in a display title for failed jobs that never got
+// a run-time write-back — those that failed before yt-dlp resolved the metadata,
+// or were queued before the write-back existed — by looking the URL up in the
+// durable history (a prior attempt may have recorded it). Playlists are skipped:
+// their per-item title would misrepresent the whole job. Best-effort — a miss just
+// leaves the URL as the label. Only `retry` (a one-shot command) calls this, so the
+// single history scan never burdens the live `queue --watch` redraw.
+func enrichTitlesFromHistory(entries []queue.Entry, logDir string) {
+	for i := range entries {
+		e := &entries[i]
+		if e.Job.Title == "" && !e.Job.Playlist && e.Job.URL != "" {
+			if t := logstore.TitleForURL(logDir, e.Job.URL); t != "" {
+				e.Job.Title = t
+			}
+		}
+	}
 }
 
 // targetResult is the outcome of resolving a cancel/retry target.

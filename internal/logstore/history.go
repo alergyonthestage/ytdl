@@ -107,6 +107,29 @@ func Load(dir string, opts QueryOpts) ([]Entry, error) {
 	return out, nil
 }
 
+// TitleForURL returns the most recently recorded resolved title for url, or "" if
+// none. It matches on the same normalized-URL identity that keys breadcrumbs and
+// spool ids, so a title captured on an earlier attempt (foreground or background)
+// can name a failed queued job in `ytdl retry` even before the run-time write-back
+// has ever run for it. Best-effort: a missing/unreadable store yields "". Load
+// returns newest-first, so the first matching non-empty title is the latest.
+func TitleForURL(dir, url string) string {
+	if dir == "" || url == "" {
+		return ""
+	}
+	entries, err := Load(dir, QueryOpts{})
+	if err != nil {
+		return ""
+	}
+	target := NormalizeURL(url)
+	for _, e := range entries {
+		if e.Title != "" && NormalizeURL(e.URL) == target {
+			return e.Title
+		}
+	}
+	return ""
+}
+
 // pruneHistory rewrites history.jsonl keeping only records newer than the
 // retention cutoff (called by Prune). Best-effort and lock-free like the rest of
 // the package: read, filter, write a temp file, rename into place. It rewrites
