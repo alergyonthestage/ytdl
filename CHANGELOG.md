@@ -166,6 +166,32 @@ residue redirect is appended off the golden path). See
 - The dead `core.ReExecArgs` and the three `background-*` golden references (unused
   since `-b` began enqueuing in Cycle 2B-core) are removed.
 
+Cycle 4 — a second CLI UX pass (command/URL disambiguation + job titles). Runtime/CLI
+layer only; the yt-dlp argument vector, the golden parity tests, and the daemon
+package are all unchanged. See
+[ADR-0012](docs/decisions/0012-cycle4-cli-ux-title-disambiguation.md).
+
+### Added
+
+- **"Did you mean" for a mistyped command.** A bare first argument close to a known
+  subcommand (`ytdl queu`) is now reported as a probable typo with a suggestion
+  (`Forse intendevi «queue»?`), instead of being forwarded to yt-dlp as a URL and
+  failing with an opaque error. A bare YouTube video/playlist id still downloads (the
+  guard keys on command similarity, not URL shape), and `ytdl -- <token>` forces any
+  token through as the URL.
+- **Job titles in the queue views.** `ytdl queue`, `ytdl retry` and `ytdl cancel` now
+  show the resolved `Artist - Track` title with the **full, untruncated URL** below
+  it, so a job is identifiable. The title is captured while the job runs and travels
+  with it into the failed list; `retry` also recovers a title from history for a job
+  that failed before its metadata resolved.
+
+### Changed
+
+- The queue/retry/cancel lists show the **full URL** (previously a 40-character
+  scheme-trimmed stub). In `ytdl queue --watch` each line is capped to the terminal
+  width — measured in **display columns**, so CJK/emoji titles do not wrap and corrupt
+  the in-place redraw.
+
 ## [2.0.0] — 2026-07-23
 
 A clean break from the Bash `1.x` line: ytdl is now a single compiled Go binary

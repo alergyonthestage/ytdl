@@ -46,6 +46,16 @@ Exit codes: `0` success, `1` user/parse/setup error (incl. a cancel/retry whose
 target could not be acted on), yt-dlp's own code (incl. `128+signal`) for a
 download.
 
+**Command/URL disambiguation (Cycle 4, ADR-0012).** A reserved keyword is only
+dispatched at `args[0]`; any other positional is the download URL. To catch a
+mistyped subcommand (`ytdl queu`) without breaking valid inputs, the download parser
+rejects a **bare word** (a token with none of `/ . :`) *only when it is close to a
+known command* (Levenshtein ≤ 2) — printing a "did you mean" hint. A bare word that
+is not near any command is passed straight to yt-dlp, because a bare 11-char YouTube
+video id or a playlist id is a valid yt-dlp input (verified 2026.07.04) and must not
+be rejected. `looksLikeURL`/`nearestCommand` live in `internal/cli/guess.go`;
+`ytdl -- <token>` bypasses the guard.
+
 | Invocation | Action | Reads / writes | Output |
 |---|---|---|---|
 | `ytdl URL` | download, default mode | writes: log store + title; breadcrumb on failure | progress + `✓ Salvata in …` |
@@ -67,6 +77,15 @@ download.
 **Flags** (download actions): `-o/--output DIR`, `-f/--format FMT` (validated,
 fail-fast), `-p/--playlist`, and the mode flags `-n/-s/-b/-v` (priority: dry-run >
 background > verbose > silent > default). `--` takes the next token as the URL.
+
+**Job line format (Cycle 4).** `queue`/`retry`/`cancel` render each job **title-first**
+(the resolved `Artist - Track`) with the full URL on the line below; a job with no
+known title yet shows the URL alone, and a playlist shows the URL flagged
+`(playlist)`. The title is written onto the spool job while it runs
+(`queue.Spool.SetTitle`, driven by `run.RunQueued`'s `onTitle` callback — the daemon
+package is untouched); `retry` additionally back-fills a title from the log store
+(`logstore.TitleForURL`, per-job `Settings.LogDir`) for jobs that failed before their
+metadata resolved.
 
 **Where each part lives** (keep this separation when extending):
 
@@ -149,6 +168,14 @@ Never a blank or a bare zero — give the next action:
 2. **Region redraw.** Track the printed line count `N`. Each tick: `\033[{N}A`
    (cursor up N) + `\033[0J` (clear to end of screen), then rewrite; update `N`.
    Never `\033[2J` (whole-screen clear wipes the terminal and fills scrollback).
+   The redraw assumes **one logical line = one physical row**, so every rendered
+   line — job lines, the header/section/footer, and the spinner — is clipped to the
+   terminal width (`term.Width`, 80 fallback) in **display columns**, not runes
+   (`term.DisplayWidth`/`term.Clip`: CJK/emoji count as 2), so a wide title never
+   wraps and desyncs the cursor math. One-shot views (`queue` without `--watch`,
+   `cancel`, `retry`) print the full untruncated URL — a wrap is harmless there.
+   `RenderQueue(snap, full, width)`: one-shot passes `full=true`; `--watch` passes
+   `full=false` + the width.
 3. **Redraw on change only**, with a header spinner (`⟳`) advanced each tick for
    liveness even when the snapshot is unchanged.
 4. **Cursor** hidden on entry (`\033[?25l`), restored on exit (`\033[?25h`) — on the
