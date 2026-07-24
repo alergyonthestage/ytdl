@@ -127,6 +127,11 @@ coda è finita. Premi Ctrl-C per uscire prima.
 ytdl queue --watch
 ```
 
+Ogni riga mostra il **titolo** del brano (appena `ytdl` lo conosce) con sotto
+l'**indirizzo completo**, così riconosci al volo di che video si tratta — lo stesso
+vale per le liste di `ytdl cancel` e `ytdl retry`. Una playlist è segnalata con
+`(playlist)`.
+
 **Come va in generale** — se il servizio di download è attivo, più un riepilogo
 recente:
 
@@ -253,6 +258,13 @@ Ricontrolla il comando.
 
 Hai scritto male un'opzione, oppure hai messo l'indirizzo senza virgolette e il
 Terminale ha interpretato un pezzo dell'URL come opzione.
+
+### «Forse intendevi…?»
+
+Hai scritto male il nome di un comando: per esempio `ytdl queu` invece di `ytdl
+queue`. `ytdl` te lo segnala e ti suggerisce quello giusto, invece di provare a
+scaricarlo come se fosse un indirizzo. Correggi il comando e riprova. (Se davvero
+volevi passare quella parola come indirizzo, forzala con `ytdl -- laparola`.)
 
 ### Il nome del file è sbagliato
 

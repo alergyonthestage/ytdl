@@ -13,7 +13,7 @@ func entry(url string, at time.Time, st queue.State) queue.Entry {
 }
 
 func TestRenderQueueEmpty(t *testing.T) {
-	got := RenderQueue(queue.Snapshot{})
+	got := RenderQueue(queue.Snapshot{}, true, 0)
 	if !strings.Contains(got, "coda vuota") {
 		t.Errorf("empty queue render missing the empty notice:\n%s", got)
 	}
@@ -34,9 +34,9 @@ func TestRenderQueueListsLiveOnly(t *testing.T) {
 		Done:   []queue.Entry{entry("https://youtu.be/D", at, queue.Done)},
 		Failed: []queue.Entry{entry("https://youtu.be/F", at, queue.Failed)},
 	}
-	got := RenderQueue(snap)
+	got := RenderQueue(snap, true, 0)
 	for _, want := range []string{
-		"in corso (1):", "youtu.be/RUN", // scheme trimmed (shortened for one-row lines)
+		"in corso (1):", "youtu.be/RUN", // full URL contains the shortened form as a substring
 		"in attesa (2):", "youtu.be/P1", "youtu.be/P2",
 	} {
 		if !strings.Contains(got, want) {
@@ -56,7 +56,7 @@ func TestRenderQueueListsLiveOnly(t *testing.T) {
 
 func TestRenderQueueUnreadableJob(t *testing.T) {
 	snap := queue.Snapshot{Pending: []queue.Entry{{ID: "broken", State: queue.Pending}}}
-	got := RenderQueue(snap)
+	got := RenderQueue(snap, true, 0)
 	if !strings.Contains(got, "broken") || !strings.Contains(got, "illeggibile") {
 		t.Errorf("unreadable job not surfaced:\n%s", got)
 	}

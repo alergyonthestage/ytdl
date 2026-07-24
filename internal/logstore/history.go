@@ -107,6 +107,40 @@ func Load(dir string, opts QueryOpts) ([]Entry, error) {
 	return out, nil
 }
 
+// TitleForURL returns the most recently recorded resolved title for url in dir, or
+// "" if none. It is a single-lookup convenience over Load + TitleIn; a caller
+// enriching many jobs should Load once per dir and use TitleIn to avoid re-scanning
+// the whole history per lookup. Best-effort: a missing/unreadable store yields "".
+func TitleForURL(dir, url string) string {
+	if dir == "" || url == "" {
+		return ""
+	}
+	entries, err := Load(dir, QueryOpts{})
+	if err != nil {
+		return ""
+	}
+	return TitleIn(entries, url)
+}
+
+// TitleIn returns the most recently recorded title for url within already-loaded
+// history entries, or "" if none. It matches on the same normalized-URL identity
+// that keys breadcrumbs and spool ids, so a title captured on an earlier attempt
+// (foreground or background) can name a failed queued job in `ytdl retry` even
+// before the run-time write-back ever ran for it. Load returns entries newest-first,
+// so the first matching non-empty title is the latest.
+func TitleIn(entries []Entry, url string) string {
+	if url == "" {
+		return ""
+	}
+	target := NormalizeURL(url)
+	for _, e := range entries {
+		if e.Title != "" && NormalizeURL(e.URL) == target {
+			return e.Title
+		}
+	}
+	return ""
+}
+
 // pruneHistory rewrites history.jsonl keeping only records newer than the
 // retention cutoff (called by Prune). Best-effort and lock-free like the rest of
 // the package: read, filter, write a temp file, rename into place. It rewrites

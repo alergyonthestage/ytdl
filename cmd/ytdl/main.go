@@ -205,7 +205,7 @@ func runDaemon(daemonArgs []string) int {
 		// Set explicitly (Serve would only default its own copy) because serveGUI
 		// reads it too, to decide how long to keep retrying the queue lock.
 		cfg.FirstClientGrace = daemon.DefaultFirstClientGrace
-		cfg.Run = jobRunner(srv)
+		cfg.Run = jobRunner(sp, srv)
 
 		// The user asked for the interface, so THIS process owns the port and
 		// serves immediately — publishing the token first, so `ytdl gui` can read
@@ -218,7 +218,7 @@ func runDaemon(daemonArgs []string) int {
 		return serveGUI(cfg, srv)
 	}
 
-	cfg.Run = jobRunner(nil) // headless: no GUI, so no progress sink
+	cfg.Run = jobRunner(sp, nil) // headless: no GUI, so no progress sink (title write-back still runs)
 	if err := daemon.Serve(cfg); err != nil && !errors.Is(err, daemon.ErrAlreadyRunning) {
 		return 1
 	}
@@ -291,7 +291,7 @@ func readGUIToken(path string) string {
 // a progress sink keyed by its spool id, so the browser can draw a live bar. A
 // headless daemon (every `ytdl -b`) passes a nil srv, so the sink is nil, no
 // progress flags are added and execution is byte-for-byte the pre-GUI path.
-func jobRunner(srv *webui.Server) func(context.Context, queue.Claim) int {
+func jobRunner(sp *queue.Spool, srv *webui.Server) func(context.Context, queue.Claim) int {
 	return func(ctx context.Context, cl queue.Claim) int {
 		j := cl.Job
 		o := core.Options{Mode: core.ModeSilent, URL: j.URL, Settings: j.Settings, Playlist: j.Playlist}
@@ -307,7 +307,15 @@ func jobRunner(srv *webui.Server) func(context.Context, queue.Claim) int {
 				})
 			}
 		}
-		return run.RunQueued(ctx, o, sink)
+		// Persist the resolved title onto the running spool job, so `ytdl queue`
+		// names the in-flight job and `ytdl retry` names a failed one, rather than
+		// only showing a URL (Cycle 4). Skipped for a playlist, whose per-item
+		// before_dl title would misrepresent the whole job.
+		var onTitle func(string)
+		if !j.Playlist {
+			onTitle = func(title string) { _ = sp.SetTitle(cl.ID, title) }
+		}
+		return run.RunQueued(ctx, o, sink, onTitle)
 	}
 }
 
@@ -479,7 +487,8 @@ func printQueueOnce(sp *queue.Spool) int {
 		return 1
 	}
 	resumeIfStalled(sp, snap)
-	fmt.Print(term.Colorize(cli.RenderQueue(snap), colorStdout()))
+	// One-shot: show full URLs (a wrapped line is harmless without a redraw).
+	fmt.Print(term.Colorize(cli.RenderQueue(snap, true, 0), colorStdout()))
 	return 0
 }
 
@@ -522,7 +531,14 @@ func watchQueue(sp *queue.Spool) int {
 		if p > 0 || r > 0 {
 			sawWork = true
 		}
-		content := cli.RenderQueue(snap)
+		// --watch redraws its region in place, counting logical newlines, so each
+		// line must fit one physical row: cap to the terminal width (80 fallback if
+		// the ioctl can't tell). Re-read per frame so a mid-watch resize is honoured.
+		width := term.Width()
+		if width <= 0 {
+			width = 80
+		}
+		content := cli.RenderQueue(snap, false, width)
 
 		// Auto-exit once the queue has drained: clear the region, print the final
 		// (empty) queue, and — if we actually watched work finish — a session summary.
@@ -540,7 +556,10 @@ func watchQueue(sp *queue.Spool) int {
 			return 0
 		}
 
-		spinnerLine := fmt.Sprintf("  %c aggiornamento · Ctrl-C per uscire\n", spin[frame%len(spin)])
+		// Clip the spinner line to the width too: it is a fixed literal that
+		// RenderQueue does not see, so it would otherwise wrap on a narrow terminal
+		// and desync the redraw just like an over-long job line.
+		spinnerLine := term.Clip(fmt.Sprintf("  %c aggiornamento · Ctrl-C per uscire", spin[frame%len(spin)]), width) + "\n"
 		switch {
 		case lastLines == 0:
 			fmt.Print(term.Colorize(content, color) + spinnerLine)
@@ -671,6 +690,7 @@ func runRetryCmd(p *cli.Parsed) int {
 		return 1
 	}
 	failed := snap.Failed
+	enrichTitlesFromHistory(failed)
 
 	if !p.All && p.Target == "" {
 		fmt.Print(term.Colorize(cli.RenderRetryList(failed), colorStdout()))
@@ -716,6 +736,38 @@ func runRetryCmd(p *cli.Parsed) int {
 		return 1
 	}
 	return 0
+}
+
+// enrichTitlesFromHistory fills in a display title for failed jobs that never got
+// a run-time write-back — those that failed before yt-dlp resolved the metadata,
+// or were queued before the write-back existed — by looking the URL up in the
+// durable history (a prior attempt may have recorded it). Each job is looked up in
+// ITS OWN snapshotted Settings.LogDir (ADR-0007), not the current global one, so a
+// config edit between enqueue and retry does not hide a title that exists in the
+// job's own log dir. History is loaded at most once per distinct log dir and reused
+// across entries. Playlists are skipped (their per-item title would misrepresent
+// the whole job). Best-effort — a miss just leaves the URL as the label. Only the
+// one-shot `retry` command calls this, never the live `queue --watch` redraw.
+func enrichTitlesFromHistory(entries []queue.Entry) {
+	cache := map[string][]logstore.Entry{} // log dir → history, loaded at most once
+	for i := range entries {
+		e := &entries[i]
+		if e.Job.Title != "" || e.Job.Playlist || e.Job.URL == "" {
+			continue
+		}
+		dir := e.Job.Settings.LogDir
+		if dir == "" {
+			continue
+		}
+		hist, ok := cache[dir]
+		if !ok {
+			hist, _ = logstore.Load(dir, logstore.QueryOpts{})
+			cache[dir] = hist
+		}
+		if t := logstore.TitleIn(hist, e.Job.URL); t != "" {
+			e.Job.Title = t
+		}
+	}
 }
 
 // targetResult is the outcome of resolving a cancel/retry target.
@@ -782,12 +834,17 @@ func isIndex(s string) bool {
 	return true
 }
 
-// jobLabel is a short human label for a cancel/retry confirmation line.
+// jobLabel is a human label for a cancel/retry confirmation line: "Title — URL"
+// when the title is known (and not a playlist, whose per-item title would
+// mislead), else the full URL, falling back to the id for an unreadable spec.
 func jobLabel(e queue.Entry) string {
-	if e.Job.URL != "" {
-		return e.Job.URL
+	if e.Job.URL == "" {
+		return e.ID
 	}
-	return e.ID
+	if t := e.Job.Title; t != "" && !e.Job.Playlist {
+		return t + " — " + e.Job.URL
+	}
+	return e.Job.URL
 }
 
 // runStatusCmd prints a one-shot summary: daemon liveness (informational), the

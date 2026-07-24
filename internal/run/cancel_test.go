@@ -33,7 +33,7 @@ func TestRunQueuedCancelKillsProcessGroup(t *testing.T) {
 	o := runOptions(t, core.ModeSilent, dest)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
-	go func() { done <- RunQueued(ctx, o, nil) }()
+	go func() { done <- RunQueued(ctx, o, nil, nil) }()
 
 	waitFor(t, started, 3*time.Second, "fake yt-dlp never started")
 	cancel()
@@ -88,7 +88,7 @@ wait
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(60 * time.Millisecond); cancel() }()
 
-	if rc := RunQueued(ctx, o, nil); rc != 0 {
+	if rc := RunQueued(ctx, o, nil, nil); rc != 0 {
 		t.Errorf("a graceful finish within the grace window: rc = %d, want 0 (success)", rc)
 	}
 	// Success ⇒ no failure breadcrumb in the destination.

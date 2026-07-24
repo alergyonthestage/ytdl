@@ -464,6 +464,42 @@ Cycle 3 daemon.
 
 Phase 7 (Windows/Linux) stays deferred and is not a scheduled cycle.
 
+### Cycle 4 — CLI UX pass #2 (command/URL disambiguation + job titles) — **done, merged to `main` (2026-07-24)**
+
+A second CLI UX pass driven by two maintainer findings from real use. Runtime/CLI
+layer only; **`internal/core` and `internal/daemon` are byte-unchanged** (parity
+held). [ADR-0012](decisions/0012-cycle4-cli-ux-title-disambiguation.md).
+
+- **Scope delivered:** (1) a mistyped subcommand (`ytdl queu`) is no longer forwarded
+  to yt-dlp as a URL — a bare word close to a known command gets a "did you mean"
+  hint, while a bare video/playlist id still passes through (a command-similarity
+  guard, **not** a URL allow-list, which would have broken bare ids); (2)
+  `ytdl queue`/`retry`/`cancel` now show the video **title + full URL** instead of a
+  truncated stub — the title is written back onto the running job by the run layer
+  (daemon untouched), `retry` additionally enriches from history, and `--watch` clips
+  each line by **display columns** so CJK/emoji titles never wrap.
+- **Entry:** Cycles 1–3 + 2B-plus merged to `main`. Off the latest `main`.
+- **Done when:** a typo'd command is caught with a suggestion; bare video ids still
+  download; queue/retry/cancel name the video; `--watch` never wraps; suite green.
+- **Built as:** `queue.Job.Title` + `Spool.SetTitle`; `run.RunQueued` `onTitle`
+  callback + watcher goroutine; `cli.looksLikeURL`/`nearestCommand`;
+  `logstore.TitleForURL`/`TitleIn`; `term.Width`/`DisplayWidth`/`Clip`; the `cli`
+  renderers.
+- **Adversarially reviewed** (3 reviewers): 3 CRITICALs found and fixed — bare video
+  ids rejected, `--watch` clip counting runes not display columns, spinner/footer
+  unclipped — plus HIGH/MEDIUM (per-job log dir, O(N·M) enrichment, panic-safe join).
+- **Deferred (unchanged):** the dedicated Phase-5 hardening cycle, the 6a AppleScript
+  MVP, and the GUI multi-page / UX overhaul (recorded below).
+
+## Deferred / planned, not yet scheduled
+
+- **GUI multi-page + broader UX overhaul (CLI + GUI)** — planned by the maintainer
+  for a dedicated session **after the core implementation is complete**. Make the web
+  GUI multi-page with a separate Settings section, plus a wider UX polish across the
+  CLI and GUI. Not yet scheduled; recorded here so the intent survives across
+  sessions. This is *not* the last planned work — the Phase-5 hardening cycle and the
+  6a AppleScript MVP still precede a v2.x that could ship it.
+
 ## Known open questions
 
 - ~~Does the Python 3.13 install path actually work end-to-end on a real Mojave

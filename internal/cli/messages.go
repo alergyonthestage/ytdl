@@ -79,4 +79,8 @@ const (
 	MsgTargetAndAll     = "✗ Indica un indice OPPURE --all, non entrambi."
 	MsgTargetNotFound   = "✗ Non trovato: %s (lancia il comando senza argomenti per vedere la lista)." // %s = the token
 	MsgTargetAmbiguous  = "✗ %s è ambiguo: corrisponde a più di un job. Usa più caratteri dell'id."    // %s = the token
+	// Cycle 4: a bare first positional close to a known subcommand — a probable
+	// typo. A bare word NOT near any command is passed through to yt-dlp (it may be
+	// a video/playlist id), so this is the only new bare-word error.
+	MsgDidYouMean = "✗ «%s» non è un comando. Forse intendevi «%s»?\n  (per scaricarlo comunque come URL: ytdl -- %s)" // %s tok, %s command, %s tok
 )
