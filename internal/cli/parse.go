@@ -155,13 +155,20 @@ func Parse(args []string) (*Parsed, error) {
 			if haveURL {
 				return nil, &ParseError{Msg: fmt.Sprintf(MsgTooManyArguments, p.URL), Usage: true}
 			}
-			// A bare word (no `/ . :`) is not a valid yt-dlp URL — it is almost always
-			// a mistyped subcommand (the reported UX bug: `ytdl queu` tried to
-			// download "queu"). Reject it with a helpful message instead of forwarding
-			// it to yt-dlp's opaque "not a valid URL" (Cycle 4). `--` still forces a
-			// bare token through as the URL (handled above, before this default case).
+			// A bare word (no `/ . :`) that is CLOSE to a known subcommand is almost
+			// certainly a mistyped command (the reported UX bug: `ytdl queu` tried to
+			// download "queu"): reject it with a "did you mean" hint. A bare word NOT
+			// near any command is passed through to yt-dlp untouched — it may be a bare
+			// YouTube video/playlist id, which the extractor accepts (an 11-char id like
+			// dQw4w9WgXcQ resolves; verified against yt-dlp 2026.07.04), and rejecting
+			// those would break a core use case. `ytdl -- <tok>` (handled above) forces
+			// any token through as the URL. This is why the guard is command-similarity,
+			// not a positive URL allow-list: a video id is neither URL-shaped nor a
+			// command, yet must still reach yt-dlp.
 			if !looksLikeURL(a) {
-				return nil, notAURLError(a)
+				if cmd := nearestCommand(a); cmd != "" {
+					return nil, &ParseError{Msg: fmt.Sprintf(MsgDidYouMean, a, cmd, a), Usage: true}
+				}
 			}
 			p.URL = a
 			haveURL = true
@@ -190,17 +197,6 @@ func Parse(args []string) (*Parsed, error) {
 	}
 	p.Action = ActionRun
 	return p, nil
-}
-
-// notAURLError builds the parse error for a bare first positional that is neither
-// a reserved subcommand nor a URL. When it is close to a known command it adds a
-// "did you mean" hint; otherwise it explains what a URL looks like. Both request
-// the usage text, like the other positional errors.
-func notAURLError(tok string) *ParseError {
-	if cmd := nearestCommand(tok); cmd != "" {
-		return &ParseError{Msg: fmt.Sprintf(MsgDidYouMean, tok, cmd), Usage: true}
-	}
-	return &ParseError{Msg: fmt.Sprintf(MsgNotACommandOrURL, tok), Usage: true}
 }
 
 // parseQueue parses `queue [--watch]`. The only accepted option is --watch/-w;

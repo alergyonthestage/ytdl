@@ -54,15 +54,28 @@ func TestParseBareWordSuggestsCommand(t *testing.T) {
 	}
 }
 
-// A bare word close to nothing gets the generic not-a-command-or-URL message.
-func TestParseBareWordNoSuggestion(t *testing.T) {
-	_, err := Parse([]string{"xyzzy"})
-	var pe *ParseError
-	if !errors.As(err, &pe) || !pe.Usage {
-		t.Fatalf("Parse([xyzzy]) err = %v, want a usage ParseError", err)
+// A bare word NOT near any command is passed through to yt-dlp untouched — it may
+// be a bare YouTube video id, which the extractor accepts. Rejecting it would
+// break a core use case (the review's CRITICAL finding), so it must reach the
+// download path, not error.
+func TestParseBareVideoIDPassesThrough(t *testing.T) {
+	for _, id := range []string{"dQw4w9WgXcQ", "xyzzy", "PLFgquLnL59alW3xmYiWRaoz0"} {
+		p, err := Parse([]string{id})
+		if err != nil {
+			t.Fatalf("Parse([%q]) = %v, want it forwarded to yt-dlp as a URL", id, err)
+		}
+		if p.Action != ActionRun || p.URL != id {
+			t.Errorf("Parse([%q]) = %+v, want ActionRun with the token preserved", id, p)
+		}
 	}
-	if !strings.Contains(pe.Msg, "URL") {
-		t.Errorf("message %q should explain it is not a URL", pe.Msg)
+}
+
+// An explicit empty positional is the no-URL case, not a bare-word error.
+func TestParseEmptyStringIsNoURL(t *testing.T) {
+	_, err := Parse([]string{""})
+	var pe *ParseError
+	if !errors.As(err, &pe) || pe.Msg != MsgNoURL {
+		t.Fatalf("Parse([\"\"]) err = %v, want MsgNoURL", err)
 	}
 }
 

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -194,7 +195,9 @@ func TestParseErrors(t *testing.T) {
 		{"empty --format arg", []string{"--format", "", "u"}, MsgMissingFormat, false},
 		{"unknown flag", []string{"-z", "u"}, "✗ Opzione sconosciuta: -z", true},
 		{"lone dash is unknown (Bash -* matches -)", []string{"-"}, "✗ Opzione sconosciuta: -", true},
-		{"second positional (C3)", []string{"u1", "u2"}, "", true},
+		// C3: URL-like tokens so the too-many-args branch is what fires (a bare word
+		// near a command would fire the Cycle-4 did-you-mean guard first instead).
+		{"second positional (C3)", []string{"u1.co", "u2.co"}, fmt.Sprintf(MsgTooManyArguments, "u1.co"), true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
