@@ -177,6 +177,7 @@ func runDaemon(daemonArgs []string) int {
 		Concurrency:   settings.Concurrency,
 		RetentionDays: settings.LogRetentionDays,
 		JobTimeout:    time.Duration(settings.JobTimeout) * time.Second,
+		LogPath:       daemonLogPath(stateDir),
 	}
 
 	var srv *webui.Server
@@ -251,6 +252,10 @@ func serveGUI(cfg daemon.Config, srv *webui.Server) int {
 // guiTokenPath is the 0600 file a GUI daemon publishes its session token in, for
 // `ytdl gui` to hand to the browser. It never leaves the user's state dir.
 func guiTokenPath(stateDir string) string { return filepath.Join(stateDir, "gui.token") }
+
+// daemonLogPath is the daemon's diagnostics log, beside the queue/logs in the
+// state dir. `ytdl status` points the user at it.
+func daemonLogPath(stateDir string) string { return filepath.Join(stateDir, "daemon.log") }
 
 func newGUIToken() (string, error) {
 	b := make([]byte, 32)

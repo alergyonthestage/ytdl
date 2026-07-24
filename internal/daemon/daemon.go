@@ -79,6 +79,12 @@ type Config struct {
 	// client before the ordinary idle timeout applies; it defaults to
 	// DefaultFirstClientGrace and is ignored when LiveClients is nil.
 	FirstClientGrace time.Duration
+	// LogPath is the daemon's diagnostics log (the seam ADR-0007 flagged as
+	// missing — the daemon runs detached with /dev/null stdio, so lifecycle
+	// events, persistent spool errors and cancel/timeout kills are otherwise
+	// invisible). Empty disables it. Best-effort: a log failure never affects
+	// draining.
+	LogPath string
 }
 
 // Serve runs the drain loop until the queue is idle for IdleTimeout, then returns
@@ -108,24 +114,30 @@ func Serve(cfg Config) error {
 	}
 	defer release()
 
+	d := newDiag(cfg.LogPath)
+	d.logf("daemon start (pid=%d, concurrency=%d, job_timeout=%s)", os.Getpid(), cfg.Concurrency, cfg.JobTimeout)
+	defer d.logf("daemon exit")
+
 	// Crash recovery: we hold the exclusive lock, so no live worker owns any
 	// running/ file — anything there is an orphan of a killed daemon. Best-effort:
 	// a file that fails to requeue (permission, cross-mount) must not stop us from
 	// draining the rest of the queue, matching the "never block on a best-effort
 	// step" philosophy the log store already follows.
-	_, _ = cfg.Spool.RequeueRunning()
+	if n, _ := cfg.Spool.RequeueRunning(); n > 0 {
+		d.logf("recovered %d orphaned running job(s) → pending", n)
+	}
 
 	// Best-effort: age out old terminal spool files so done/failed do not grow
 	// unbounded across drain sessions. A prune failure must not stop draining.
 	_ = cfg.Spool.PruneTerminal(cfg.RetentionDays)
 
-	drain(cfg)
+	drain(cfg, d)
 	return nil
 }
 
 // drain is the claim/dispatch/idle loop. Extracted from Serve so the locking and
 // recovery stay readable; assumes the lock is held.
-func drain(cfg Config) {
+func drain(cfg Config, d *diag) {
 	var sem chan struct{}
 	if cfg.Concurrency > 0 {
 		sem = make(chan struct{}, cfg.Concurrency)
@@ -143,6 +155,15 @@ func drain(cfg Config) {
 	var wg sync.WaitGroup
 	var inflight int64
 
+	// Registry of in-flight jobs' cancel funcs, and the watcher that turns a
+	// filesystem cancel marker (`ytdl cancel`, another process) into a ctx cancel
+	// on the matching running job. The watcher lives for the whole drain.
+	reg := newCancelRegistry()
+	watchDone := make(chan struct{})
+	var watchWG sync.WaitGroup
+	watchWG.Add(1)
+	go func() { defer watchWG.Done(); watchCancels(cfg, reg, d, watchDone) }()
+
 	idleSince := time.Now()
 	started := time.Now()
 	sawClient := false
@@ -152,6 +173,9 @@ func drain(cfg Config) {
 		// and `running/` never transiently exceeds the cap.
 		acquire()
 		c, err := cfg.Spool.ClaimNext()
+		if err != nil {
+			d.logf("claim error: %v", err) // otherwise invisible — the daemon is silent
+		}
 		if err == nil && c != nil {
 			idleSince = time.Now()
 			atomic.AddInt64(&inflight, 1)
@@ -164,7 +188,17 @@ func drain(cfg Config) {
 				// external `ytdl cancel` (routed by the watcher) can stop this job.
 				ctx, cancel := jobContext(cfg.JobTimeout)
 				defer cancel()
-				if runJobGuarded(cfg.Run, ctx, cl) == 0 {
+				reg.add(cl.ID, cancel)
+				defer reg.remove(cl.ID)
+
+				rc, panicked := runJobGuarded(cfg.Run, ctx, cl)
+				switch {
+				case panicked:
+					d.logf("job %s panicked → marked failed", cl.ID)
+				case errors.Is(ctx.Err(), context.DeadlineExceeded):
+					d.logf("job %s timed out after %s → killed", cl.ID, cfg.JobTimeout)
+				}
+				if rc == 0 {
 					_ = cfg.Spool.MarkDone(cl.ID)
 				} else {
 					_ = cfg.Spool.MarkFailed(cl.ID)
@@ -217,19 +251,22 @@ func drain(cfg Config) {
 		time.Sleep(cfg.PollInterval)
 	}
 	wg.Wait()
+	close(watchDone)
+	watchWG.Wait()
 }
 
 // runJobGuarded runs one job and converts a panic in the injected runner into a
 // failure exit code, so a single misbehaving job cannot crash the whole daemon
 // (which would abandon every sibling download's yt-dlp child and strand their
-// spool entries in running/). The panicking job is marked failed, not retried.
-func runJobGuarded(run func(context.Context, queue.Claim) int, ctx context.Context, cl queue.Claim) (rc int) {
+// spool entries in running/). The panicking job is marked failed, not retried;
+// panicked lets the caller log it (the daemon is otherwise silent).
+func runJobGuarded(run func(context.Context, queue.Claim) int, ctx context.Context, cl queue.Claim) (rc int, panicked bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			rc = 1
+			rc, panicked = 1, true
 		}
 	}()
-	return run(ctx, cl)
+	return run(ctx, cl), false
 }
 
 // jobContext builds a per-job context: bounded by timeout when set (>0), else a
@@ -241,6 +278,128 @@ func jobContext(timeout time.Duration) (context.Context, context.CancelFunc) {
 		return context.WithTimeout(context.Background(), timeout)
 	}
 	return context.WithCancel(context.Background())
+}
+
+// cancelRegistry maps an in-flight job's spool id to the CancelFunc that stops
+// it. The watcher looks a marker's id up here to cancel the matching running job.
+// It is safe for concurrent use (workers register/deregister; the watcher reads).
+type cancelRegistry struct {
+	mu sync.Mutex
+	m  map[string]context.CancelFunc
+}
+
+func newCancelRegistry() *cancelRegistry { return &cancelRegistry{m: map[string]context.CancelFunc{}} }
+
+func (r *cancelRegistry) add(id string, cancel context.CancelFunc) {
+	r.mu.Lock()
+	r.m[id] = cancel
+	r.mu.Unlock()
+}
+
+func (r *cancelRegistry) remove(id string) {
+	r.mu.Lock()
+	delete(r.m, id)
+	r.mu.Unlock()
+}
+
+func (r *cancelRegistry) get(id string) context.CancelFunc {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.m[id]
+}
+
+// watchCancels polls the spool's cancel markers every PollInterval and applies
+// them, until done is closed. It is the cross-process half of `ytdl cancel`: the
+// CLI (or any other process) drops a marker, this turns it into a ctx cancel on
+// the matching running job.
+func watchCancels(cfg Config, reg *cancelRegistry, d *diag, done <-chan struct{}) {
+	ticker := time.NewTicker(cfg.PollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			processCancels(cfg, reg, d)
+		}
+	}
+}
+
+// processCancels applies one round of cancel markers. For each marker id:
+//   - if the job is running here (in the registry) → cancel its ctx (the runner
+//     tears down the process group) and clear the marker;
+//   - if it is still pending → delete it (a cancel that raced the claim; the
+//     matching CLI path also does this) and clear the marker. Losing that race
+//     means it just became running, so the next poll cancels it via the registry;
+//   - if it is neither pending nor running (terminal, or already gone) → the
+//     marker is stale, so clear it. A just-claimed job whose worker has not yet
+//     registered is left for the next poll (it shows as running, not stale).
+func processCancels(cfg Config, reg *cancelRegistry, d *diag) {
+	ids, err := cfg.Spool.CancelRequests()
+	if err != nil || len(ids) == 0 {
+		return
+	}
+	snap, _ := cfg.Spool.List()
+	state := make(map[string]queue.State, len(snap.Pending)+len(snap.Running))
+	for _, e := range snap.Pending {
+		state[e.ID] = queue.Pending
+	}
+	for _, e := range snap.Running {
+		state[e.ID] = queue.Running
+	}
+	for _, id := range ids {
+		if cancel := reg.get(id); cancel != nil {
+			cancel()
+			d.logf("cancelled running job %s", id)
+			_ = cfg.Spool.ClearCancel(id)
+			continue
+		}
+		switch state[id] {
+		case queue.Pending:
+			if was, _ := cfg.Spool.CancelPending(id); was {
+				d.logf("cancelled pending job %s", id)
+				_ = cfg.Spool.ClearCancel(id)
+			}
+			// lost the claim race → now running → next poll cancels via the registry
+		case queue.Running:
+			// just claimed; the worker will register momentarily → next poll
+		default:
+			_ = cfg.Spool.ClearCancel(id) // terminal or gone: stale marker
+		}
+	}
+}
+
+// maxDaemonLog caps the diagnostics log; past it the file is truncated so a
+// long-running daemon cannot grow it without bound.
+const maxDaemonLog = 256 * 1024
+
+// diag is the daemon's best-effort diagnostics log (Config.LogPath). The daemon
+// runs detached with /dev/null stdio, so without this a persistent spool error,
+// a cancel/timeout kill or a job panic would be invisible (the gap ADR-0007
+// flagged). A nil *diag or an empty path is a silent no-op; a write failure is
+// swallowed — logging must never affect draining.
+type diag struct {
+	mu   sync.Mutex
+	path string
+}
+
+func newDiag(path string) *diag { return &diag{path: path} }
+
+func (d *diag) logf(format string, args ...any) {
+	if d == nil || d.path == "" {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if fi, err := os.Stat(d.path); err == nil && fi.Size() > maxDaemonLog {
+		_ = os.Truncate(d.path, 0)
+	}
+	f, err := os.OpenFile(d.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s %s\n", time.Now().Format(time.RFC3339), fmt.Sprintf(format, args...))
 }
 
 // liveClients evaluates the injected GUI-connected hook defensively: nil means

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -334,6 +335,84 @@ func TestJobTimeoutCancelsRun(t *testing.T) {
 	snap, _ := sp.List()
 	if _, _, _, f := snap.Counts(); f != 1 {
 		t.Fatalf("timed-out job should be in failed/; counts failed=%d", f)
+	}
+}
+
+// A cancel marker dropped by another process (`ytdl cancel`) must stop the
+// matching RUNNING job: the watcher looks it up in the registry and cancels its
+// ctx. The job then ends and the marker is cleared.
+func TestWatcherCancelsRunningJob(t *testing.T) {
+	sp := queue.Open(t.TempDir())
+	enqueueN(t, sp, 1)
+
+	var gotID atomic.Value
+	running := make(chan struct{})
+	cfg := fastCfg(sp, 1, func(queue.Job) int { return 0 })
+	cfg.Run = func(ctx context.Context, cl queue.Claim) int {
+		gotID.Store(cl.ID)
+		close(running) // the job is now executing and registered
+		<-ctx.Done()   // block until the watcher cancels us
+		return 1
+	}
+
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- Serve(cfg) }()
+
+	select {
+	case <-running:
+	case <-time.After(2 * time.Second):
+		t.Fatal("job never started")
+	}
+	id, _ := gotID.Load().(string)
+	if err := sp.RequestCancel(id); err != nil {
+		t.Fatalf("RequestCancel: %v", err)
+	}
+
+	select {
+	case err := <-serveDone:
+		if err != nil {
+			t.Fatalf("Serve: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("watcher did not cancel the running job")
+	}
+
+	snap, _ := sp.List()
+	if _, _, _, f := snap.Counts(); f != 1 {
+		t.Fatalf("cancelled job should be in failed/; failed=%d", f)
+	}
+	if ids, _ := sp.CancelRequests(); len(ids) != 0 {
+		t.Errorf("cancel marker not cleared: %v", ids)
+	}
+}
+
+// A marker for an id that is neither pending nor running (terminal or gone) is
+// swept, so stale markers cannot accumulate.
+func TestWatcherClearsStaleMarker(t *testing.T) {
+	sp := queue.Open(t.TempDir())
+	if err := sp.RequestCancel("ghost-id"); err != nil {
+		t.Fatal(err)
+	}
+	processCancels(Config{Spool: sp}, newCancelRegistry(), nil) // nil diag → logf no-ops
+	if ids, _ := sp.CancelRequests(); len(ids) != 0 {
+		t.Errorf("stale marker not cleared: %v", ids)
+	}
+}
+
+// The daemon's diagnostics log records lifecycle events (it is otherwise silent).
+func TestDiagLogWritesLifecycle(t *testing.T) {
+	dir := t.TempDir()
+	cfg := fastCfg(queue.Open(dir), 1, func(queue.Job) int { return 0 })
+	cfg.LogPath = filepath.Join(dir, "daemon.log")
+	if err := Serve(cfg); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	b, err := os.ReadFile(cfg.LogPath)
+	if err != nil {
+		t.Fatalf("daemon.log not written: %v", err)
+	}
+	if !strings.Contains(string(b), "daemon start") || !strings.Contains(string(b), "daemon exit") {
+		t.Errorf("daemon.log missing lifecycle lines:\n%s", b)
 	}
 }
 
