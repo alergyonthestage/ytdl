@@ -4,9 +4,11 @@ import (
 	"io"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/alergyonthestage/ytdl/internal/cli"
 	"github.com/alergyonthestage/ytdl/internal/config"
 	"github.com/alergyonthestage/ytdl/internal/logstore"
 	"github.com/alergyonthestage/ytdl/internal/queue"
@@ -178,5 +180,110 @@ func TestRealMainAbsoluteOutputBypassesHomeGuard(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "non trovato") {
 		t.Errorf("expected the missing-dependency path, got:\n%s", stderr)
+	}
+}
+
+func TestIsIndex(t *testing.T) {
+	for _, s := range []string{"1", "42", "999"} {
+		if !isIndex(s) {
+			t.Errorf("isIndex(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"", "1000", "1a", "100-aaa", "-1"} {
+		if isIndex(s) {
+			t.Errorf("isIndex(%q) = true, want false", s)
+		}
+	}
+}
+
+func TestResolveTarget(t *testing.T) {
+	es := []queue.Entry{{ID: "100-aaa"}, {ID: "200-bbb"}, {ID: "100-ccc"}}
+
+	// A short integer is a 1-based index.
+	if e, ok := resolveTarget("2", es); !ok || e.ID != "200-bbb" {
+		t.Errorf("index 2 = %+v, %v", e, ok)
+	}
+	// Out-of-range index fails.
+	if _, ok := resolveTarget("9", es); ok {
+		t.Error("index 9 should not resolve")
+	}
+	// A long numeric-plus id is an id-prefix, not an index — and unique here.
+	if e, ok := resolveTarget("200-bbb", es); !ok || e.ID != "200-bbb" {
+		t.Errorf("id-prefix = %+v, %v", e, ok)
+	}
+	// An ambiguous id-prefix (matches two) does not resolve.
+	if _, ok := resolveTarget("100-", es); ok {
+		t.Error("ambiguous prefix 100- should not resolve")
+	}
+	// A unique id-prefix resolves.
+	if e, ok := resolveTarget("100-a", es); !ok || e.ID != "100-aaa" {
+		t.Errorf("unique prefix = %+v, %v", e, ok)
+	}
+}
+
+func TestRunCancelCmdDeletesPending(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	sp := queue.Open(config.StatePath())
+	if _, err := sp.Enqueue(queue.Job{URL: "https://a", EnqueuedAt: time.Unix(1, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	id2, err := sp.Enqueue(queue.Job{URL: "https://b", EnqueuedAt: time.Unix(2, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rc, out := captureStdout(t, func() int {
+		return runCancelCmd(&cli.Parsed{Action: cli.ActionCancel, Target: "1"})
+	})
+	if rc != 0 {
+		t.Errorf("rc = %d, want 0", rc)
+	}
+	if !strings.Contains(out, "Annullato") {
+		t.Errorf("cancel output missing confirmation:\n%s", out)
+	}
+	snap, _ := sp.List()
+	if len(snap.Pending) != 1 || snap.Pending[0].ID != id2 {
+		t.Fatalf("only the second job should remain pending: %+v", snap.Pending)
+	}
+}
+
+func TestRunRetryCmdRequeues(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	sp := queue.Open(config.StatePath())
+	id, err := sp.Enqueue(queue.Job{URL: "https://a", EnqueuedAt: time.Unix(1, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sp.ClaimNext(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sp.MarkFailed(id); err != nil {
+		t.Fatal(err)
+	}
+
+	// Hold the daemon lock so resumeIfStalled sees a live daemon and does NOT
+	// self-exec a real one from the test binary.
+	lf, err := os.OpenFile(sp.LockPath(), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lf.Close()
+	if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
+
+	rc, out := captureStdout(t, func() int {
+		return runRetryCmd(&cli.Parsed{Action: cli.ActionRetry, Target: "1"})
+	})
+	if rc != 0 {
+		t.Errorf("rc = %d, want 0", rc)
+	}
+	if !strings.Contains(out, "Rimesso in coda") {
+		t.Errorf("retry output missing confirmation:\n%s", out)
+	}
+	snap, _ := sp.List()
+	if len(snap.Pending) != 1 || len(snap.Failed) != 0 {
+		t.Fatalf("job should be re-queued: pending=%d failed=%d", len(snap.Pending), len(snap.Failed))
 	}
 }

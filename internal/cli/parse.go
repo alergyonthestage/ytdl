@@ -28,6 +28,8 @@ const (
 	ActionStatus  // `ytdl status` — queue + daemon summary
 	ActionHistory // `ytdl history [--failed] [--limit N]` — durable log
 	ActionGUI     // `ytdl gui` — open the local web interface (Cycle 3)
+	ActionCancel  // `ytdl cancel [<n>|<id>|--all]` — stop live work (Cycle 2B-plus)
+	ActionRetry   // `ytdl retry [<n>|<id>|--all]` — re-queue a failed job (Cycle 2B-plus)
 )
 
 // Parsed is the result of parsing. When Action == ActionRun, RunMode, URL and
@@ -45,6 +47,10 @@ type Parsed struct {
 	// History fields (valid when Action == ActionHistory).
 	HistoryFailed bool // --failed: only failures
 	HistoryLimit  int  // --limit N: cap the rows (DefaultHistoryLimit if unset)
+
+	// Cancel/retry fields (valid when Action == ActionCancel or ActionRetry).
+	Target string // the <n> index or <id-prefix>; "" with !All means "list them"
+	All    bool   // --all: act on every matching job
 }
 
 // ParseError is a user-facing parse failure. Usage requests that the help text
@@ -80,6 +86,10 @@ func Parse(args []string) (*Parsed, error) {
 			return parseHistory(args[1:])
 		case "gui":
 			return parseGUI(args[1:])
+		case "cancel":
+			return parseTargeted(ActionCancel, args[1:])
+		case "retry":
+			return parseTargeted(ActionRetry, args[1:])
 		}
 	}
 
@@ -228,6 +238,30 @@ func parseHistory(rest []string) (*Parsed, error) {
 		default:
 			return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, rest[i]), Usage: true}
 		}
+	}
+	return p, nil
+}
+
+// parseTargeted parses `cancel`/`retry [<n>|<id-prefix>|--all]`. It accepts at
+// most one positional target and the --all flag, but not both. With neither, the
+// command lists what it could act on (the caller decides), so an empty invocation
+// is valid, not an error.
+func parseTargeted(action Action, rest []string) (*Parsed, error) {
+	p := &Parsed{Action: action}
+	for _, a := range rest {
+		switch {
+		case a == "--all":
+			p.All = true
+		case strings.HasPrefix(a, "-"):
+			return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, a), Usage: true}
+		case p.Target != "":
+			return nil, &ParseError{Msg: MsgTooManyTargets, Usage: true}
+		default:
+			p.Target = a
+		}
+	}
+	if p.All && p.Target != "" {
+		return nil, &ParseError{Msg: MsgTargetAndAll, Usage: true}
 	}
 	return p, nil
 }

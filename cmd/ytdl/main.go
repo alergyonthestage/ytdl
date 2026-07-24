@@ -77,6 +77,10 @@ func realMain(args []string) int {
 		return runHistoryCmd(parsed)
 	case cli.ActionGUI:
 		return runGUICmd()
+	case cli.ActionCancel:
+		return runCancelCmd(parsed)
+	case cli.ActionRetry:
+		return runRetryCmd(parsed)
 	}
 
 	// ActionRun. C1: a bad -f flag fails fast (unlike the config file, which
@@ -569,6 +573,176 @@ func resumeIfStalled(sp *queue.Spool, snap queue.Snapshot) {
 	}
 }
 
+// runCancelCmd cancels live work. A pending job is deleted outright; a running one
+// gets a cancel marker the daemon turns into a process-group kill (ADR-0011). With
+// neither a target nor --all it prints the numbered live queue to read an index
+// off. A running job is already owned by a live daemon, so its watcher will act on
+// the marker — no daemon needs starting here.
+func runCancelCmd(p *cli.Parsed) int {
+	stateDir := config.StatePath()
+	if stateDir == "" {
+		fmt.Fprintln(os.Stderr, "✗ Impossibile individuare la coda: $HOME non è impostata.")
+		return 1
+	}
+	sp := queue.Open(stateDir)
+	snap, err := sp.List()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "✗ Impossibile leggere la coda: %v\n", err)
+		return 1
+	}
+	ordered := cli.LiveOrdered(snap)
+
+	if !p.All && p.Target == "" {
+		fmt.Print(term.Colorize(cli.RenderCancelList(snap), colorStdout()))
+		return 0
+	}
+
+	var targets []queue.Entry
+	if p.All {
+		if targets = ordered; len(targets) == 0 {
+			fmt.Println("▸ Niente da annullare.")
+			return 0
+		}
+	} else {
+		e, ok := resolveTarget(p.Target, ordered)
+		if !ok {
+			fmt.Fprintf(os.Stderr, cli.MsgTargetNotFound+"\n", p.Target)
+			return 1
+		}
+		targets = []queue.Entry{e}
+	}
+
+	n := 0
+	for _, e := range targets {
+		if cancelOne(sp, e) {
+			fmt.Printf("▸ Annullato (era in attesa): %s\n", jobLabel(e))
+		} else {
+			fmt.Printf("▸ Annullamento richiesto: %s\n", jobLabel(e))
+		}
+		n++
+	}
+	if p.All {
+		fmt.Printf("▸ %d annullati o in annullamento.\n", n)
+	}
+	return 0
+}
+
+// cancelOne cancels a single live entry: it drops the marker FIRST (so a job the
+// daemon claims in the meantime is still stopped by the watcher), then deletes it
+// if it is still pending. Returns true if it was pending (deleted now), false if
+// it was already running/gone (the marker is left for the daemon's watcher).
+func cancelOne(sp *queue.Spool, e queue.Entry) bool {
+	_ = sp.RequestCancel(e.ID)
+	was, _ := sp.CancelPending(e.ID)
+	if was {
+		_ = sp.ClearCancel(e.ID) // deleted before it ran → the marker is unneeded
+	}
+	return was
+}
+
+// runRetryCmd re-queues failed jobs (failed/ → pending/) and resumes the daemon to
+// drain them. With neither a target nor --all it prints the numbered failed list.
+func runRetryCmd(p *cli.Parsed) int {
+	stateDir := config.StatePath()
+	if stateDir == "" {
+		fmt.Fprintln(os.Stderr, "✗ Impossibile individuare la coda: $HOME non è impostata.")
+		return 1
+	}
+	sp := queue.Open(stateDir)
+	snap, err := sp.List()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "✗ Impossibile leggere la coda: %v\n", err)
+		return 1
+	}
+	failed := snap.Failed
+
+	if !p.All && p.Target == "" {
+		fmt.Print(term.Colorize(cli.RenderRetryList(failed), colorStdout()))
+		return 0
+	}
+
+	var targets []queue.Entry
+	if p.All {
+		if targets = failed; len(targets) == 0 {
+			fmt.Println("▸ Nessun download fallito da riprovare.")
+			return 0
+		}
+	} else {
+		e, ok := resolveTarget(p.Target, failed)
+		if !ok {
+			fmt.Fprintf(os.Stderr, cli.MsgTargetNotFound+"\n", p.Target)
+			return 1
+		}
+		targets = []queue.Entry{e}
+	}
+
+	n := 0
+	for _, e := range targets {
+		if err := sp.Retry(e.ID); err != nil {
+			fmt.Fprintf(os.Stderr, "! Non riprovato %s: %v\n", jobLabel(e), err)
+			continue
+		}
+		fmt.Printf("▸ Rimesso in coda: %s\n", jobLabel(e))
+		n++
+	}
+	if n > 0 {
+		if fresh, err := sp.List(); err == nil {
+			resumeIfStalled(sp, fresh) // start a daemon to drain the re-queued jobs
+		}
+		if p.All {
+			fmt.Printf("▸ %d rimessi in coda.\n", n)
+		}
+	}
+	return 0
+}
+
+// resolveTarget maps a cancel/retry target to an entry: a short integer (1-3
+// digits) is a 1-based index into the numbered list the command prints; anything
+// else is an id-prefix, accepted only when it uniquely identifies one entry.
+func resolveTarget(target string, entries []queue.Entry) (queue.Entry, bool) {
+	if isIndex(target) {
+		n, _ := strconv.Atoi(target)
+		if n >= 1 && n <= len(entries) {
+			return entries[n-1], true
+		}
+		return queue.Entry{}, false
+	}
+	var match queue.Entry
+	count := 0
+	for _, e := range entries {
+		if strings.HasPrefix(e.ID, target) {
+			match, count = e, count+1
+		}
+	}
+	if count == 1 {
+		return match, true
+	}
+	return queue.Entry{}, false // unknown or ambiguous
+}
+
+// isIndex reports whether s is a short list index (1-3 digits) rather than an
+// id-prefix. Spool ids begin with a long nanosecond number, so capping the index
+// at three digits keeps a pasted numeric id from being misread as an index.
+func isIndex(s string) bool {
+	if len(s) == 0 || len(s) > 3 {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// jobLabel is a short human label for a cancel/retry confirmation line.
+func jobLabel(e queue.Entry) string {
+	if e.Job.URL != "" {
+		return e.Job.URL
+	}
+	return e.ID
+}
+
 // runStatusCmd prints a one-shot summary: daemon liveness (informational), the
 // live queue, and a recent windowed outcome tally from the log store (which
 // includes foreground downloads, unlike the background-only spool).
@@ -588,7 +762,18 @@ func runStatusCmd() int {
 	pruneStores(sp, settings)
 	recent := recentSummary(settings.LogDir, settings.LogRetentionDays)
 	fmt.Print(term.Colorize(cli.RenderStatus(snap, daemon.IsRunning(sp.LockPath()), recent, settings.LogRetentionDays), colorStdout()))
+	// Point at the daemon's diagnostics log, but only once it exists — nothing to
+	// cite before the daemon has ever run.
+	if lp := daemonLogPath(stateDir); fileExists(lp) {
+		fmt.Printf("  diagnostica: %s\n", lp)
+	}
 	return 0
+}
+
+// fileExists reports whether path is a regular, statable file.
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // runHistoryCmd prints the durable download history from the log store —

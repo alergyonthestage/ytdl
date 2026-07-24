@@ -22,6 +22,9 @@ CODA
   ytdl queue [--watch]                 Download in attesa e in corso (--watch aggiorna sul posto)
   ytdl status                          Stato del daemon + riepilogo recente
   ytdl history [--failed] [--limit N]  Storico dei download (anche in primo piano)
+  ytdl cancel [<n> | --all]            Annulla un download in corso o in attesa
+  ytdl retry  [<n> | --all]            Rimette in coda un download fallito
+      (lancia cancel/retry senza argomenti per vedere la lista numerata)
 
 INTERFACCIA GRAFICA
   ytdl gui                             Apre l'interfaccia web nel browser
@@ -71,4 +74,7 @@ const (
 	MsgInvalidFormat    = "✗ Formato non valido: %s (ammessi: %s)."              // %s fmt, %s list
 	MsgMissingLimit     = "✗ Manca il numero (argomento di --limit)."
 	MsgInvalidLimit     = "✗ Limite non valido: %s (serve un intero non negativo)." // %s = the offending token
+	MsgTooManyTargets   = "✗ Un solo indice per volta (oppure --all)."
+	MsgTargetAndAll     = "✗ Indica un indice OPPURE --all, non entrambi."
+	MsgTargetNotFound   = "✗ Non trovato: %s (lancia il comando senza argomenti per vedere la lista)." // %s = the token
 )

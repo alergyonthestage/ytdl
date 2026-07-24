@@ -40,6 +40,51 @@ func RenderQueue(snap queue.Snapshot) string {
 	return b.String()
 }
 
+// LiveOrdered flattens the live queue into the SAME order the cancel list numbers
+// it: running first, then pending (each FIFO). The caller resolves a `ytdl cancel
+// <n>` index against this slice, so the numbering the user sees and the job that
+// gets cancelled cannot drift apart.
+func LiveOrdered(snap queue.Snapshot) []queue.Entry {
+	return append(append([]queue.Entry{}, snap.Running...), snap.Pending...)
+}
+
+// RenderCancelList numbers the live queue (running then pending) for `ytdl cancel`
+// with no target, so the user can read off an index to cancel. Empty → a note.
+func RenderCancelList(snap queue.Snapshot) string {
+	ordered := LiveOrdered(snap)
+	var b strings.Builder
+	b.WriteString("ANNULLA — in corso o in attesa\n")
+	if len(ordered) == 0 {
+		b.WriteString("  (niente da annullare)\n")
+		return b.String()
+	}
+	for i, e := range ordered {
+		state := "in attesa"
+		if e.State == queue.Running {
+			state = "in corso"
+		}
+		fmt.Fprintf(&b, "  [%d] %-9s %s\n", i+1, state, jobLine(e))
+	}
+	b.WriteString("Annulla con:  ytdl cancel <n>   ·   tutto:  ytdl cancel --all\n")
+	return b.String()
+}
+
+// RenderRetryList numbers the failed jobs (FIFO) for `ytdl retry` with no target.
+// Empty → a note.
+func RenderRetryList(failed []queue.Entry) string {
+	var b strings.Builder
+	b.WriteString("RIPROVA — download falliti\n")
+	if len(failed) == 0 {
+		b.WriteString("  (nessun download fallito da riprovare)\n")
+		return b.String()
+	}
+	for i, e := range failed {
+		fmt.Fprintf(&b, "  [%d] %s\n", i+1, jobLine(e))
+	}
+	b.WriteString("Riprova con:  ytdl retry <n>   ·   tutti:  ytdl retry --all\n")
+	return b.String()
+}
+
 // RecentSummary is a windowed tally of terminal outcomes from the log store,
 // computed by the caller (RenderStatus stays pure over it).
 type RecentSummary struct{ OK, Failed int }
