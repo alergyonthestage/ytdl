@@ -17,9 +17,12 @@ pass — roles, count/history redesign, in-place `--watch`) is done and merged t
 `main` (2026-07-23; release pending)**; **Cycle 3 (the web GUI, phase 6b) is done
 and merged to `main` (2026-07-24; release pending)**; **Cycle 2B-plus
 (`cancel`/`retry`, per-job timeout, no-residue downloads, daemon diagnostics) is
-done and merged to `main` (2026-07-24; release pending)**; next is a dedicated
-Phase-5 cycle (auto-retry/backoff + YouTube rate-limit), the deferred GUI wiring of
-cancel/retry, and the 6a AppleScript MVP.
+done and merged to `main` (2026-07-24; release pending)**; **Cycle 4 (CLI UX pass
+#2 — command/URL disambiguation, job titles) is done and merged to `main`
+(2026-07-24; release pending)**; **Cycle 5 (unified GUI/CLI UX) is in progress —
+design approved at gate B (2026-07-27)**. After it: the dedicated Phase-5 cycle
+(auto-retry/backoff + YouTube rate-limit), the 6a AppleScript MVP, and the release
+of everything accumulated since v2.0.0.
 
 ```mermaid
 flowchart LR
@@ -232,7 +235,7 @@ planned as a dedicated cycle:** automatic retries/backoff (`Attempts`/`NotBefore
 and YouTube rate-limit handling — the riskiest hardening, deliberately separated
 from the manual cancel/retry above.
 
-## Phase 6 — GUI — `in progress` (6b done; 6a planned)
+## Phase 6 — GUI — `in progress` (6b done; 6c in progress; 6a planned)
 
 A GUI for non-developer users. It is a **front-end over the Go engine** (config +
 queue + runner already built), not a reimplementation. Runtime is settled by
@@ -247,6 +250,7 @@ installed by default.
 |---|---|---|---|
 | 6a | AppleScript/Automator MVP: paste/drop URL, pick folder, enqueue | planned | zero-dep, works to Mojave, immediate value for non-devs |
 | 6b | Web UI served by the daemon: live progress, format/settings, per-run/session/global output dir, settings editor, queue + in-progress view | done (Cycle 3) | `net/http` + SSE; single binary; authenticated local API |
+| 6c | Multi-view GUI (Download · Cronologia · Impostazioni), actionable queue and history, open/reveal the downloaded file | in progress (Cycle 5) | designed with the CLI in one pass; [ADR-0013](decisions/0013-cycle5-unified-ux.md) |
 
 **Cycle 3 (6b) — done, merged to `main` (2026-07-24; release pending).** `ytdl gui`
 opens a self-contained embedded web page served by the same binary (a `__daemon
@@ -491,14 +495,52 @@ held). [ADR-0012](decisions/0012-cycle4-cli-ux-title-disambiguation.md).
 - **Deferred (unchanged):** the dedicated Phase-5 hardening cycle, the 6a AppleScript
   MVP, and the GUI multi-page / UX overhaul (recorded below).
 
+### Cycle 5 — Unified GUI/CLI UX (phase 6c + CLI) — **in progress**
+
+The UX cycle the maintainer had recorded as deferred, **brought forward** ahead of
+the Phase-5 hardening cycle and the 6a MVP (their call, 2026-07-26). It is designed
+from the **user task model** rather than from the existing commands, and covers both
+channels in one pass so they stop diverging. Runtime/CLI/GUI layers only —
+`internal/core` and `internal/daemon` stay byte-unchanged for the third cycle running.
+
+- **Scope approved at gate B (2026-07-27):**
+  (1) the GUI becomes three task-scoped views — Download (new download + live queue
+  side by side, plus the last 3 downloads), Cronologia (filters, search, pagination,
+  ranked row actions), Impostazioni (five groups, advanced settings collapsed, sticky
+  unsaved-changes bar);
+  (2) the queue becomes **actionable from the GUI** (cancel), lifting ADR-0010's
+  read-only decision;
+  (3) the history record is extended **once** (`path`, `dir`, `count`, `playlist`,
+  capped `error`) so both channels can finally answer *where did the file go* and
+  *why did it fail*, with the record id and its per-job `.log` name **derived** so
+  pre-Cycle-5 records stay addressable;
+  (4) open/reveal actions in both channels, behind an API that takes a **record id,
+  never a path**;
+  (5) a CLI pass: short task-oriented help with `ytdl help <argomento>` and
+  per-command `--help`, a numbered actionable `history` with `open`/`again`, a
+  read-only `ytdl config`, and the long-documented `open_folder_on_done`.
+- **Entry:** Cycles 1–4 merged to `main`. Branch `feat/ux/cycle5-unified-ux` off `main`.
+- **Done when:** a GUI-only user can start, watch, stop and re-run a download, find
+  an old one and open it, and change the settings that matter without meeting the
+  advanced ones; the CLI does the same with the same words; suite green under
+  `-race`; goldens byte-unchanged.
+- **Designed in:** [design-cycle5-ux.md](design-cycle5-ux.md) ·
+  [ADR-0013](decisions/0013-cycle5-unified-ux.md) ·
+  [ux-principles.md](ux-principles.md) (normative for later cycles).
+
 ## Deferred / planned, not yet scheduled
 
-- **GUI multi-page + broader UX overhaul (CLI + GUI)** — planned by the maintainer
-  for a dedicated session **after the core implementation is complete**. Make the web
-  GUI multi-page with a separate Settings section, plus a wider UX polish across the
-  CLI and GUI. Not yet scheduled; recorded here so the intent survives across
-  sessions. This is *not* the last planned work — the Phase-5 hardening cycle and the
-  6a AppleScript MVP still precede a v2.x that could ship it.
+- **Phase-5 hardening cycle** — automatic retries/backoff (`Attempts`/`NotBefore`)
+  and YouTube rate-limit handling. A full design already exists from a mis-scoped
+  design fork during Cycle 4; it is a good starting point. Next after Cycle 5.
+- **6a AppleScript/Automator MVP** — still planned (see Phase 6).
+- **Release of everything since v2.0.0** — `main` has accumulated Cycles 2A, 2B-core,
+  2C, 3, 2B-plus and 4 unreleased. By maintainer decision (2026-07-26) the tag is cut
+  **after** Cycle 5, in one release.
+- **Writable CLI config editor** (`ytdl config set`) — deferred by ADR-0013: it would
+  duplicate `config.Save`'s validation for a task the GUI already serves.
+- **Reordering the pending queue** — considered for Cycle 5 and left out: it needs a
+  new spool primitive (the spool is FIFO by filename today).
 
 ## Known open questions
 
