@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -395,9 +396,10 @@ func TestOpenEndpointRefusesEverythingButAKnownRecord(t *testing.T) {
 		want int
 	}{
 		{"an unknown record", idReq{ID: "ffffffffffffffff"}, http.StatusNotFound},
+		{"a prefix instead of a full id", idReq{ID: "0"}, http.StatusBadRequest},
 		{"an empty id", idReq{ID: ""}, http.StatusBadRequest},
-		{"a path instead of an id", idReq{ID: "/etc/passwd"}, http.StatusNotFound},
-		{"a traversal instead of an id", idReq{ID: "../../../etc/passwd"}, http.StatusNotFound},
+		{"a path instead of an id", idReq{ID: "/etc/passwd"}, http.StatusBadRequest},
+		{"a traversal instead of an id", idReq{ID: "../../../etc/passwd"}, http.StatusBadRequest},
 		{"a record pointing outside its folder", idReq{ID: byURL["https://youtu.be/OUT"].ID()}, http.StatusBadRequest},
 		{"a record pointing at a script", idReq{ID: byURL["https://youtu.be/SH"].ID()}, http.StatusBadRequest},
 		{"an unknown target", idReq{ID: byURL["https://youtu.be/SH"].ID(), Target: "exec"}, http.StatusBadRequest},
@@ -594,6 +596,139 @@ func TestLogEndpointCapsTheBody(t *testing.T) {
 	}
 	if len(body) > logMaxBytes {
 		t.Errorf("body is %d bytes, above the %d cap", len(body), logMaxBytes)
+	}
+}
+
+// TestLogEndpointRefusesAFIFO is a review WARNING. A FIFO planted under the
+// derived log name made os.Open block inside the open(2) syscall until a writer
+// appeared — uninterruptible by the request context or by server shutdown, so
+// every such request pinned a goroutine and a connection for the process's
+// lifetime. logExists already refused it; the endpoint did not.
+func TestLogEndpointRefusesAFIFO(t *testing.T) {
+	ts, _, _, logDir := apiServer(t)
+	when := time.Now().Add(-time.Hour)
+	job := failedJob("https://youtu.be/B", when, "boom")
+	entries := seedHistory(t, logDir, job)
+
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(logDir, entries[0].LogName())
+	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+		t.Skipf("cannot create a FIFO here: %v", err)
+	}
+
+	done := make(chan int, 1)
+	go func() {
+		resp, _ := getPath(t, ts, "/api/history/log?id="+entries[0].ID())
+		done <- resp.StatusCode
+	}()
+	select {
+	case status := <-done:
+		if status != http.StatusNotFound {
+			t.Errorf("status = %d, want 404 for a non-regular file", status)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the handler blocked on a FIFO: a goroutine and a connection are pinned for the process lifetime")
+	}
+}
+
+// TestLogEndpointRefusesASymlink: the containment check compares the DERIVED
+// path, and os.Open resolved the link afterwards — so a symlink planted under
+// the derived name served any file on the disk.
+func TestLogEndpointRefusesASymlink(t *testing.T) {
+	ts, _, _, logDir := apiServer(t)
+	when := time.Now().Add(-time.Hour)
+	entries := seedHistory(t, logDir, failedJob("https://youtu.be/B", when, "boom"))
+
+	secret := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(secret, []byte("SECRET-OUTSIDE-LOGDIR"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(logDir, entries[0].LogName())); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	resp, body := getPath(t, ts, "/api/history/log?id="+entries[0].ID())
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for a symlinked log", resp.StatusCode)
+	}
+	if strings.Contains(string(body), "SECRET-OUTSIDE-LOGDIR") {
+		t.Error("the endpoint served a file outside the log dir through a symlink")
+	}
+}
+
+// TestLogEndpointServesTheTail: yt-dlp's actual error is the LAST thing in the
+// file, so on the pathological log the cap exists for, reading from the start
+// showed everything except the reason the user opened the panel.
+func TestLogEndpointServesTheTail(t *testing.T) {
+	ts, _, _, logDir := apiServer(t)
+	when := time.Now().Add(-time.Hour)
+	job := failedJob("https://youtu.be/B", when, "boom")
+	job.Stderr = append(bytes.Repeat([]byte("x"), 4*logMaxBytes), []byte("\nERROR: the actual reason\n")...)
+	if err := logstore.Record(logDir, job); err != nil {
+		t.Fatal(err)
+	}
+	entries := seedHistory(t, logDir, job)
+
+	resp, body := getPath(t, ts, "/api/history/log?id="+entries[0].ID())
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if !strings.Contains(string(body), "ERROR: the actual reason") {
+		t.Error("the tail of the log — the part that says why — was cut off")
+	}
+	if len(body) > logMaxBytes {
+		t.Errorf("body is %d bytes, above the %d cap even counting the notice", len(body), logMaxBytes)
+	}
+	if !strings.Contains(string(body), "parte finale") {
+		t.Error("a truncated log does not say it was truncated")
+	}
+}
+
+// TestRecordLookupHonoursRetention: /api/history clamps its listing to the
+// retention window, but the id lookup behind open/again/log did not — so a
+// record the policy says is gone stayed a live launch and enqueue target,
+// merely invisible.
+func TestRecordLookupHonoursRetention(t *testing.T) {
+	ts, srv, _, logDir := apiServer(t)
+	srv.deps.RetentionDays = 7
+	entries := seedHistory(t, logDir,
+		savedJob(t, "https://youtu.be/OLD", "Vecchio", time.Now().AddDate(0, 0, -400)))
+	id := entries[0].ID()
+
+	_, body := getPath(t, ts, "/api/history")
+	var page historyPageDTO
+	json.Unmarshal(body, &page)
+	if len(page.Items) != 0 {
+		t.Fatalf("the listing shows %d out-of-window records, want 0", len(page.Items))
+	}
+	for _, path := range []string{"/api/history/open", "/api/history/again"} {
+		resp, _ := postJSON(t, ts, path, idReq{ID: id})
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("POST %s on an out-of-window record = %d, want 404", path, resp.StatusCode)
+		}
+	}
+	resp, _ := getPath(t, ts, "/api/history/log?id="+id)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("GET the log of an out-of-window record = %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestSecurityHeadersAreComplete: default-src 'none' does not cover
+// frame-ancestors, and a stale document paired with a new script half-initialises
+// the SPA.
+func TestSecurityHeadersAreComplete(t *testing.T) {
+	ts, _, _, _ := apiServer(t)
+	resp, _ := getPath(t, ts, "/")
+	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") {
+		t.Errorf("CSP does not forbid framing: %q", csp)
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("the document is served with Cache-Control %q, want no-store like the assets", cc)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/alergyonthestage/ytdl/internal/config"
@@ -267,7 +268,12 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
+	// no-store for the same reason the assets carry it: an upgraded ytdl serves a
+	// new app.js against the same URL, and a stale DOCUMENT paired with a new
+	// script is the other half of that pair — a missing element id makes $()
+	// return null and the script dies half-initialised.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	w.Write(indexHTML)
 }
 
@@ -707,28 +713,80 @@ func (s *Server) handleHistoryLog(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "log non disponibile")
 		return
 	}
-	f, err := os.Open(path)
+	// Refuse anything that is not a plain regular file BEFORE opening it. Lstat
+	// does not follow symlinks, which is the point twice over:
+	//
+	//   - a FIFO planted under the derived log name makes os.Open block inside
+	//     the open(2) syscall until a writer appears. Neither the request context
+	//     nor a server shutdown can interrupt that, so every such request would
+	//     pin a goroutine and a connection for the process's lifetime;
+	//   - a symlink under that name served any file on the disk, because the
+	//     containment check compares the derived PATH and os.Open resolves the
+	//     link afterwards.
+	//
+	// Both need local write access to the log dir — the same trust level the
+	// design already declares untrusted for history.jsonl itself.
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		writeErr(w, http.StatusNotFound, "log non disponibile (scaduto o mai scritto)")
+		return
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
-		// Pruned by retention, or never written because log_dir was unset. Not
-		// an error condition — the detail is simply gone.
 		writeErr(w, http.StatusNotFound, "log non disponibile (scaduto o mai scritto)")
 		return
 	}
 	defer f.Close()
+	// Re-check on the open handle, closing the window between Lstat and open.
+	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
+		writeErr(w, http.StatusNotFound, "log non disponibile")
+		return
+	}
+
+	// Serve the TAIL, not the head. yt-dlp's actual error is the last thing in
+	// the file, so on the pathological log the cap exists for, reading from the
+	// start would show everything except the reason the user opened the panel.
+	notice := ""
+	budget := int64(logMaxBytes)
+	if size := info.Size(); size > logMaxBytes {
+		notice = fmt.Sprintf("[… log troppo lungo: mostro solo la parte finale, %d KB …]\n\n", logMaxBytes/1024)
+		budget -= int64(len(notice))
+		if _, err := f.Seek(size-budget, io.SeekStart); err != nil {
+			notice, budget = "", logMaxBytes
+		}
+	}
 
 	// text/plain + nosniff (set globally) so a .log full of HTML can never be
 	// rendered as a document.
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Disposition", "inline")
-	_, _ = io.Copy(w, io.LimitReader(f, logMaxBytes))
+	// The notice counts against the cap, so the response is bounded by
+	// logMaxBytes whatever happens.
+	io.WriteString(w, notice)
+	_, _ = io.Copy(w, io.LimitReader(f, budget))
 }
 
 // findRecord resolves a record id, writing the 404 itself when there is no such
 // record. The second return says whether the caller may continue.
+//
+// Two constraints the CLI's own lookup does not have:
+//
+//   - the id must be COMPLETE. logstore.Find accepts an unambiguous prefix
+//     because that is the CLI's targeting grammar; over HTTP every caller holds
+//     a full id from a DTO, and accepting prefixes would mean which record a
+//     given request designates depends on the whole store's contents and can
+//     change as records are appended.
+//   - the record must be inside the retention window, the same one /api/history
+//     clamps its listing to. Without it a record the policy says is gone stayed
+//     a live launch and enqueue target — merely invisible.
 func (s *Server) findRecord(w http.ResponseWriter, id string) (logstore.Entry, bool) {
 	if s.deps.LogDir == "" {
 		writeErr(w, http.StatusNotFound, "storico non disponibile")
+		return logstore.Entry{}, false
+	}
+	if !isFullRecordID(id) {
+		writeErr(w, http.StatusBadRequest, "id non valido")
 		return logstore.Entry{}, false
 	}
 	e, err := logstore.Find(s.deps.LogDir, id)
@@ -736,8 +794,31 @@ func (s *Server) findRecord(w http.ResponseWriter, id string) (logstore.Entry, b
 		writeErr(w, http.StatusNotFound, "record non trovato")
 		return logstore.Entry{}, false
 	}
+	if s.deps.RetentionDays > 0 && e.Time.Before(time.Now().AddDate(0, 0, -s.deps.RetentionDays)) {
+		writeErr(w, http.StatusNotFound, "record non trovato")
+		return logstore.Entry{}, false
+	}
 	return e, true
 }
+
+// isFullRecordID reports whether id is a complete 16-hex record id, the shape
+// logstore.Entry.ID produces.
+func isFullRecordID(id string) bool {
+	id = strings.TrimSpace(id)
+	if len(id) != recordIDLen {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+// recordIDLen mirrors the length logstore.Entry.ID returns.
+const recordIDLen = 16
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
