@@ -19,7 +19,14 @@ import (
 
 // testResolve mimics cmd/ytdl's resolveWithFlags: config file (at cfgPath) under
 // the flag layer, no env. It is what the GUI honours for precedence.
-func testResolve(cfgPath string) func(config.Partial) (config.Settings, []config.Warning) {
+//
+// logDir is forced to the test's own store, because in production Deps.LogDir
+// and the resolved settings agree by construction (cmd/ytdl builds the first
+// from the second). A harness where they disagree is not a harness for anything
+// real — and since the server now re-resolves per request rather than trusting
+// its construction-time snapshot, that disagreement would silently point every
+// read somewhere else.
+func testResolve(cfgPath, logDir string) func(config.Partial) (config.Settings, []config.Warning) {
 	return func(flags config.Partial) (config.Settings, []config.Warning) {
 		var file config.Partial
 		var warns []config.Warning
@@ -27,6 +34,7 @@ func testResolve(cfgPath string) func(config.Partial) (config.Settings, []config
 			file, warns = fp, fw
 		}
 		s, rw := config.Resolve(flags, config.Partial{}, file, config.Env{})
+		s.LogDir = logDir
 		return s, append(warns, rw...)
 	}
 }
@@ -39,11 +47,12 @@ func newTestServer(t *testing.T) (*Server, *queue.Spool, string) {
 		t.Fatal(err)
 	}
 	cfgPath := filepath.Join(dir, "config")
+	logDir := filepath.Join(dir, "logs")
 	srv := New(Deps{
 		Spool:         sp,
 		ConfigPath:    cfgPath,
-		Resolve:       testResolve(cfgPath),
-		LogDir:        filepath.Join(dir, "logs"),
+		Resolve:       testResolve(cfgPath, logDir),
+		LogDir:        logDir,
 		RetentionDays: 30,
 		DaemonRunning: func() bool { return true },
 	})

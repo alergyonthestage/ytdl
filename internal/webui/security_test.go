@@ -25,9 +25,10 @@ func newSecureServer(t *testing.T) (*Server, *queue.Spool) {
 		t.Fatal(err)
 	}
 	cfgPath := filepath.Join(dir, "config")
+	logDir := filepath.Join(dir, "logs")
 	srv := New(Deps{
-		Spool: sp, ConfigPath: cfgPath, Resolve: testResolve(cfgPath),
-		LogDir: filepath.Join(dir, "logs"), RetentionDays: 30,
+		Spool: sp, ConfigPath: cfgPath, Resolve: testResolve(cfgPath, logDir),
+		LogDir: logDir, RetentionDays: 30,
 		DaemonRunning: func() bool { return true },
 		Token:         testToken,
 	})

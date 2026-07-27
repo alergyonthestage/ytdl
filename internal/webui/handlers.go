@@ -111,6 +111,11 @@ type stateDTO struct {
 	// the open/reveal controls are not rendered at all rather than rendered and
 	// failed (ux-principles.md §4).
 	CanOpen bool `json:"canOpen"`
+	// RetentionDays is the window the history covers. "Never a number without its
+	// window" (ux-principles.md §5) applied to the GUI: without it, a search for
+	// something downloaded two months ago answers "nessun download corrisponde"
+	// and the user concludes ytdl lost their downloads. 0 = kept forever.
+	RetentionDays int `json:"retentionDays"`
 }
 
 type progressPayload struct {
@@ -282,12 +287,14 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "GET only")
 		return
 	}
+	_, retentionDays := s.historyStore()
 	writeJSON(w, http.StatusOK, stateDTO{
 		Queue:         s.buildQueueDTO(),
 		History:       s.recentHistory(),
 		DaemonRunning: s.daemonRunning(),
 		SessionOut:    s.sessionOut(),
 		CanOpen:       jobs.CanOpen(),
+		RetentionDays: retentionDays,
 	})
 }
 
@@ -301,16 +308,30 @@ func (s *Server) recentHistory() []historyDTO {
 	return s.toHistoryDTOs(entries)
 }
 
+// historyStore is where the GUI reads history from, and for how far back. It is
+// re-resolved per request rather than taken from construction, because both are
+// editable in the settings view this same server serves.
+func (s *Server) historyStore() (dir string, retentionDays int) {
+	dir, retentionDays = s.deps.LogDir, s.deps.RetentionDays
+	if s.deps.Resolve != nil {
+		if resolved, _ := s.deps.Resolve(config.Partial{}); resolved.LogDir != "" {
+			dir, retentionDays = resolved.LogDir, resolved.LogRetentionDays
+		}
+	}
+	return dir, retentionDays
+}
+
 // loadHistory runs one history query against the configured store, always within
 // the retention window so a stale record outside it can never surface.
 func (s *Server) loadHistory(opts logstore.QueryOpts) ([]logstore.Entry, error) {
-	if s.deps.LogDir == "" {
+	dir, retentionDays := s.historyStore()
+	if dir == "" {
 		return nil, nil
 	}
-	if s.deps.RetentionDays > 0 {
-		opts.Since = time.Now().AddDate(0, 0, -s.deps.RetentionDays)
+	if retentionDays > 0 {
+		opts.Since = time.Now().AddDate(0, 0, -retentionDays)
 	}
-	return logstore.Load(s.deps.LogDir, opts)
+	return logstore.Load(dir, opts)
 }
 
 func (s *Server) toHistoryDTOs(entries []logstore.Entry) []historyDTO {
@@ -374,10 +395,11 @@ func (s *Server) displayLocation(e logstore.Entry) string {
 // is a second line of defence in case a hand-edited record ever produced an
 // exotic timestamp.
 func (s *Server) logPath(e logstore.Entry) string {
-	if s.deps.LogDir == "" {
+	logDir, _ := s.historyStore()
+	if logDir == "" {
 		return ""
 	}
-	dir := filepath.Clean(s.deps.LogDir)
+	dir := filepath.Clean(logDir)
 	path := filepath.Clean(filepath.Join(dir, e.LogName()))
 	if filepath.Dir(path) != dir {
 		return ""
@@ -781,7 +803,8 @@ func (s *Server) handleHistoryLog(w http.ResponseWriter, r *http.Request) {
 //     clamps its listing to. Without it a record the policy says is gone stayed
 //     a live launch and enqueue target — merely invisible.
 func (s *Server) findRecord(w http.ResponseWriter, id string) (logstore.Entry, bool) {
-	if s.deps.LogDir == "" {
+	logDir, retentionDays := s.historyStore()
+	if logDir == "" {
 		writeErr(w, http.StatusNotFound, "storico non disponibile")
 		return logstore.Entry{}, false
 	}
@@ -789,12 +812,12 @@ func (s *Server) findRecord(w http.ResponseWriter, id string) (logstore.Entry, b
 		writeErr(w, http.StatusBadRequest, "id non valido")
 		return logstore.Entry{}, false
 	}
-	e, err := logstore.Find(s.deps.LogDir, id)
+	e, err := logstore.Find(logDir, id)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "record non trovato")
 		return logstore.Entry{}, false
 	}
-	if s.deps.RetentionDays > 0 && e.Time.Before(time.Now().AddDate(0, 0, -s.deps.RetentionDays)) {
+	if retentionDays > 0 && e.Time.Before(time.Now().AddDate(0, 0, -retentionDays)) {
 		writeErr(w, http.StatusNotFound, "record non trovato")
 		return logstore.Entry{}, false
 	}

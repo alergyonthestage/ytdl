@@ -431,9 +431,10 @@ function historyURL() {
 }
 
 function historyEmptyText() {
-  if (historyQuery.q) return "Nessun download corrisponde a questa ricerca.";
-  if (historyQuery.filter === "failed") return "Nessun download non riuscito. Buon segno.";
-  if (historyQuery.filter === "ok") return "Nessun download completato in questo periodo.";
+  const window = " (la cronologia copre " + retentionLabel() + ")";
+  if (historyQuery.q) return "Nessun download corrisponde a questa ricerca." + window;
+  if (historyQuery.filter === "failed") return "Nessun download non riuscito. Buon segno." + window;
+  if (historyQuery.filter === "ok") return "Nessun download completato." + window;
   return "Nessun download registrato. Il primo comparirà qui.";
 }
 
@@ -526,10 +527,24 @@ function setDaemon(on) {
   $("daemonTxt").textContent = on ? "motore attivo" : "motore inattivo";
 }
 
+// retentionDays is the window the history covers, as the server reports it.
+// "Never a number without its window" (ux-principles.md §5): without saying so,
+// a search for something downloaded two months ago answers "nessun download
+// corrisponde" and the user concludes ytdl lost their downloads.
+let retentionDays = 0;
+
+function retentionLabel() {
+  if (retentionDays <= 0) return "da sempre";
+  if (retentionDays === 1) return "ultimo giorno";
+  return "ultimi " + retentionDays + " giorni";
+}
+
 function applyState(s) {
   applyQueue(s.queue);
   renderRecent(s.history);
   setDaemon(s.daemonRunning);
+  retentionDays = Number(s.retentionDays) || 0;
+  $("historyWindow").textContent = "— " + retentionLabel();
   $("sessionOut").value = s.sessionOutputDir || "";
 }
 

@@ -707,3 +707,35 @@ func TestBareVideoIDStillPasses(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderConfigKeepsTheProvenanceColumn is a review finding: clipping whole
+// LINES truncated the right-hand column first, and the right-hand column is the
+// entire reason the command exists. A stock config has two values long enough to
+// trigger it, so the common case lost the answer on any 80-column terminal.
+func TestRenderConfigKeepsTheProvenanceColumn(t *testing.T) {
+	v := configView() // stock settings: the name template and strip regexes are long
+	v.Width = 80
+
+	got := RenderConfig(v)
+	for _, line := range strings.Split(strings.TrimRight(got, "\n"), "\n") {
+		if !strings.HasPrefix(line, "    ") || strings.TrimSpace(line) == "" {
+			continue // a header, not a setting row
+		}
+		if !strings.HasSuffix(line, ")") {
+			t.Errorf("a setting row lost its source column:\n%q", line)
+		}
+		if w := term.DisplayWidth(line); w > 80 {
+			t.Errorf("row is %d columns wide, want ≤ 80:\n%q", w, line)
+		}
+	}
+}
+
+// TestRenderConfigDoesNotClipWhenPiped: a pipe or a file has no width, and
+// truncating there would corrupt what the user is capturing.
+func TestRenderConfigDoesNotClipWhenPiped(t *testing.T) {
+	v := configView()
+	v.Width = 0
+	if got := RenderConfig(v); !strings.Contains(got, config.NameTemplate) {
+		t.Error("the full name template was clipped even with no terminal width")
+	}
+}

@@ -42,8 +42,14 @@ type Deps struct {
 	// exactly cmd/ytdl's resolveWithFlags — so the GUI honours the same
 	// precedence as the CLI.
 	Resolve func(config.Partial) (config.Settings, []config.Warning)
-	// LogDir / RetentionDays locate the durable history the GUI reads. Taken from
-	// the resolved settings at construction so history reads need no re-resolve.
+	// LogDir / RetentionDays locate the durable history the GUI reads. They are
+	// the FALLBACK only: every read re-resolves them through Resolve, because
+	// they are user-editable in the very settings view this server serves.
+	// Snapshotting them at construction meant that after saving a new log dir the
+	// GUI answered "✓ salvate", wrote new records to the new dir, and went on
+	// reading the old one for the daemon's whole life — so the user's new
+	// downloads simply never appeared, while the CLI (which re-resolves per
+	// invocation) showed them.
 	LogDir        string
 	RetentionDays int
 	// DaemonRunning reports queue-daemon liveness for the status panel

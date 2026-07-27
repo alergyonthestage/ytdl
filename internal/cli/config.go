@@ -65,11 +65,39 @@ func RenderConfig(v ConfigView) string {
 	for _, g := range groups {
 		fmt.Fprintf(&b, "  %s\n", g.title)
 		for _, r := range g.rows {
-			fmt.Fprintf(&b, "    %s%s  (%s)\n", term.Pad(r.label, configLabelCols), r.value, r.source)
+			fmt.Fprintf(&b, "    %s%s  (%s)\n",
+				term.Pad(r.label, configLabelCols), clipValue(r, v.Width), r.source)
 		}
 	}
 	b.WriteString("\nModifica:  ytdl gui   ·   oppure apri il file qui sopra in un editor\n")
-	return clipTo(b.String(), v.Width)
+	// Deliberately NOT clipTo: clipping whole lines truncates the right-hand
+	// column first, and the right-hand column is the provenance — the entire
+	// reason this command exists ("where did this value come from?"). A stock
+	// config has two values long enough to trigger it (the name template and the
+	// strip regexes), so the common case lost the answer. clipValue shortens the
+	// VALUE instead, which keeps every row's source visible.
+	return b.String()
+}
+
+// clipValue shortens a setting's value so the row still fits, leaving room for
+// the label column and the source annotation. width <= 0 (not a terminal) means
+// no clipping at all: a pipe or a file has no width, and truncating there would
+// corrupt what the user is capturing.
+func clipValue(r configRow, width int) string {
+	if width <= 0 {
+		return r.value
+	}
+	// "    " + label + value + "  (" + source + ")"
+	overhead := 4 + configLabelCols + 2 + len(r.source) + 2
+	room := width - overhead
+	const minRoom = 12
+	if room < minRoom {
+		room = minRoom
+	}
+	if term.DisplayWidth(r.value) <= room {
+		return r.value
+	}
+	return term.Clip(r.value, room)
 }
 
 // configFileLine names the config file, and says plainly when there isn't one —
