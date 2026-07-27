@@ -74,6 +74,7 @@ const (
 	MsgTooManyArguments = "✗ Troppi argomenti: accetto un solo URL (ho già %q)." // %q = first URL
 	MsgInvalidFormat    = "✗ Formato non valido: %s (ammessi: %s)."              // %s fmt, %s list
 	MsgMissingLimit     = "✗ Manca il numero (argomento di --limit)."
+	MsgMissingSearch    = "✗ Manca il testo da cercare (argomento di --search)."
 	MsgInvalidLimit     = "✗ Limite non valido: %s (serve un intero non negativo)." // %s = the offending token
 	MsgTooManyTargets   = "✗ Un solo indice per volta (oppure --all)."
 	MsgTargetAndAll     = "✗ Indica un indice OPPURE --all, non entrambi."

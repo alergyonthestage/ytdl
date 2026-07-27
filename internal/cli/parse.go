@@ -30,6 +30,9 @@ const (
 	ActionGUI     // `ytdl gui` — open the local web interface (Cycle 3)
 	ActionCancel  // `ytdl cancel [<n>|<id>|--all]` — stop live work (Cycle 2B-plus)
 	ActionRetry   // `ytdl retry [<n>|<id>|--all]` — re-queue a failed job (Cycle 2B-plus)
+	ActionOpen    // `ytdl open [<n>|<id>] [--folder]` — open a downloaded file (Cycle 5)
+	ActionAgain   // `ytdl again [<n>|<id>]` — download a history record again (Cycle 5)
+	ActionConfig  // `ytdl config [--path]` — show the effective settings (Cycle 5)
 )
 
 // Parsed is the result of parsing. When Action == ActionRun, RunMode, URL and
@@ -45,12 +48,17 @@ type Parsed struct {
 	QueueWatch bool    // `queue --watch`: redraw on an interval
 
 	// History fields (valid when Action == ActionHistory).
-	HistoryFailed bool // --failed: only failures
-	HistoryLimit  int  // --limit N: cap the rows (DefaultHistoryLimit if unset)
+	HistoryFailed bool   // --failed: only failures
+	HistoryLimit  int    // --limit N: cap the rows (DefaultHistoryLimit if unset)
+	HistorySearch string // --search Q: match title, link or saved file name
 
-	// Cancel/retry fields (valid when Action == ActionCancel or ActionRetry).
+	// Cancel/retry/open/again field (valid for those actions).
 	Target string // the <n> index or <id-prefix>; "" with !All means "list them"
-	All    bool   // --all: act on every matching job
+	All    bool   // --all: act on every matching job (cancel/retry only)
+
+	// Cycle 5 fields.
+	OpenFolder     bool // `open --folder`: show it in the file manager instead
+	ConfigPathOnly bool // `config --path`: print only the config file path
 }
 
 // ParseError is a user-facing parse failure. Usage requests that the help text
@@ -90,6 +98,12 @@ func Parse(args []string) (*Parsed, error) {
 			return parseTargeted(ActionCancel, args[1:])
 		case "retry":
 			return parseTargeted(ActionRetry, args[1:])
+		case "open":
+			return parseOpen(args[1:])
+		case "again":
+			return parseAgain(args[1:])
+		case "config":
+			return parseConfig(args[1:])
 		}
 	}
 
@@ -231,15 +245,26 @@ func parseStatus(rest []string) (*Parsed, error) {
 	return &Parsed{Action: ActionStatus}, nil
 }
 
-// parseHistory parses `history [--failed] [--limit N]`. --failed filters to
-// failures; --limit caps the rows (a non-negative integer). Unknown options
-// error with usage, like the other subcommands.
+// parseHistory parses `history [--failed] [--limit N] [--search Q]`. --failed
+// filters to failures; --limit caps the rows (a non-negative integer); --search
+// matches a substring of the title, the link or the saved file's name, mirroring
+// the GUI's search box so the two channels find the same records. Unknown
+// options error with usage, like the other subcommands.
 func parseHistory(rest []string) (*Parsed, error) {
 	p := &Parsed{Action: ActionHistory, HistoryLimit: DefaultHistoryLimit}
 	for i := 0; i < len(rest); i++ {
 		switch rest[i] {
 		case "--failed":
 			p.HistoryFailed = true
+		case "--search":
+			// An empty query is rejected rather than treated as "no filter": the
+			// user typed --search meaning to narrow, and silently listing
+			// everything would look like the filter failed to work.
+			if i+1 >= len(rest) || rest[i+1] == "" {
+				return nil, &ParseError{Msg: MsgMissingSearch}
+			}
+			p.HistorySearch = rest[i+1]
+			i++
 		case "--limit":
 			if i+1 >= len(rest) || rest[i+1] == "" {
 				return nil, &ParseError{Msg: MsgMissingLimit}
@@ -277,6 +302,67 @@ func parseTargeted(action Action, rest []string) (*Parsed, error) {
 	}
 	if p.All && p.Target != "" {
 		return nil, &ParseError{Msg: MsgTargetAndAll, Usage: true}
+	}
+	return p, nil
+}
+
+// parseOpen parses `open [<n>|<id>] [--folder]`. The target grammar is the one
+// cancel/retry already use — an index into the list the command prints, or an
+// id-prefix — so the tool has ONE way to name a thing. --folder shows the file
+// in the file manager instead of opening it. With no target the command prints
+// the numbered history to read an index off, exactly as a bare `ytdl cancel`
+// prints the queue.
+//
+// There is deliberately no --all: opening twenty files at once is not a thing
+// anyone means to do, unlike cancelling twenty queued jobs.
+func parseOpen(rest []string) (*Parsed, error) {
+	p := &Parsed{Action: ActionOpen}
+	for _, a := range rest {
+		switch {
+		case a == "--folder":
+			p.OpenFolder = true
+		case strings.HasPrefix(a, "-"):
+			return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, a), Usage: true}
+		case p.Target != "":
+			return nil, &ParseError{Msg: MsgTooManyTargets, Usage: true}
+		default:
+			p.Target = a
+		}
+	}
+	return p, nil
+}
+
+// parseAgain parses `again [<n>|<id>]` — same target grammar, no options. Like
+// open, no --all: "download all of these again" is a way to flood the queue by
+// accident.
+func parseAgain(rest []string) (*Parsed, error) {
+	p := &Parsed{Action: ActionAgain}
+	for _, a := range rest {
+		switch {
+		case strings.HasPrefix(a, "-"):
+			return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, a), Usage: true}
+		case p.Target != "":
+			return nil, &ParseError{Msg: MsgTooManyTargets, Usage: true}
+		default:
+			p.Target = a
+		}
+	}
+	return p, nil
+}
+
+// parseConfig parses `config [--path]`. It is read-only by design (ADR-0013): a
+// CLI write path would duplicate config.Save's validation surface for a task the
+// GUI and a text editor already serve. --path prints only the file path, for
+// scripts that want to open or back it up.
+func parseConfig(rest []string) (*Parsed, error) {
+	p := &Parsed{Action: ActionConfig}
+	for _, a := range rest {
+		switch a {
+		case "--path":
+			p.ConfigPathOnly = true
+		default:
+			return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, a), Usage: true}
+		}
 	}
 	return p, nil
 }

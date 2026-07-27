@@ -19,7 +19,7 @@ func looksLikeURL(tok string) bool {
 // knownCommands are the subcommands a mistyped bare word might be aiming at, for
 // the "did you mean" hint. Help/version/update are flags, not positionals, so a
 // bare "help" would not reach here; they are intentionally omitted.
-var knownCommands = []string{"queue", "status", "history", "gui", "cancel", "retry"}
+var knownCommands = []string{"queue", "status", "history", "gui", "cancel", "retry", "open", "again", "config"}
 
 // nearestCommand returns the closest known subcommand to tok, or "" if nothing is
 // close enough. Comparison is case-insensitive ("Queue" is as much a typo as

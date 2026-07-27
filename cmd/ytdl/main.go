@@ -82,6 +82,12 @@ func realMain(args []string) int {
 		return runCancelCmd(parsed)
 	case cli.ActionRetry:
 		return runRetryCmd(parsed)
+	case cli.ActionOpen:
+		return runOpenCmd(parsed)
+	case cli.ActionAgain:
+		return runAgainCmd(parsed)
+	case cli.ActionConfig:
+		return runConfigCmd(parsed)
 	}
 
 	// ActionRun. C1: a bad -f flag fails fast (unlike the config file, which
@@ -863,11 +869,26 @@ func fileExists(path string) bool {
 
 // runHistoryCmd prints the durable download history from the log store —
 // foreground and background alike — newest first, within the retention window.
+// The rows are numbered so the number can be handed straight to `ytdl open` /
+// `ytdl again` (design §9.2).
 func runHistoryCmd(p *cli.Parsed) int {
+	settings, entries, rc := loadHistoryFor(p.HistoryLimit, p.HistoryFailed, p.HistorySearch)
+	if rc != 0 {
+		return rc
+	}
+	fmt.Print(term.Colorize(cli.RenderHistory(entries, historyView(settings, p)), colorStdout()))
+	return 0
+}
+
+// loadHistoryFor is the one history query the CLI makes, shared by `history` and
+// by the target resolution of `open`/`again` — so the numbering a user reads off
+// a listing is the numbering those commands resolve against. A non-zero third
+// return is the exit code the caller should return, its message already printed.
+func loadHistoryFor(limit int, onlyFailed bool, search string) (config.Settings, []logstore.Entry, int) {
 	settings, _ := resolveWithFlags(config.Partial{})
 	if settings.LogDir == "" {
 		fmt.Fprintln(os.Stderr, "✗ Impossibile individuare lo storico: $HOME non è impostata.")
-		return 1
+		return settings, nil, 1
 	}
 	_ = logstore.Prune(settings.LogDir, settings.LogRetentionDays) // keep the window honest
 	var since time.Time
@@ -876,14 +897,218 @@ func runHistoryCmd(p *cli.Parsed) int {
 	}
 	entries, err := logstore.Load(settings.LogDir, logstore.QueryOpts{
 		Since:      since,
-		Limit:      p.HistoryLimit,
-		OnlyFailed: p.HistoryFailed,
+		Limit:      limit,
+		OnlyFailed: onlyFailed,
+		Search:     search,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "✗ Impossibile leggere lo storico: %v\n", err)
+		return settings, nil, 1
+	}
+	return settings, entries, 0
+}
+
+// historyView assembles the rendering context at the edge, so the renderer stays
+// pure (no clock, no $HOME, no ioctl inside the formatting code).
+func historyView(settings config.Settings, p *cli.Parsed) cli.HistoryView {
+	return cli.HistoryView{
+		RetentionDays: settings.LogRetentionDays,
+		Width:         listWidth(),
+		Home:          homeDir(),
+		Search:        p.HistorySearch,
+		OnlyFailed:    p.HistoryFailed,
+	}
+}
+
+// listWidth is the terminal width to clip listings to, or 0 when stdout is not a
+// terminal (a pipe or a file has no width, and clipping there would corrupt the
+// data the user is capturing).
+func listWidth() int {
+	if !term.IsTTY(os.Stdout) {
+		return 0
+	}
+	return term.Width()
+}
+
+// homeDir is $HOME for ~-contraction, or "" when it cannot be resolved (paths
+// then print absolute, which is correct if less pretty).
+func homeDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home
+}
+
+// runOpenCmd opens a downloaded file, or shows it in the file manager with
+// --folder. With no target it prints the numbered history to read an index off,
+// exactly as a bare `ytdl cancel` prints the queue.
+func runOpenCmd(p *cli.Parsed) int {
+	if !jobs.CanOpen() {
+		fmt.Fprintln(os.Stderr, "✗ Su questo sistema ytdl non sa aprire file.")
+		fmt.Fprintln(os.Stderr, "  Il percorso è comunque nello storico:  ytdl history")
 		return 1
 	}
-	fmt.Print(term.Colorize(cli.RenderHistory(entries, settings.LogRetentionDays), colorStdout()))
+	settings, entries, rc := loadHistoryFor(cli.DefaultHistoryLimit, false, "")
+	if rc != 0 {
+		return rc
+	}
+	if p.Target == "" {
+		fmt.Print(term.Colorize(cli.RenderHistory(entries, historyView(settings, p)), colorStdout()))
+		return 0
+	}
+	e, res := resolveRecord(p.Target, entries, settings.LogDir)
+	if res != targetOK {
+		return reportUnresolved(p.Target, res)
+	}
+
+	target := jobs.OpenFile
+	if p.OpenFolder {
+		target = jobs.OpenFolder
+	}
+	if err := jobs.Open(e, target); err != nil {
+		fmt.Fprintf(os.Stderr, "✗ %s\n", openFailure(err, e))
+		return 1
+	}
+	if p.OpenFolder {
+		fmt.Printf("▸ Mostro: %s\n", recordLabel(e))
+	} else {
+		fmt.Printf("▸ Apro: %s\n", recordLabel(e))
+	}
+	return 0
+}
+
+// openFailure turns a refusal into a sentence that says what to do next
+// (ux-principles.md §5), because every one of these has a different next step.
+func openFailure(err error, e logstore.Entry) string {
+	switch {
+	case errors.Is(err, jobs.ErrNoPath):
+		if !e.Success {
+			return "Questo download non è riuscito, quindi non c'è nessun file da aprire.\n  Riscaricalo con:  ytdl again <n>"
+		}
+		return "Di questo download non è stato registrato il percorso (è precedente a questa versione).\n  Riscaricalo con:  ytdl again <n>"
+	case errors.Is(err, jobs.ErrGone):
+		return "Il file non è più al suo posto: è stato spostato, rinominato o eliminato.\n  Riscaricalo con:  ytdl again <n>"
+	case errors.Is(err, jobs.ErrOutsideDir), errors.Is(err, jobs.ErrNotAudio):
+		return "Il percorso registrato non è un file audio prodotto da ytdl: non lo apro."
+	default:
+		return fmt.Sprintf("Impossibile aprire: %v", err)
+	}
+}
+
+// runAgainCmd downloads a history record again ("Riscarica"). It is separate
+// from `retry` because it acts on a different object — a durable record rather
+// than a spool job that still exists (ux-principles.md §3).
+func runAgainCmd(p *cli.Parsed) int {
+	stateDir := config.StatePath()
+	if stateDir == "" {
+		fmt.Fprintln(os.Stderr, "✗ Impossibile individuare la coda: $HOME non è impostata.")
+		return 1
+	}
+	settings, entries, rc := loadHistoryFor(cli.DefaultHistoryLimit, false, "")
+	if rc != 0 {
+		return rc
+	}
+	if p.Target == "" {
+		fmt.Print(term.Colorize(cli.RenderHistory(entries, historyView(settings, p)), colorStdout()))
+		return 0
+	}
+	e, res := resolveRecord(p.Target, entries, settings.LogDir)
+	if res != targetOK {
+		return reportUnresolved(p.Target, res)
+	}
+
+	sp := queue.Open(stateDir)
+	if _, err := jobs.Again(sp, e, settings); err != nil {
+		if errors.Is(err, jobs.ErrAlreadyQueued) {
+			fmt.Fprintf(os.Stderr, "✗ È già in coda: %s\n", recordLabel(e))
+			fmt.Fprintln(os.Stderr, "  Guarda a che punto è con:  ytdl queue")
+			return 1
+		}
+		fmt.Fprintf(os.Stderr, "✗ Impossibile accodare: %v\n", err)
+		return 1
+	}
+	if err := spawnQueueDaemon(); err != nil {
+		// The job is safely queued; warn but do not fail — a later `ytdl -b` or
+		// `ytdl queue` starts a daemon to drain it.
+		fmt.Fprintf(os.Stderr, "! Accodato, ma non ho potuto avviare il daemon: %v\n", err)
+		fmt.Fprintln(os.Stderr, "  Controlla con:  ytdl queue")
+	}
+	fmt.Printf("▸ Rimesso in coda: %s\n", recordLabel(e))
+	fmt.Printf("  Audio → %s\n", settings.OutputDir)
+	return 0
+}
+
+// spawnQueueDaemon starts the on-demand daemon. It is a package var so tests can
+// stub the self-exec, which would otherwise launch a real detached process.
+var spawnQueueDaemon = daemon.Spawn
+
+// resolveRecord maps an `open`/`again` target to a history record, using exactly
+// the grammar cancel/retry use: a short integer is a 1-based index into the list
+// the command just printed, anything else is an id-prefix. The index is resolved
+// against the SAME query the listing used, so what the user counted is what gets
+// acted on; the id-prefix goes to logstore.Find, which searches the whole
+// retention window and so still works for a record below the listing's limit.
+func resolveRecord(target string, entries []logstore.Entry, logDir string) (logstore.Entry, targetResult) {
+	if isIndex(target) {
+		n, _ := strconv.Atoi(target)
+		if n >= 1 && n <= len(entries) {
+			return entries[n-1], targetOK
+		}
+		return logstore.Entry{}, targetNotFound
+	}
+	e, err := logstore.Find(logDir, target)
+	switch {
+	case err == nil:
+		return e, targetOK
+	case errors.Is(err, logstore.ErrAmbiguous):
+		return logstore.Entry{}, targetAmbiguous
+	default:
+		return logstore.Entry{}, targetNotFound
+	}
+}
+
+// recordLabel names a history record in a confirmation line: the resolved title
+// with its link, or the bare link when no title was ever captured.
+func recordLabel(e logstore.Entry) string {
+	if e.Title != "" && !e.Playlist {
+		return e.Title + " — " + e.URL
+	}
+	return e.URL
+}
+
+// runConfigCmd prints the effective settings and, for each, the layer that
+// decided it. Read-only by design (ADR-0013).
+func runConfigCmd(p *cli.Parsed) int {
+	path := config.ConfigPath()
+	if p.ConfigPathOnly {
+		if path == "" {
+			fmt.Fprintln(os.Stderr, "✗ Impossibile determinare il file di configurazione: $HOME non è impostata.")
+			return 1
+		}
+		fmt.Println(path)
+		return 0
+	}
+
+	var file config.Partial
+	if path != "" {
+		if fp, _, err := config.LoadFile(path); err == nil {
+			file = fp
+		}
+	}
+	settings, warns := resolveWithFlags(config.Partial{})
+	for _, w := range warns {
+		fmt.Fprintf(os.Stderr, "! %s\n", w.String())
+	}
+	fmt.Print(term.Colorize(cli.RenderConfig(cli.ConfigView{
+		Path:     path,
+		Exists:   path != "" && fileExists(path),
+		Settings: settings,
+		File:     file,
+		Env:      config.Env{OutDir: os.Getenv("YTDL_OUT_DIR")},
+		Home:     homeDir(),
+		Width:    listWidth(),
+	}), colorStdout()))
 	return 0
 }
 

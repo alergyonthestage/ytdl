@@ -44,6 +44,21 @@ func Clip(s string, maxCols int) string {
 	return b.String()
 }
 
+// Pad right-pads s with spaces to exactly cols terminal COLUMNS, or clips it to
+// cols when it is already wider. It is what keeps a table's columns aligned when
+// a cell holds CJK or emoji: fmt's "%-20s" pads by BYTES, which misaligns a
+// column as soon as a title is not plain ASCII. cols <= 0 yields s unchanged.
+func Pad(s string, cols int) string {
+	if cols <= 0 {
+		return s
+	}
+	w := DisplayWidth(s)
+	if w > cols {
+		return Clip(s, cols)
+	}
+	return s + strings.Repeat(" ", cols-w)
+}
+
 func runeWidth(r rune) int {
 	switch {
 	case isZeroWidth(r):

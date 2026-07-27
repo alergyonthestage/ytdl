@@ -10,7 +10,7 @@ import (
 )
 
 func TestRenderHistoryEmpty(t *testing.T) {
-	got := RenderHistory(nil, 30)
+	got := RenderHistory(nil, HistoryView{RetentionDays: 30})
 	if !strings.Contains(got, "ultimi 30 giorni") {
 		t.Errorf("history header missing window label:\n%s", got)
 	}
@@ -25,15 +25,14 @@ func TestRenderHistoryRows(t *testing.T) {
 		{Time: at, Title: "Massive Attack - Black Milk", Success: true},
 		{Time: at.Add(-time.Hour), URL: "https://www.youtube.com/watch?v=Xk3long", Success: false},
 	}
-	got := RenderHistory(entries, 0) // 0 = keep forever
+	got := RenderHistory(entries, HistoryView{}) // retention 0 = keep forever
 	if !strings.Contains(got, "da sempre") {
 		t.Errorf("retention 0 should label 'da sempre':\n%s", got)
 	}
-	if !strings.Contains(got, "✓ 23/07 20:47  Massive Attack - Black Milk") {
-		t.Errorf("success row (title-first) wrong:\n%s", got)
+	if !strings.Contains(got, "[1] ✓ 23/07 20:47  Massive Attack - Black Milk") {
+		t.Errorf("success row (numbered, title-first) wrong:\n%s", got)
 	}
-	// A failure with no title falls back to a shortened URL, flagged failed.
-	if !strings.Contains(got, "✗ ") || !strings.Contains(got, "(fallito)") {
+	if !strings.Contains(got, "[2] ✗ ") {
 		t.Errorf("failure row wrong:\n%s", got)
 	}
 	if strings.Contains(got, "https://www.") {
