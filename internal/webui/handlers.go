@@ -308,14 +308,16 @@ func (s *Server) loadHistory(opts logstore.QueryOpts) ([]logstore.Entry, error) 
 }
 
 func (s *Server) toHistoryDTOs(entries []logstore.Entry) []historyDTO {
+	// Resolved once per response, not once per row: it is a PATH lookup.
+	canOpen := jobs.CanOpen()
 	out := make([]historyDTO, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, s.toHistoryDTO(e))
+		out = append(out, s.toHistoryDTO(e, canOpen))
 	}
 	return out
 }
 
-func (s *Server) toHistoryDTO(e logstore.Entry) historyDTO {
+func (s *Server) toHistoryDTO(e logstore.Entry, canOpen bool) historyDTO {
 	d := historyDTO{
 		ID: e.ID(), Time: e.Time.Format(time.RFC3339), URL: e.URL, Title: e.Title,
 		Mode: e.Mode, Format: e.Format, RC: e.RC, Success: e.Success,
@@ -324,7 +326,7 @@ func (s *Server) toHistoryDTO(e logstore.Entry) historyDTO {
 	}
 	// Only advertise what this platform can actually do, so a capability flag
 	// never promises a button that would 501.
-	if jobs.CanOpen() {
+	if canOpen {
 		d.CanOpenFile = jobs.Available(e, jobs.OpenFile)
 		d.CanOpenFolder = jobs.Available(e, jobs.OpenFolder)
 	}

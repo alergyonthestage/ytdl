@@ -131,11 +131,22 @@ func resolveOpenPath(e logstore.Entry) (string, error) {
 	if path == "" || !filepath.IsAbs(path) {
 		return "", ErrNoPath
 	}
-	path = filepath.Clean(path)
-	if dir := strings.TrimSpace(e.Dir); dir != "" {
-		if !withinDir(path, filepath.Clean(dir)) {
-			return "", ErrOutsideDir
-		}
+	dir := strings.TrimSpace(e.Dir)
+	// A record with no usable folder is REFUSED, not treated as unconstrained.
+	// The containment rule is the whole of design §7 constraint 3, and skipping
+	// it for an empty Dir made it optional for exactly the tampered record it
+	// exists to stop. Nothing legitimate regresses: Path and Dir are written
+	// together, and a record old enough to lack Dir has no Path either.
+	if dir == "" || !filepath.IsAbs(dir) {
+		return "", ErrOutsideDir
+	}
+	// Resolve symlinks on BOTH sides before comparing. Comparing cleaned strings
+	// alone lets a symlink planted inside the download folder point anywhere,
+	// and os.Stat follows it, so every later check passes on the target while
+	// the containment check saw only the link.
+	path = resolveSymlinks(filepath.Clean(path))
+	if !withinDir(path, resolveSymlinks(filepath.Clean(dir))) {
+		return "", ErrOutsideDir
 	}
 	info, err := os.Stat(path)
 	if err != nil {
@@ -147,18 +158,34 @@ func resolveOpenPath(e logstore.Entry) (string, error) {
 	return path, nil
 }
 
+// resolveSymlinks returns the fully-resolved path, or the input unchanged when
+// it cannot be resolved (the file may simply not exist yet — that case is caught
+// by the os.Stat below, with a better error).
+func resolveSymlinks(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return path
+}
+
 // withinDir reports whether path is dir itself or lies beneath it. Both are
-// expected already cleaned. The separator boundary is the point: a plain string
-// prefix would accept "/music/ytdl-evil/x.mp3" as being inside "/music/ytdl".
+// expected already cleaned and symlink-resolved.
+//
+// The separator boundary is one point: a plain string prefix would accept
+// "/music/ytdl-evil/x.mp3" as being inside "/music/ytdl". The filesystem ROOT is
+// the other: appending a separator to "/" yields the prefix "/", which every
+// absolute path satisfies, so a record claiming Dir="/" would have turned the
+// containment check into a no-op.
 func withinDir(path, dir string) bool {
-	if dir == "" || dir == "." {
+	sep := string(filepath.Separator)
+	if dir == "" || dir == "." || dir == sep {
 		return false
 	}
 	if path == dir {
 		return true
 	}
-	if !strings.HasSuffix(dir, string(filepath.Separator)) {
-		dir += string(filepath.Separator)
+	if !strings.HasSuffix(dir, sep) {
+		dir += sep
 	}
 	return strings.HasPrefix(path, dir)
 }

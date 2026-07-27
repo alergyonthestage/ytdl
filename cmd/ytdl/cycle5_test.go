@@ -27,6 +27,7 @@ func historyHome(t *testing.T, jobs ...logstore.Job) string {
 	old := spawnQueueDaemon
 	spawnQueueDaemon = func() error { return nil }
 	t.Cleanup(func() { spawnQueueDaemon = old })
+	fakeLauncher(t)
 
 	logDir := config.Defaults().LogDir
 	for _, j := range jobs {
@@ -35,6 +36,23 @@ func historyHome(t *testing.T, jobs ...logstore.Job) string {
 		}
 	}
 	return logDir
+}
+
+// fakeLauncher puts a no-op `open`/`xdg-open` on PATH. Since the review,
+// open.Supported() checks that the platform's launcher is actually installed —
+// which it is not in a minimal container — so without this the open command
+// would bail out before reaching the targeting logic these tests are about. A
+// stub also keeps the tests deterministic on a machine that DOES have one: no
+// window opens.
+func fakeLauncher(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	for _, name := range []string{"open", "xdg-open"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 // audioJob is a successful download of a real file on disk, so the open path's

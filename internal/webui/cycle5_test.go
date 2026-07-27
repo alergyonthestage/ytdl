@@ -23,10 +23,27 @@ import (
 // apiServer starts a test server and returns it with its spool and log dir.
 func apiServer(t *testing.T) (*httptest.Server, *Server, *queue.Spool, string) {
 	t.Helper()
+	fakeLauncher(t)
 	srv, sp, cfgPath := newTestServer(t)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts, srv, sp, filepath.Join(filepath.Dir(cfgPath), "logs")
+}
+
+// fakeLauncher puts a no-op open/xdg-open on PATH. open.Supported() checks that
+// the platform's launcher is actually installed, which it is not in a minimal
+// container — without this the capability flags would all be false and these
+// tests would assert nothing. A stub also means no window opens on a machine
+// that does have one.
+func fakeLauncher(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	for _, name := range []string{"open", "xdg-open"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 // postJSON performs an API POST with the guards' required content type.
@@ -390,12 +407,6 @@ func TestOpenEndpointRefusesEverythingButAKnownRecord(t *testing.T) {
 			// Deliberately no fake here: the REAL jobs.Open runs, and refuses
 			// before it would launch anything (proven in the jobs tests).
 			resp, body := postJSON(t, ts, "/api/history/open", tc.req)
-			if !jobs.CanOpen() {
-				if resp.StatusCode != http.StatusNotImplemented {
-					t.Fatalf("status = %d, want 501 on a platform with no launcher", resp.StatusCode)
-				}
-				return
-			}
 			if resp.StatusCode != tc.want {
 				t.Errorf("status = %d, want %d: %s", resp.StatusCode, tc.want, body)
 			}

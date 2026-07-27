@@ -2,6 +2,7 @@ package open
 
 import (
 	"errors"
+	"os/exec"
 	"runtime"
 	"testing"
 )
@@ -53,12 +54,48 @@ func TestArgvPerPlatform(t *testing.T) {
 	}
 }
 
-// TestSupportedFollowsThePlatform: Supported must agree with argv, since the GUI
-// renders (or hides) buttons on the strength of it.
-func TestSupportedFollowsThePlatform(t *testing.T) {
-	wantSupported := runtime.GOOS == "darwin" || runtime.GOOS == "linux"
-	if Supported() != wantSupported {
-		t.Errorf("Supported() = %v on %s, want %v", Supported(), runtime.GOOS, wantSupported)
+// TestSupportedRequiresAnInstalledLauncher: the GUI renders (or hides) buttons on
+// the strength of this flag, so "is this darwin or linux" is not enough — a
+// minimal or headless Linux install has no xdg-open, and advertising the
+// capability there means every row shows "Apri" and every click fails.
+func TestSupportedRequiresAnInstalledLauncher(t *testing.T) {
+	knownPlatform := runtime.GOOS == "darwin" || runtime.GOOS == "linux"
+	if !knownPlatform {
+		if Supported() {
+			t.Errorf("Supported() = true on %s, which has no launcher", runtime.GOOS)
+		}
+		return
+	}
+	a := argv(runtime.GOOS, targetFile, "/x")
+	_, lookErr := exec.LookPath(a[0])
+	if want := lookErr == nil; Supported() != want {
+		t.Errorf("Supported() = %v but %s on PATH = %v", Supported(), a[0], want)
+	}
+}
+
+// TestLaunchAgreesWithSupported: a refusal and a hidden button must come from the
+// same predicate, or the UI promises what the call will deny (or the reverse).
+func TestLaunchAgreesWithSupported(t *testing.T) {
+	var spawned bool
+	old := spawn
+	spawn = func([]string) error { spawned = true; return nil }
+	t.Cleanup(func() { spawn = old })
+
+	err := File("/m/ytdl/a.mp3")
+	if Supported() {
+		if err != nil {
+			t.Errorf("Supported() is true but File returned %v", err)
+		}
+		if !spawned {
+			t.Error("Supported() is true but nothing was launched")
+		}
+		return
+	}
+	if !errors.Is(err, ErrUnsupported) {
+		t.Errorf("Supported() is false but File returned %v, want ErrUnsupported", err)
+	}
+	if spawned {
+		t.Error("Supported() is false but a launcher was spawned")
 	}
 }
 
@@ -103,25 +140,6 @@ func TestRejectsNonAbsolutePaths(t *testing.T) {
 				t.Errorf("File/Reveal(%q) spawned a launcher for a rejected path", path)
 			}
 		})
-	}
-}
-
-// TestUnsupportedPlatformDoesNotSpawn: on a platform with no launcher the
-// callers must get ErrUnsupported and nothing must be executed.
-func TestUnsupportedPlatformDoesNotSpawn(t *testing.T) {
-	if Supported() {
-		t.Skip("this platform has a launcher; the unsupported path is covered by TestArgvPerPlatform")
-	}
-	var spawned bool
-	old := spawn
-	spawn = func([]string) error { spawned = true; return nil }
-	t.Cleanup(func() { spawn = old })
-
-	if err := File("/m/ytdl/a.mp3"); !errors.Is(err, ErrUnsupported) {
-		t.Errorf("File error = %v, want ErrUnsupported", err)
-	}
-	if spawned {
-		t.Error("a launcher was spawned on an unsupported platform")
 	}
 }
 

@@ -264,30 +264,110 @@ func TestOpenRejectsADirectoryAsTheFile(t *testing.T) {
 	}
 }
 
-// TestOpenWithNoRecordedFolderStillChecksTheFile: an older record may carry a
-// path but no dir. The containment check has nothing to compare against, so the
-// remaining checks have to carry it.
-func TestOpenWithNoRecordedFolderStillChecksTheFile(t *testing.T) {
+// TestOpenRefusesARecordWithNoFolder is a review finding: skipping the
+// containment check when Dir is empty made design §7 constraint 3 optional for
+// exactly the tampered record it exists to stop ("a tampered history.jsonl
+// cannot turn this into 'open any file on the disk'" — it could).
+//
+// Nothing legitimate regresses: Path and Dir are written together by recordJob,
+// and a record old enough to predate them has no Path either, so it was already
+// refused with ErrNoPath.
+func TestOpenRefusesARecordWithNoFolder(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "a.mp3")
 	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	calls := captureOpen(t)
-
-	e := logstore.Entry{URL: "u", Path: path} // no Dir
-	if err := Open(e, OpenFile); err != nil {
-		t.Fatalf("Open = %v, want it to open a real audio file", err)
+	for _, badDir := range []string{"", "   ", "relative/dir"} {
+		t.Run("dir="+badDir, func(t *testing.T) {
+			calls := captureOpen(t)
+			e := logstore.Entry{URL: "u", Path: path, Dir: badDir}
+			if err := Open(e, OpenFile); !errors.Is(err, ErrOutsideDir) {
+				t.Errorf("Open(dir=%q) error = %v, want ErrOutsideDir", badDir, err)
+			}
+			if len(*calls) != 0 {
+				t.Errorf("a record with no usable folder launched %+v", *calls)
+			}
+		})
 	}
-	if len(*calls) != 1 {
-		t.Fatalf("got %+v, want one launch", *calls)
-	}
+}
 
-	e.Path = filepath.Join(dir, "script.sh")
-	if err := os.WriteFile(e.Path, []byte("x"), 0o755); err != nil {
+// TestOpenRefusesTheFilesystemRoot: appending a separator to "/" yields the
+// prefix "/", which every absolute path satisfies — so a record claiming Dir="/"
+// turned the containment check into a no-op. The folder target applies no
+// extension whitelist either, so it would have revealed ANY regular file.
+func TestOpenRefusesTheFilesystemRoot(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.mp3")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := Open(e, OpenFile); !errors.Is(err, ErrNotAudio) {
-		t.Errorf("a dir-less record opened a non-audio file: %v", err)
+	for _, target := range []OpenTarget{OpenFile, OpenFolder} {
+		calls := captureOpen(t)
+		e := logstore.Entry{URL: "u", Path: path, Dir: "/"}
+		if err := Open(e, target); !errors.Is(err, ErrOutsideDir) {
+			t.Errorf("Open(dir=/, target %d) error = %v, want ErrOutsideDir", target, err)
+		}
+		if len(*calls) != 0 {
+			t.Errorf("Dir=/ launched %+v", *calls)
+		}
+	}
+}
+
+// TestOpenResolvesSymlinksBeforeContainment: comparing cleaned strings alone let
+// a symlink planted INSIDE the download folder point anywhere — os.Stat follows
+// it, so every later check passed on the target while the containment check had
+// only seen the link.
+func TestOpenResolvesSymlinksBeforeContainment(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "ytdl")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(home, "secret.mp3")
+	if err := os.WriteFile(outside, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "song.mp3")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	calls := captureOpen(t)
+	e := logstore.Entry{URL: "u", Path: link, Dir: dir}
+	if err := Open(e, OpenFile); !errors.Is(err, ErrOutsideDir) {
+		t.Errorf("Open through a symlink out of the folder = %v, want ErrOutsideDir", err)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("a symlink out of the folder launched %+v", *calls)
+	}
+}
+
+// TestOpenStillAllowsASymlinkedDownloadFolder: resolving both sides means a user
+// whose ~/Music is itself a symlink (a common setup on an external disk) is not
+// locked out of their own downloads.
+func TestOpenStillAllowsASymlinkedDownloadFolder(t *testing.T) {
+	real := t.TempDir()
+	realDir := filepath.Join(real, "music")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(realDir, "a.mp3")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "Music")
+	if err := os.Symlink(realDir, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	calls := captureOpen(t)
+	// The record was written with the symlinked folder, as the config had it.
+	e := logstore.Entry{URL: "u", Path: filepath.Join(link, "a.mp3"), Dir: link}
+	if err := Open(e, OpenFile); err != nil {
+		t.Fatalf("Open through a symlinked download folder = %v, want it to open", err)
+	}
+	if len(*calls) != 1 {
+		t.Errorf("got %+v, want one launch", *calls)
 	}
 }
