@@ -774,7 +774,7 @@ func recordJob(o core.Options, out outcome) {
 		Time:     out.Now,
 		Stderr:   out.Stderr,
 		Path:     absSavedPath(out.SavedPath, o.Settings.OutputDir),
-		Dir:      o.Settings.OutputDir,
+		Dir:      absDir(o.Settings.OutputDir),
 		Count:    out.Count,
 		Playlist: o.Playlist,
 	}
@@ -800,9 +800,30 @@ func absSavedPath(saved, outputDir string) string {
 		return saved
 	}
 	if outputDir == "" {
-		return saved
+		return absDir(saved)
 	}
-	return filepath.Join(outputDir, saved)
+	return absDir(filepath.Join(outputDir, saved))
+}
+
+// absDir resolves a possibly-relative directory against the working directory.
+//
+// Nothing requires output_dir to be absolute: `ytdl -o out URL`, YTDL_OUT_DIR,
+// the config key and the GUI's per-download folder all accept a relative one.
+// Without this the record carried a relative Path and Dir, so every action on it
+// failed — and failed with the WRONG explanation ("percorso non registrato",
+// or "non è un file audio prodotto da ytdl"), because the open guards require
+// absolute paths and reject anything else as untrustworthy. Resolving here, at
+// the seam that owns the fact, keeps Entry.Path's documented contract true
+// instead of leaving every reader to guess. A failure to resolve leaves the raw
+// value, which the guards then refuse — the safe direction.
+func absDir(dir string) string {
+	if dir == "" || filepath.IsAbs(dir) {
+		return dir
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		return abs
+	}
+	return dir
 }
 
 // maybeRevealOutput shows the finished download in the file manager when

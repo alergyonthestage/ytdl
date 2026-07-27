@@ -83,7 +83,11 @@ func capReason(s string) string {
 			i = skipEscape(runes, i)
 			continue
 		}
-		if r < 0x20 || r == 0x7f {
+		// C0, DEL, and the C1 block. C1 matters as much as C0 here: U+009B is
+		// CSI and U+009D is OSC in their 8-bit forms, and an xterm-family
+		// terminal in UTF-8 mode honours them — so leaving them in would replay
+		// exactly the control sequence this function exists to remove.
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
 			b.WriteByte(' ') // fold to a space so words are not glued together
 			continue
 		}
@@ -157,7 +161,14 @@ func Append(dir string, j Job) error {
 		return err
 	}
 	line, err := json.Marshal(Entry{
-		Time: j.Time, URL: j.URL, Title: j.Title,
+		// Title comes from yt-dlp's print of the video's own metadata, so it is
+		// remote-controlled text exactly like the failure reason — and since
+		// Cycle 5 it is rendered in a terminal TABLE and in an HTML page. An
+		// escape sequence in a video title would clear the user's screen and
+		// wreck the column alignment (DisplayWidth counts escape bytes as
+		// printable); an unbounded one would make a single history line
+		// megabytes, which every later Load then parses.
+		Time: j.Time, URL: j.URL, Title: capReason(j.Title),
 		Mode: j.Mode, Format: j.Format, RC: j.RC, Success: j.Success,
 		Path: j.Path, Dir: j.Dir, Count: j.Count, Playlist: j.Playlist,
 		Error: capReason(j.Error),
@@ -200,6 +211,12 @@ func Load(dir string, opts QueryOpts) ([]Entry, error) {
 		var e Entry
 		if err := json.Unmarshal(line, &e); err != nil {
 			continue // skip a malformed line
+		}
+		// A bare `null` unmarshals into the zero Entry without error, which the
+		// UI would render as a failed download with no title and no link. A
+		// record with neither a time nor a URL is not a record.
+		if e.Time.IsZero() && e.URL == "" {
+			continue
 		}
 		if opts.OnlyFailed && e.Success {
 			continue
@@ -342,11 +359,14 @@ func pruneHistory(dir string, retentionDays int) error {
 	dropped := 0
 	for _, line := range readLines(f) {
 		var e Entry
-		if err := json.Unmarshal(line, &e); err == nil && e.Time.Before(cutoff) {
+		// A record with no time is not "infinitely old": it is a line this
+		// version does not understand, and the doc promise is that such a line
+		// is preserved, never dropped by a parse outcome.
+		if err := json.Unmarshal(line, &e); err == nil && !e.Time.IsZero() && e.Time.Before(cutoff) {
 			dropped++
 			continue
 		}
-		kept = append(kept, line) // in-window or malformed: keep verbatim
+		kept = append(kept, line) // in-window, timeless or malformed: keep verbatim
 	}
 	f.Close()
 	if dropped == 0 {

@@ -54,7 +54,12 @@ func Pad(s string, cols int) string {
 	}
 	w := DisplayWidth(s)
 	if w > cols {
-		return Clip(s, cols)
+		// Clip stops BEFORE a rune that would exceed its budget, so a 2-column
+		// CJK or emoji rune at the boundary leaves the cell one column short —
+		// and every column to its right on that row shifts left by one, which is
+		// exactly the misalignment Pad exists to prevent. Re-measure and top up.
+		c := Clip(s, cols)
+		return c + strings.Repeat(" ", cols-DisplayWidth(c))
 	}
 	return s + strings.Repeat(" ", cols-w)
 }

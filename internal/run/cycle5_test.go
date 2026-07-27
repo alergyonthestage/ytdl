@@ -3,7 +3,9 @@ package run
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/alergyonthestage/ytdl/internal/core"
@@ -337,7 +339,6 @@ func TestAbsSavedPath(t *testing.T) {
 		{"an absolute path is untouched", "/m/ytdl/a.mp3", "/m/ytdl", "/m/ytdl/a.mp3"},
 		{"a relative path is rooted at the output dir", "a.mp3", "/m/ytdl", "/m/ytdl/a.mp3"},
 		{"nothing saved stays nothing", "", "/m/ytdl", ""},
-		{"no output dir leaves it as-is", "a.mp3", "", "a.mp3"},
 		{"a relative subfolder is preserved", "Playlist/a.mp3", "/m/ytdl", "/m/ytdl/Playlist/a.mp3"},
 	}
 	for _, tc := range tests {
@@ -346,5 +347,49 @@ func TestAbsSavedPath(t *testing.T) {
 				t.Errorf("absSavedPath(%q, %q) = %q, want %q", tc.saved, tc.outputDir, got, tc.want)
 			}
 		})
+	}
+	// With no output dir to root it against, resolve against the working
+	// directory rather than leaving a relative path: Entry.Path promises
+	// absolute, and the open guards refuse anything else — with a misleading
+	// explanation, since "not absolute" reads to them as "untrustworthy record".
+	if got := absSavedPath("a.mp3", ""); !filepath.IsAbs(got) {
+		t.Errorf("absSavedPath(\"a.mp3\", \"\") = %q, want an absolute path", got)
+	}
+}
+
+// TestRelativeOutputDirStillRecordsUsableFields is a review finding: nothing in
+// the tool requires output_dir to be absolute (`ytdl -o out`, YTDL_OUT_DIR, the
+// config key and the GUI folder all accept a relative one), and the record it
+// produced could not be opened, revealed or explained correctly.
+func TestRelativeOutputDirStillRecordsUsableFields(t *testing.T) {
+	fakeYtDlp(t)
+	work := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(work); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(cwd) })
+
+	t.Setenv("YTDLP_FAKE_NLINES", "1")
+	t.Setenv("YTDLP_FAKE_DIR", "out")
+
+	o := runOptions(t, core.ModeDefault, "out") // a RELATIVE output dir
+	var buf bytes.Buffer
+	if rc := Dispatch(o, &buf, &buf); rc != 0 {
+		t.Fatalf("rc = %d, want 0", rc)
+	}
+
+	e := loadOneRecord(t, o)
+	if !filepath.IsAbs(e.Dir) {
+		t.Errorf("Dir = %q, want an absolute path", e.Dir)
+	}
+	if !filepath.IsAbs(e.Path) {
+		t.Errorf("Path = %q, want an absolute path", e.Path)
+	}
+	if !strings.HasPrefix(e.Path, e.Dir) {
+		t.Errorf("Path %q is not under Dir %q, so every open action would refuse it", e.Path, e.Dir)
 	}
 }
