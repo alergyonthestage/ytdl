@@ -26,6 +26,62 @@ var ErrAlreadyQueued = errors.New("jobs: this link is already pending or running
 // be re-downloaded from it.
 var ErrNoURL = errors.New("jobs: the record has no URL")
 
+// ErrBadJobID is returned by Cancel for anything that is not a spool id.
+var ErrBadJobID = errors.New("jobs: not a valid job id")
+
+// ValidJobID reports whether id has the shape queue.Enqueue produces:
+// "<20 digits>-<16 hex>-<alphanumeric>". The check exists because a job id
+// becomes a FILENAME — RequestCancel creates cancel/<id> — so an id carrying a
+// path separator or ".." would write outside the spool. The CLI could not
+// produce one (its ids come from a spool listing), but the GUI's cancel endpoint
+// takes an id over HTTP, and validating at the shared entry point rather than at
+// each caller is what makes that safe by construction.
+func ValidJobID(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	parts := strings.Split(id, "-")
+	if len(parts) != 3 {
+		return false
+	}
+	if len(parts[0]) != 20 || !allInRange(parts[0], '0', '9') {
+		return false
+	}
+	if len(parts[1]) != 16 || !isHex(parts[1]) {
+		return false
+	}
+	return parts[2] != "" && isAlphanumeric(parts[2])
+}
+
+func allInRange(s string, lo, hi byte) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < lo || s[i] > hi {
+			return false
+		}
+	}
+	return true
+}
+
+func isHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+func isAlphanumeric(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
+			return false
+		}
+	}
+	return true
+}
+
 // Cancel stops one live job by spool id. Order is the whole point: the cancel
 // MARKER is dropped first, so a job the daemon claims in the meantime is still
 // stopped by the watcher that polls for it; only then is a still-pending job
@@ -39,6 +95,9 @@ var ErrNoURL = errors.New("jobs: the record has no URL")
 // error. Callers must not report success on an error — a job that keeps
 // downloading after the user pressed "Annulla" is the worst outcome here.
 func Cancel(sp *queue.Spool, id string) (wasPending bool, err error) {
+	if !ValidJobID(id) {
+		return false, ErrBadJobID
+	}
 	if err := sp.RequestCancel(id); err != nil {
 		return false, err
 	}

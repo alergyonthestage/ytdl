@@ -7,11 +7,15 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/alergyonthestage/ytdl/internal/config"
+	"github.com/alergyonthestage/ytdl/internal/jobs"
 	"github.com/alergyonthestage/ytdl/internal/logstore"
 	"github.com/alergyonthestage/ytdl/internal/queue"
 )
@@ -20,14 +24,31 @@ import (
 // changes. Progress updates are pushed live; only the queue shape is polled.
 const pollInterval = 1 * time.Second
 
-// historyLimit caps the recent-history list embedded in the state payload.
-const historyLimit = 25
+// stateHistoryLimit caps the history embedded in the state payload. Since Cycle
+// 5 the Download view shows only "ultimi download" and the full list lives in
+// its own view behind /api/history, so the payload every SSE tick carries no
+// longer has to hold 25 rows.
+const stateHistoryLimit = 3
+
+// historyPageLimit is the default page size of /api/history, and the cap on what
+// one request may ask for — an unbounded limit would let a single request read
+// the whole retention window into memory.
+const historyPageLimit = 50
+
+// historyPageMax bounds an explicit ?limit=.
+const historyPageMax = 200
+
+// logMaxBytes caps what /api/history/log returns. A per-job log is normally a
+// few kilobytes; the cap is what keeps a pathological one from being streamed
+// into the browser whole.
+const logMaxBytes = 64 * 1024
 
 // ---- DTOs (JSON shapes; the engine types have no json tags) --------------
 
 type jobDTO struct {
 	ID         string `json:"id"`
 	URL        string `json:"url"`
+	Title      string `json:"title,omitempty"` // resolved "Artist - Track" once the run knows it
 	Format     string `json:"format"`
 	Playlist   bool   `json:"playlist"`
 	EnqueuedAt string `json:"enqueuedAt"`
@@ -46,14 +67,39 @@ type queueDTO struct {
 	Counts  countsDTO `json:"counts"`
 }
 
+// historyDTO is one row of the history view. Beyond the record's own fields it
+// carries three SERVER-COMPUTED capability flags, because the browser cannot
+// stat the disk and the design ranks each row's primary action by exactly that
+// (§8.3): "Apri" when the file is still there, "Riscarica" when it is not.
+// Computing them here is also what keeps a rendered button and the action behind
+// it from disagreeing — both come from jobs.Available.
+//
+// Note what is NOT here: the absolute path. Location is a display string, and
+// every action is addressed by record ID. The client never sends a path back,
+// which is the property the open endpoint's security rests on (design §7).
 type historyDTO struct {
-	Time    string `json:"time"`
-	URL     string `json:"url"`
-	Title   string `json:"title,omitempty"`
-	Mode    string `json:"mode"`
-	Format  string `json:"format"`
-	RC      int    `json:"rc"`
-	Success bool   `json:"success"`
+	ID       string `json:"id"`
+	Time     string `json:"time"`
+	URL      string `json:"url"`
+	Title    string `json:"title,omitempty"`
+	Mode     string `json:"mode"`
+	Format   string `json:"format"`
+	RC       int    `json:"rc"`
+	Success  bool   `json:"success"`
+	Count    int    `json:"count,omitempty"`
+	Playlist bool   `json:"playlist,omitempty"`
+	Error    string `json:"error,omitempty"`    // one-line failure reason, shown inline
+	Location string `json:"location,omitempty"` // where it landed, ~-contracted, display only
+
+	CanOpenFile   bool `json:"canOpenFile"`   // the audio file is there and openable
+	CanOpenFolder bool `json:"canOpenFolder"` // its folder can be shown
+	HasLog        bool `json:"hasLog"`        // a per-job .log survives for "vedi errore"
+}
+
+type historyPageDTO struct {
+	Items  []historyDTO `json:"items"`
+	Offset int          `json:"offset"`
+	More   bool         `json:"more"` // whether another page exists ("Carica altri")
 }
 
 type stateDTO struct {
@@ -61,6 +107,10 @@ type stateDTO struct {
 	History       []historyDTO `json:"history"`
 	DaemonRunning bool         `json:"daemonRunning"`
 	SessionOut    string       `json:"sessionOutputDir"`
+	// CanOpen is the platform capability: false where ytdl has no launcher, so
+	// the open/reveal controls are not rendered at all rather than rendered and
+	// failed (ux-principles.md §4).
+	CanOpen bool `json:"canOpen"`
 }
 
 type progressPayload struct {
@@ -88,6 +138,8 @@ type settingsDTO struct {
 	NotifyForeground    bool   `json:"notifyForeground"`
 	NotifySound         bool   `json:"notifySound"`
 	Concurrency         int    `json:"concurrency"` // 0 = unlimited
+	JobTimeout          int    `json:"jobTimeout"`  // seconds; 0 = no limit
+	OpenFolderOnDone    bool   `json:"openFolderOnDone"`
 }
 
 func toSettingsDTO(s config.Settings) settingsDTO {
@@ -100,6 +152,7 @@ func toSettingsDTO(s config.Settings) settingsDTO {
 		BreadcrumbOnFailure: s.BreadcrumbOnFailure, Notify: s.Notify,
 		NotifyOn: s.NotifyOn, NotifyForeground: s.NotifyForeground,
 		NotifySound: s.NotifySound, Concurrency: s.Concurrency,
+		JobTimeout: s.JobTimeout, OpenFolderOnDone: s.OpenFolderOnDone,
 	}
 }
 
@@ -113,6 +166,7 @@ func (d settingsDTO) toSettings() config.Settings {
 		BreadcrumbOnFailure: d.BreadcrumbOnFailure, Notify: d.Notify,
 		NotifyOn: d.NotifyOn, NotifyForeground: d.NotifyForeground,
 		NotifySound: d.NotifySound, Concurrency: d.Concurrency,
+		JobTimeout: d.JobTimeout, OpenFolderOnDone: d.OpenFolderOnDone,
 	}
 }
 
@@ -129,10 +183,16 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 }
 
 func entryToDTO(e queue.Entry) jobDTO {
-	return jobDTO{
+	d := jobDTO{
 		ID: e.ID, URL: e.Job.URL, Format: e.Job.Settings.Format,
 		Playlist: e.Job.Playlist, EnqueuedAt: e.Job.EnqueuedAt.Format(time.RFC3339),
 	}
+	// A playlist's single resolved title would misrepresent the whole job, so it
+	// stays unnamed — the same rule the CLI queue view follows (Cycle 4).
+	if !e.Job.Playlist {
+		d.Title = e.Job.Title
+	}
+	return d
 }
 
 func entriesToDTO(es []queue.Entry) []jobDTO {
@@ -248,31 +308,109 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		History:       s.recentHistory(),
 		DaemonRunning: s.daemonRunning(),
 		SessionOut:    s.sessionOut(),
+		CanOpen:       jobs.CanOpen(),
 	})
 }
 
-// recentHistory reads the durable log store (foreground + background), newest
-// first, within the retention window. A read error degrades to an empty list.
+// recentHistory reads the last few records for the Download view's "ultimi
+// download". A read error degrades to an empty list.
 func (s *Server) recentHistory() []historyDTO {
-	if s.deps.LogDir == "" {
-		return []historyDTO{}
-	}
-	var since time.Time
-	if s.deps.RetentionDays > 0 {
-		since = time.Now().AddDate(0, 0, -s.deps.RetentionDays)
-	}
-	entries, err := logstore.Load(s.deps.LogDir, logstore.QueryOpts{Since: since, Limit: historyLimit})
+	entries, err := s.loadHistory(logstore.QueryOpts{Limit: stateHistoryLimit})
 	if err != nil {
 		return []historyDTO{}
 	}
+	return s.toHistoryDTOs(entries)
+}
+
+// loadHistory runs one history query against the configured store, always within
+// the retention window so a stale record outside it can never surface.
+func (s *Server) loadHistory(opts logstore.QueryOpts) ([]logstore.Entry, error) {
+	if s.deps.LogDir == "" {
+		return nil, nil
+	}
+	if s.deps.RetentionDays > 0 {
+		opts.Since = time.Now().AddDate(0, 0, -s.deps.RetentionDays)
+	}
+	return logstore.Load(s.deps.LogDir, opts)
+}
+
+func (s *Server) toHistoryDTOs(entries []logstore.Entry) []historyDTO {
 	out := make([]historyDTO, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, historyDTO{
-			Time: e.Time.Format(time.RFC3339), URL: e.URL, Title: e.Title,
-			Mode: e.Mode, Format: e.Format, RC: e.RC, Success: e.Success,
-		})
+		out = append(out, s.toHistoryDTO(e))
 	}
 	return out
+}
+
+func (s *Server) toHistoryDTO(e logstore.Entry) historyDTO {
+	d := historyDTO{
+		ID: e.ID(), Time: e.Time.Format(time.RFC3339), URL: e.URL, Title: e.Title,
+		Mode: e.Mode, Format: e.Format, RC: e.RC, Success: e.Success,
+		Count: e.Count, Playlist: e.Playlist, Error: e.Error,
+		Location: s.displayLocation(e),
+	}
+	// Only advertise what this platform can actually do, so a capability flag
+	// never promises a button that would 501.
+	if jobs.CanOpen() {
+		d.CanOpenFile = jobs.Available(e, jobs.OpenFile)
+		d.CanOpenFolder = jobs.Available(e, jobs.OpenFolder)
+	}
+	d.HasLog = !e.Success && s.logExists(e)
+	return d
+}
+
+// displayLocation is where a successful job's files went, ~-contracted: the
+// folder of the saved file when known (so a playlist shows its own subfolder),
+// else the job's configured output dir. Display only — no action takes a path.
+func (s *Server) displayLocation(e logstore.Entry) string {
+	dir := e.Dir
+	if e.Path != "" {
+		dir = filepath.Dir(e.Path)
+	}
+	if dir == "" {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return dir
+	}
+	if dir == home {
+		return "~"
+	}
+	prefix := home
+	if !strings.HasSuffix(prefix, string(filepath.Separator)) {
+		prefix += string(filepath.Separator)
+	}
+	if strings.HasPrefix(dir, prefix) {
+		return "~" + string(filepath.Separator) + dir[len(prefix):]
+	}
+	return dir
+}
+
+// logPath is the per-job .log for a record, or "" when there is no log store or
+// the derived name would somehow escape it. The name is DERIVED from the record
+// (logstore.Entry.LogName), never supplied by the client; the containment check
+// is a second line of defence in case a hand-edited record ever produced an
+// exotic timestamp.
+func (s *Server) logPath(e logstore.Entry) string {
+	if s.deps.LogDir == "" {
+		return ""
+	}
+	dir := filepath.Clean(s.deps.LogDir)
+	path := filepath.Clean(filepath.Join(dir, e.LogName()))
+	if filepath.Dir(path) != dir {
+		return ""
+	}
+	return path
+}
+
+func (s *Server) logExists(e logstore.Entry) bool {
+	path := s.logPath(e)
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 type downloadReq struct {
@@ -335,6 +473,287 @@ func (s *Server) settingsForRun(format, outDir *string) (config.Settings, error)
 	return settings, nil
 }
 
+// handleHistory serves the full history view: window-filtered, searchable,
+// paginated. The Download view's three rows ride along on /api/state; this is
+// the separate query the Cronologia view pages through, so the SSE state payload
+// does not have to carry a whole history every tick.
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	q := r.URL.Query()
+	limit := clampQueryInt(q.Get("limit"), historyPageLimit, 1, historyPageMax)
+	offset := clampQueryInt(q.Get("offset"), 0, 0, 1<<20)
+
+	// One extra row is fetched to answer "is there another page?" without a
+	// second count query — the alternative is a "Carica altri" button that
+	// sometimes loads nothing.
+	entries, err := s.loadHistory(logstore.QueryOpts{
+		Limit:      limit + 1,
+		Offset:     offset,
+		OnlyFailed: q.Get("failed") == "1" || q.Get("failed") == "true",
+		Search:     q.Get("q"),
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "impossibile leggere lo storico: "+err.Error())
+		return
+	}
+	more := len(entries) > limit
+	if more {
+		entries = entries[:limit]
+	}
+	writeJSON(w, http.StatusOK, historyPageDTO{
+		Items: s.toHistoryDTOs(entries), Offset: offset, More: more,
+	})
+}
+
+// clampQueryInt parses a query parameter, falling back to def for anything
+// missing or unparseable and clamping the rest into [lo, hi]. A garbage limit
+// must not become an unbounded read.
+func clampQueryInt(raw string, def, lo, hi int) int {
+	if raw == "" {
+		return def
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return def
+	}
+	if n < lo {
+		return lo
+	}
+	if n > hi {
+		return hi
+	}
+	return n
+}
+
+// idReq is the body shape of every record- or job-addressed action. The client
+// sends an ID and nothing else — never a path, never a URL — which is what makes
+// these endpoints safe to expose (design §7).
+type idReq struct {
+	ID     string `json:"id"`
+	Target string `json:"target,omitempty"` // open only: "file" (default) | "folder"
+}
+
+func decodeIDReq(w http.ResponseWriter, r *http.Request) (idReq, bool) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "POST only")
+		return idReq{}, false
+	}
+	var req idReq
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "corpo JSON non valido")
+		return idReq{}, false
+	}
+	if strings.TrimSpace(req.ID) == "" {
+		writeErr(w, http.StatusBadRequest, "id mancante")
+		return idReq{}, false
+	}
+	return req, true
+}
+
+// handleQueueCancel stops a live job. This lifts ADR-0010's read-only-queue
+// decision: a GUI-only user must be able to stop a stuck download without
+// opening a terminal (design goal 3).
+//
+// The requested id is resolved against the CURRENT spool listing and refused if
+// it is not there. That is not politeness about stale UI — a job id becomes a
+// filename in the spool, so accepting an arbitrary string from an HTTP body
+// would be a file-creation primitive. jobs.Cancel validates the shape as well;
+// this is the layer that also makes the answer honest ("that job is gone").
+func (s *Server) handleQueueCancel(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeIDReq(w, r)
+	if !ok {
+		return
+	}
+	snap, err := s.deps.Spool.List()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "impossibile leggere la coda: "+err.Error())
+		return
+	}
+	if !liveJobExists(snap, req.ID) {
+		writeErr(w, http.StatusNotFound, "questo download non è più in coda")
+		return
+	}
+	wasPending, err := jobs.Cancel(s.deps.Spool, req.ID)
+	if err != nil {
+		// The marker is HOW a running job stops, so a failure to write it means
+		// the cancel is a no-op. Never report success here.
+		writeErr(w, http.StatusInternalServerError, "impossibile annullare: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"cancelled": true, "wasPending": wasPending, "queue": s.buildQueueDTO(),
+	})
+}
+
+// liveJobExists reports whether id names a job that is currently pending or
+// running. Terminal jobs are deliberately excluded: there is nothing to cancel.
+func liveJobExists(snap queue.Snapshot, id string) bool {
+	for _, group := range [][]queue.Entry{snap.Pending, snap.Running} {
+		for _, e := range group {
+			if e.ID == id {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// handleHistoryAgain enqueues a fresh job from a history record ("Riscarica").
+func (s *Server) handleHistoryAgain(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeIDReq(w, r)
+	if !ok {
+		return
+	}
+	e, ok := s.findRecord(w, req.ID)
+	if !ok {
+		return
+	}
+	settings, err := s.settingsForRun(nil, nil)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	id, err := jobs.Again(s.deps.Spool, e, settings)
+	switch {
+	case errors.Is(err, jobs.ErrAlreadyQueued):
+		// Without this a double-click silently queues the same download twice.
+		writeErr(w, http.StatusConflict, "è già in coda")
+		return
+	case errors.Is(err, jobs.ErrNoURL):
+		writeErr(w, http.StatusBadRequest, "questo record non ha un link da riscaricare")
+		return
+	case err != nil:
+		writeErr(w, http.StatusInternalServerError, "impossibile accodare: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"id": id, "queue": s.buildQueueDTO()})
+}
+
+// handleHistoryOpen opens a downloaded file, or shows it in the file manager.
+// This is the one endpoint that causes a program to be launched, so its whole
+// design is that the CLIENT NEVER SUPPLIES A PATH: it sends a record id, the
+// server looks the record up in its OWN store, and jobs.Open re-validates
+// everything before anything is executed (design §7). The guards in front of it
+// (loopback Host, session token, Origin, JSON content-type) mean a cross-site
+// page never reaches this handler at all.
+func (s *Server) handleHistoryOpen(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeIDReq(w, r)
+	if !ok {
+		return
+	}
+	if !jobs.CanOpen() {
+		writeErr(w, http.StatusNotImplemented, "su questo sistema ytdl non sa aprire file")
+		return
+	}
+	e, ok := s.findRecord(w, req.ID)
+	if !ok {
+		return
+	}
+	target := jobs.OpenFile
+	switch req.Target {
+	case "", "file":
+	case "folder":
+		target = jobs.OpenFolder
+	default:
+		writeErr(w, http.StatusBadRequest, "target non valido: usa file o folder")
+		return
+	}
+	if err := openRecord(e, target); err != nil {
+		writeErr(w, openStatus(err), openMessage(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"opened": true})
+}
+
+// openRecord performs the platform action. It is a package var only so a handler
+// test can assert what WOULD be opened without opening windows on the machine
+// running the tests; production is jobs.Open, which is where every check lives.
+var openRecord = jobs.Open
+
+// openStatus maps a refusal to a status code: a record that simply has nothing
+// to open is a 404, a record whose path is not one ytdl may open is a 400, and
+// anything else (the launcher itself failing) is a 500.
+func openStatus(err error) int {
+	switch {
+	case errors.Is(err, jobs.ErrNoPath), errors.Is(err, jobs.ErrGone):
+		return http.StatusNotFound
+	case errors.Is(err, jobs.ErrOutsideDir), errors.Is(err, jobs.ErrNotAudio):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+func openMessage(err error) string {
+	switch {
+	case errors.Is(err, jobs.ErrNoPath):
+		return "di questo download non è registrato il percorso del file"
+	case errors.Is(err, jobs.ErrGone):
+		return "il file non è più al suo posto: spostato, rinominato o eliminato"
+	case errors.Is(err, jobs.ErrOutsideDir), errors.Is(err, jobs.ErrNotAudio):
+		return "il percorso registrato non è un file audio prodotto da ytdl"
+	default:
+		return "impossibile aprire: " + err.Error()
+	}
+}
+
+// handleHistoryLog serves a failed job's .log as plain text, for the "vedi
+// errore" panel. The file name is DERIVED from the record, so no part of the
+// request reaches the filesystem.
+func (s *Server) handleHistoryLog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "id mancante")
+		return
+	}
+	e, ok := s.findRecord(w, id)
+	if !ok {
+		return
+	}
+	path := s.logPath(e)
+	if path == "" {
+		writeErr(w, http.StatusNotFound, "log non disponibile")
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		// Pruned by retention, or never written because log_dir was unset. Not
+		// an error condition — the detail is simply gone.
+		writeErr(w, http.StatusNotFound, "log non disponibile (scaduto o mai scritto)")
+		return
+	}
+	defer f.Close()
+
+	// text/plain + nosniff (set globally) so a .log full of HTML can never be
+	// rendered as a document.
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Disposition", "inline")
+	_, _ = io.Copy(w, io.LimitReader(f, logMaxBytes))
+}
+
+// findRecord resolves a record id, writing the 404 itself when there is no such
+// record. The second return says whether the caller may continue.
+func (s *Server) findRecord(w http.ResponseWriter, id string) (logstore.Entry, bool) {
+	if s.deps.LogDir == "" {
+		writeErr(w, http.StatusNotFound, "storico non disponibile")
+		return logstore.Entry{}, false
+	}
+	e, err := logstore.Find(s.deps.LogDir, id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "record non trovato")
+		return logstore.Entry{}, false
+	}
+	return e, true
+}
+
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -347,14 +766,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		settings := dto.toSettings()
-		// job_timeout and open_folder_on_done have no GUI control YET (the Cycle 5
-		// settings view adds both), and the editor rewrites the whole document — so
-		// without this a save would reset them to their zero values. Carry the
-		// current persisted values through untouched. Both overrides go away in the
-		// same commit as the controls.
-		cur, _ := s.deps.Resolve(config.Partial{})
-		settings.JobTimeout = cur.JobTimeout
-		settings.OpenFolderOnDone = cur.OpenFolderOnDone
+		// The job_timeout / open_folder_on_done carry-through that used to live
+		// here is gone: both are now fields on the DTO, so the editor sends them
+		// like every other setting and a save no longer resets what it could not
+		// see.
 		if err := validateSettings(settings); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
@@ -403,6 +818,11 @@ func validateSettings(s config.Settings) error {
 	}
 	if s.Concurrency < 0 {
 		return fmt.Errorf("concurrency non può essere negativo (0 = unlimited)")
+	}
+	if s.JobTimeout < 0 {
+		// config.Save rejects it too; catching it here turns a 500 into a 400
+		// with a message the settings form can show next to the field.
+		return fmt.Errorf("job_timeout non può essere negativo (0 = nessun limite)")
 	}
 	return nil
 }

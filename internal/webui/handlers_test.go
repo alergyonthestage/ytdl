@@ -223,8 +223,11 @@ func TestSettingsRoundTrip(t *testing.T) {
 	}
 }
 
-// job_timeout has no GUI control this cycle, but the editor rewrites the whole
-// config file. A save must NOT reset a CLI-set job_timeout to 0.
+// The editor rewrites the whole config file, so a save must not reset a
+// CLI-set job_timeout to 0. Until Cycle 5 this was guaranteed by an explicit
+// carry-through in handleSettings, because the DTO had no such field; now the
+// DTO round-trips it like every other setting and the workaround is gone. The
+// user-visible contract is identical, which is why this test did not change.
 func TestSettingsSavePreservesJobTimeout(t *testing.T) {
 	srv, _, cfgPath := newTestServer(t)
 	if err := os.WriteFile(cfgPath, []byte("job_timeout = 300\n"), 0o644); err != nil {
@@ -233,7 +236,8 @@ func TestSettingsSavePreservesJobTimeout(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	// GET then PUT — the DTO carries no job_timeout, exactly as the SPA form doesn't.
+	// GET then PUT, exactly as the settings view does: it always sends back the
+	// whole document it was given.
 	resp, err := http.Get(ts.URL + "/api/settings")
 	if err != nil {
 		t.Fatal(err)

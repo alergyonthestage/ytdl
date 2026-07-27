@@ -71,6 +71,33 @@ var (
 // moved or tidied away still wants to be taken to where it was, so when the
 // file is gone (or was never recorded) it falls back to the job's folder.
 func Open(e logstore.Entry, t OpenTarget) error {
+	p, err := plan(e, t)
+	if err != nil {
+		return err
+	}
+	if p.reveal {
+		return revealPath(p.path)
+	}
+	return openPath(p.path)
+}
+
+// Available reports whether Open would succeed, without launching anything. The
+// GUI needs it to decide a row's PRIMARY action — "Apri" when the file is still
+// there, "Riscarica" when it is not (design §8.3) — and the browser cannot stat
+// the disk. It runs exactly the checks Open runs, so a rendered button and the
+// action behind it cannot disagree.
+func Available(e logstore.Entry, t OpenTarget) bool {
+	_, err := plan(e, t)
+	return err == nil
+}
+
+// openPlan is what Open would do: which path, opened how.
+type openPlan struct {
+	path   string
+	reveal bool
+}
+
+func plan(e logstore.Entry, t OpenTarget) (openPlan, error) {
 	path, err := resolveOpenPath(e)
 	if err != nil {
 		if t == OpenFolder {
@@ -78,21 +105,23 @@ func Open(e logstore.Entry, t OpenTarget) error {
 			// answerable when the file is not there. ErrOutsideDir is NOT
 			// forgiven — that record is untrustworthy, full stop.
 			if errors.Is(err, ErrOutsideDir) {
-				return err
+				return openPlan{}, err
 			}
 			if dir := strings.TrimSpace(e.Dir); dir != "" && filepath.IsAbs(dir) && isDir(dir) {
-				return openPath(filepath.Clean(dir))
+				// Opening the folder itself, not revealing it: a reveal on Linux
+				// would open the folder's PARENT.
+				return openPlan{path: filepath.Clean(dir)}, nil
 			}
 		}
-		return err
+		return openPlan{}, err
 	}
 	if t == OpenFolder {
-		return revealPath(path)
+		return openPlan{path: path, reveal: true}, nil
 	}
 	if !config.ValidFormat(strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")) {
-		return ErrNotAudio
+		return openPlan{}, ErrNotAudio
 	}
-	return openPath(path)
+	return openPlan{path: path}, nil
 }
 
 // resolveOpenPath applies the record-independent checks and returns the cleaned

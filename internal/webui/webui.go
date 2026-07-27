@@ -101,6 +101,14 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("/api/events", s.handleEvents)
 	api.HandleFunc("/api/settings", s.handleSettings)
 	api.HandleFunc("/api/session", s.handleSession)
+	// Cycle 5. Every one of these is addressed by ID — a record id or a spool
+	// id — and never by path or URL; see handleHistoryOpen for why that is the
+	// load-bearing property rather than a style choice.
+	api.HandleFunc("/api/history", s.handleHistory)
+	api.HandleFunc("/api/history/again", s.handleHistoryAgain)
+	api.HandleFunc("/api/history/open", s.handleHistoryOpen)
+	api.HandleFunc("/api/history/log", s.handleHistoryLog)
+	api.HandleFunc("/api/queue/cancel", s.handleQueueCancel)
 	mux.Handle("/api/", s.guardAPI(api))
 	return s.securityHeaders(s.guardLocalHost(mux))
 }

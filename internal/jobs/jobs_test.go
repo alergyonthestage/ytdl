@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,18 +96,70 @@ func TestCancelRunningLeavesTheMarker(t *testing.T) {
 	}
 }
 
-// TestCancelUnknownIDStillMarks: the spool is lock-free, so a job can move or
+// TestCancelVanishedIDStillMarks: the spool is lock-free, so a job can move or
 // vanish between the listing a user read and the cancel they asked for. Marking
-// an id that is not there must not be an error — the marker is harmless and the
-// alternative is telling the user a cancel failed when the job is already gone.
-func TestCancelUnknownIDStillMarks(t *testing.T) {
+// a well-formed id that is not there must not be an error — the marker is
+// harmless and the alternative is telling the user a cancel failed when the job
+// is already gone.
+func TestCancelVanishedIDStillMarks(t *testing.T) {
 	sp := queue.Open(t.TempDir())
-	was, err := Cancel(sp, "nosuchjob")
+	was, err := Cancel(sp, "00000000000000000001-0123456789abcdef-1234567890")
 	if err != nil {
-		t.Fatalf("Cancel of an unknown id errored: %v", err)
+		t.Fatalf("Cancel of a vanished id errored: %v", err)
 	}
 	if was {
 		t.Error("wasPending = true for an id that was never in the spool")
+	}
+}
+
+// TestCancelRejectsAMalformedID is the containment check for the GUI's cancel
+// endpoint: a job id becomes a FILENAME (cancel/<id>), so an id carrying a path
+// separator would create a file outside the spool. The CLI cannot produce one —
+// its ids come from a spool listing — but the endpoint takes an id over HTTP,
+// and rejecting at the shared entry point is what makes that safe by
+// construction rather than by the caller remembering.
+func TestCancelRejectsAMalformedID(t *testing.T) {
+	root := t.TempDir()
+	sp := queue.Open(root)
+	bad := []string{
+		"",
+		"nosuchjob",
+		"../../../tmp/pwned",
+		"00000000000000000001-0123456789abcdef-../../pwned",
+		"00000000000000000001-0123456789abcdef-a/b",
+		"0000000000000000000x-0123456789abcdef-abc", // non-digit in the timestamp
+		"00000000000000000001-0123456789abcdeZ-abc", // non-hex in the hash
+		"00000000000000000001-0123456789abcdef",     // too few parts
+		strings.Repeat("1", 200),
+	}
+	for _, id := range bad {
+		t.Run(id, func(t *testing.T) {
+			if _, err := Cancel(sp, id); !errors.Is(err, ErrBadJobID) {
+				t.Errorf("Cancel(%q) error = %v, want ErrBadJobID", id, err)
+			}
+		})
+	}
+	// Nothing was created anywhere under the spool root, or above it.
+	var found []string
+	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err == nil && info != nil && !info.IsDir() {
+			found = append(found, p)
+		}
+		return nil
+	})
+	if len(found) != 0 {
+		t.Errorf("a rejected id created files: %v", found)
+	}
+}
+
+// TestValidJobIDAcceptsWhatEnqueueProduces keeps the shape check and the id
+// generator from drifting apart — if Enqueue's format changes, cancel would
+// start refusing every real job.
+func TestValidJobIDAcceptsWhatEnqueueProduces(t *testing.T) {
+	sp := queue.Open(t.TempDir())
+	id := enqueue(t, sp, queue.Job{URL: "https://youtu.be/A", Settings: settings()})
+	if !ValidJobID(id) {
+		t.Errorf("ValidJobID rejected an id Enqueue just produced: %q", id)
 	}
 }
 
