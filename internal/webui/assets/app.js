@@ -4,15 +4,46 @@ const FORMATS = ["mp3", "flac", "m4a", "opus", "wav"];
 const NOTIFY_ON = { both: "sempre", success: "solo successo", failure: "solo errore" };
 // Mirrors config.DefaultConcurrency: the fallback when the field is left blank.
 const DEFAULT_CONCURRENCY = 3;
+// How many rows the Download view's "ultimi download" shows. The server sends
+// exactly this many on /api/state; the constant is here for the empty state.
+const RECENT_LIMIT = 3;
 
 // Live state: the last queue frame plus per-job progress, keyed by spool id.
 let counts = { pending: 0, running: 0, done: 0, failed: 0 };
 let running = [], pending = [];
 const progress = new Map();
 
-function esc(s) {
-  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// ---- DOM helpers ---------------------------------------------------------
+// Everything user-controlled (titles, URLs, failure reasons, launcher errors)
+// goes in through textContent, never through innerHTML. The CSP is the backstop
+// for a mistake here; not making the mistake is the actual defence.
+
+function el(tag, className, text) {
+  const n = document.createElement(tag);
+  if (className) n.className = className;
+  if (text != null) n.textContent = text;
+  return n;
+}
+
+function button(label, className, onClick) {
+  const b = el("button", className, label);
+  b.type = "button";
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+// setMsg replaces a status line. kind is "ok" | "bad" | "" (neutral).
+function setMsg(id, kind, text) {
+  const box = $(id);
+  box.textContent = "";
+  if (!text) return;
+  const mark = kind === "ok" ? "✓ " : kind === "bad" ? "✗ " : "";
+  box.appendChild(el("span", kind, mark + text));
+}
+
+function replaceChildren(node, children) {
+  node.textContent = "";
+  for (const c of children) node.appendChild(c);
 }
 
 function option(sel, value, label, current) {
@@ -27,89 +58,268 @@ function fillSelect(sel, values, current, labels) {
   for (const v of values) option(sel, v, labels ? labels[v] : v, current);
 }
 
-function renderJobs() {
-  const rEl = $("running"), pEl = $("pending");
-  if (!running.length) {
-    rEl.innerHTML = '<p class="empty">Nessun download in corso.</p>';
-  } else {
-    rEl.innerHTML = running.map((j) => {
-      const p = progress.get(j.id);
-      // The only value interpolated into an attribute rather than through esc():
-      // force it numeric so it can never carry markup, whatever the API sends.
-      const pct = Math.max(0, Math.min(100, Number(p && p.percent) || 0));
-      const title = p && p.title ? p.title : j.url;
-      let line = p ? (p.status === "processing" ? "elaborazione…" :
-        [p.percent >= 0 ? p.percent.toFixed(1) + "%" : null, p.speed, p.eta ? "ETA " + p.eta : null]
-          .filter(Boolean).join(" · ")) : "avvio…";
-      return '<div class="job"><div class="u">' + esc(title) + "</div>" +
-        '<div class="bar"><i style="width:' + pct + '%"></i></div>' +
-        '<div class="meta">' + esc(line) + " · ." + esc(j.format) + "</div></div>";
-    }).join("");
-  }
-  if (!pending.length) {
-    pEl.innerHTML = '<p class="empty">Coda vuota.</p>';
-  } else {
-    pEl.innerHTML = pending.map((j) =>
-      '<div class="job"><div class="u">' + esc(j.url) + "</div>" +
-      '<div class="meta">.' + esc(j.format) + (j.playlist ? " · playlist" : "") + "</div></div>").join("");
-  }
+function whenText(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  return d.toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" });
 }
 
-function renderHistory(items) {
-  const el = $("history");
-  if (!items || !items.length) {
-    el.innerHTML = '<p class="empty">Nessun download registrato.</p>';
-    return;
+// ---- routing -------------------------------------------------------------
+// Client-side hash routing over ONE document that never reloads. This is a
+// correctness requirement, not only a UX one: a real navigation would drop the
+// SSE connection, and an open SSE connection is the "GUI connected" clause of
+// the daemon's exit test (ADR-0008). A daemon could idle-exit in the gap
+// between two page loads, mid-download.
+
+const ROUTES = {
+  "#/": "download",
+  "#/cronologia": "history",
+  "#/impostazioni": "settings",
+};
+
+function currentView() {
+  return ROUTES[window.location.hash] || "download";
+}
+
+function showView(name) {
+  for (const view of ["download", "history", "settings"]) {
+    $("view-" + view).hidden = view !== name;
   }
-  el.innerHTML = items.map((h) => {
-    const when = new Date(h.time).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" });
-    const mark = h.success ? '<span class="ok">✓</span>' : '<span class="bad">✗</span>';
-    return '<div class="job"><div class="u">' + mark + " " + esc(h.title || h.url) + "</div>" +
-      '<div class="meta">' + esc(when) + " · ." + esc(h.format) + " · " + esc(h.mode) + "</div></div>";
-  }).join("");
+  for (const a of document.querySelectorAll("nav a")) {
+    if (a.dataset.view === name) a.setAttribute("aria-current", "page");
+    else a.removeAttribute("aria-current");
+  }
+  if (name === "history") loadHistory();
+  if (name === "download") $("url").focus();
+}
+
+window.addEventListener("hashchange", () => showView(currentView()));
+
+// ---- the shared row ------------------------------------------------------
+// One component behind the queue, "ultimi download" and the history view, so a
+// download looks and behaves the same wherever it is shown.
+
+function itemRow(titleText, metaNodes, actionNodes) {
+  const row = el("div", "item");
+  const main = el("div", "item-main");
+  main.appendChild(el("div", "item-title", titleText));
+  for (const n of metaNodes) if (n) main.appendChild(n);
+  row.appendChild(main);
+  if (actionNodes && actionNodes.length) {
+    const acts = el("div", "item-actions");
+    for (const n of actionNodes) if (n) acts.appendChild(n);
+    row.appendChild(acts);
+  }
+  return row;
+}
+
+// ---- queue ---------------------------------------------------------------
+
+function progressLine(p) {
+  if (!p) return "avvio…";
+  if (p.status === "processing") return "elaborazione…";
+  return [
+    p.percent >= 0 ? p.percent.toFixed(1) + "%" : null,
+    p.speed,
+    p.eta ? "ETA " + p.eta : null,
+  ].filter(Boolean).join(" · ");
+}
+
+function runningRow(job) {
+  const p = progress.get(job.id);
+  const meta = [];
+  const bar = el("div", "bar");
+  const fill = el("i");
+  // The one value that becomes a style rather than text: forced numeric and
+  // clamped, so it can never carry anything but a percentage.
+  const pct = Math.max(0, Math.min(100, Number(p && p.percent) || 0));
+  fill.style.width = pct + "%";
+  bar.appendChild(fill);
+  meta.push(bar);
+  meta.push(el("div", "meta", progressLine(p) + " · ." + job.format));
+  const title = (p && p.title) || job.title || job.url;
+  return itemRow(title, meta, [cancelButton(job)]);
+}
+
+function pendingRow(job) {
+  const detail = "." + job.format + (job.playlist ? " · playlist" : "");
+  const meta = [];
+  if (job.title) meta.push(el("div", "meta", job.url));
+  meta.push(el("div", "meta", detail));
+  return itemRow(job.title || job.url, meta, [cancelButton(job)]);
+}
+
+function cancelButton(job) {
+  return button("Annulla", "secondary small", async (ev) => {
+    const b = ev.currentTarget;
+    b.disabled = true;
+    try {
+      const data = await api("/api/queue/cancel", { id: job.id });
+      if (data.queue) applyQueue(data.queue);
+      setMsg("msg", "ok", "Annullato.");
+    } catch (err) {
+      b.disabled = false;
+      setMsg("msg", "bad", err.message);
+    }
+  });
+}
+
+function renderQueue() {
+  const rows = [];
+  if (running.length) {
+    rows.push(el("h3", null, "In corso (" + running.length + ")"));
+    for (const j of running) rows.push(runningRow(j));
+  }
+  if (pending.length) {
+    rows.push(el("h3", null, "In attesa (" + pending.length + ")"));
+    for (const j of pending) rows.push(pendingRow(j));
+  }
+  if (!rows.length) {
+    // An empty state teaches the next step rather than only reporting emptiness.
+    rows.push(el("p", "empty", "Niente in corso. Incolla un link qui accanto per iniziare."));
+  }
+  replaceChildren($("queue"), rows);
 }
 
 function applyQueue(q) {
-  counts = q.counts;
+  counts = q.counts || counts;
   running = q.running || [];
   pending = q.pending || [];
   // Drop progress for jobs that are no longer running, so the map stays bounded.
   const live = new Set(running.map((j) => j.id));
   for (const id of progress.keys()) if (!live.has(id)) progress.delete(id);
-  renderJobs();
+  renderQueue();
 }
+
+// ---- history rows --------------------------------------------------------
+
+// primaryAction ranks a row's actions per ux-principles.md §4: exactly ONE
+// button, chosen by the row's state. The state comes from the server, which is
+// the only side that can tell whether the file is still on disk.
+function primaryAction(h) {
+  if (h.success && h.canOpenFile) return button("Apri", "small", (ev) => openRecord(ev, h, "file"));
+  return button("Riscarica", "secondary small", (ev) => againRecord(ev, h));
+}
+
+function historyRow(h) {
+  const meta = [];
+  const bits = [whenText(h.time)];
+  if (h.format) bits.push("." + h.format);
+  if (h.count > 1) bits.push(h.count + " tracce");
+  if (h.success && h.location) bits.push(h.location);
+  meta.push(el("div", "meta", bits.filter(Boolean).join(" · ")));
+  // Why it failed, inline: "why" must need no click.
+  if (!h.success && h.error) meta.push(el("div", "reason", h.error));
+
+  const mark = h.success ? "✓ " : "✗ ";
+  return itemRow(mark + (h.title || h.url), meta, [primaryAction(h)]);
+}
+
+async function openRecord(ev, h, target) {
+  const b = ev.currentTarget;
+  b.disabled = true;
+  try {
+    await api("/api/history/open", { id: h.id, target: target });
+  } catch (err) {
+    setMsg(currentView() === "history" ? "historyMsg" : "msg", "bad", err.message);
+  } finally {
+    b.disabled = false;
+  }
+}
+
+async function againRecord(ev, h) {
+  const b = ev.currentTarget;
+  b.disabled = true;
+  try {
+    const data = await api("/api/history/again", { id: h.id });
+    if (data.queue) applyQueue(data.queue);
+    setMsg(currentView() === "history" ? "historyMsg" : "msg", "ok", "Rimesso in coda.");
+  } catch (err) {
+    setMsg(currentView() === "history" ? "historyMsg" : "msg", "bad", err.message);
+  } finally {
+    b.disabled = false;
+  }
+}
+
+function renderRecent(items) {
+  if (!items || !items.length) {
+    replaceChildren($("recent"), [el("p", "empty", "Nessun download registrato.")]);
+    return;
+  }
+  replaceChildren($("recent"), items.slice(0, RECENT_LIMIT).map(historyRow));
+}
+
+async function loadHistory() {
+  const list = $("historyList");
+  try {
+    const r = await fetch("/api/history");
+    const page = await r.json();
+    if (!r.ok) throw new Error(page.error || "errore");
+    if (!page.items || !page.items.length) {
+      replaceChildren(list, [el("p", "empty", "Nessun download registrato.")]);
+      return;
+    }
+    replaceChildren(list, page.items.map(historyRow));
+  } catch (err) {
+    replaceChildren(list, [el("p", "bad", "Impossibile leggere la cronologia: " + err.message)]);
+  }
+}
+
+// ---- API helper ----------------------------------------------------------
+
+// api POSTs JSON and turns a non-2xx into an Error carrying the server's own
+// message, so every call site can just show err.message.
+async function api(path, body) {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  let data = {};
+  try { data = await r.json(); } catch (e) { /* empty or non-JSON body */ }
+  if (!r.ok) throw new Error(data.error || "errore " + r.status);
+  return data;
+}
+
+// ---- engine status + state ----------------------------------------------
 
 function setDaemon(on) {
   $("daemonDot").className = "dot" + (on ? " on" : "");
   $("daemonTxt").textContent = on ? "motore attivo" : "motore inattivo";
 }
 
-async function loadState() {
-  const r = await fetch("/api/state");
-  const s = await r.json();
+function applyState(s) {
   applyQueue(s.queue);
-  renderHistory(s.history);
+  renderRecent(s.history);
   setDaemon(s.daemonRunning);
   $("sessionOut").value = s.sessionOutputDir || "";
+}
+
+async function loadState() {
+  const r = await fetch("/api/state");
+  applyState(await r.json());
 }
 
 function connect() {
   const es = new EventSource("/api/events");
   es.addEventListener("queue", (e) => {
     applyQueue(JSON.parse(e.data));
-    // A queue change usually means a job finished: refresh the history too.
+    // A queue change usually means a job finished: refresh the rest too.
     fetch("/api/state").then((r) => r.json()).then((s) => {
-      renderHistory(s.history);
+      renderRecent(s.history);
       setDaemon(s.daemonRunning);
+      if (currentView() === "history") loadHistory();
     }).catch(() => {});
   });
   es.addEventListener("progress", (e) => {
     const p = JSON.parse(e.data);
     progress.set(p.id, p);
-    renderJobs();
+    renderQueue();
   });
   es.onerror = () => setDaemon(false);
 }
+
+// ---- new download --------------------------------------------------------
 
 $("dl").addEventListener("submit", async (ev) => {
   ev.preventDefault();
@@ -121,35 +331,39 @@ $("dl").addEventListener("submit", async (ev) => {
   };
   if (!body.url) return;
   $("go").disabled = true;
-  $("msg").textContent = "";
+  setMsg("msg", "", "");
   try {
-    const r = await fetch("/api/downloads", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-    });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || "errore");
-    $("msg").innerHTML = '<span class="ok">✓ Accodato.</span>';
+    const data = await api("/api/downloads", body);
+    setMsg("msg", "ok", "Accodato.");
     $("url").value = "";
+    $("url").focus();
     if (data.queue) applyQueue(data.queue);
   } catch (err) {
-    $("msg").innerHTML = '<span class="bad">✗ ' + esc(err.message) + "</span>";
+    setMsg("msg", "bad", err.message);
   } finally {
     $("go").disabled = false;
   }
 });
 
+// ---- settings ------------------------------------------------------------
+
 $("saveSession").addEventListener("click", async () => {
   const dir = $("sessionOut").value.trim();
-  await fetch("/api/session", {
-    method: "PUT", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ outputDir: dir }),
-  });
-  $("settingsMsg").innerHTML = '<span class="ok">✓ Cartella di sessione aggiornata.</span>';
+  try {
+    await fetch("/api/session", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ outputDir: dir }),
+    });
+    setMsg("sessionMsg", "ok", "Cartella di sessione aggiornata.");
+  } catch (err) {
+    setMsg("sessionMsg", "bad", err.message);
+  }
 });
 
 const SETTING_IDS = ["outputDir", "format", "audioQuality", "playlistDefault", "nameTemplate",
   "stripBrackets", "stripTags", "embedThumbnail", "embedMetadata", "logDir", "logRetentionDays",
-  "breadcrumbOnFailure", "notify", "notifyOn", "notifyForeground", "notifySound", "concurrency"];
+  "breadcrumbOnFailure", "notify", "notifyOn", "notifyForeground", "notifySound", "concurrency",
+  "jobTimeout", "openFolderOnDone"];
 
 function fillSettings(s) {
   // concurrency 0 means "no cap"; show it as an explicit choice rather than as a
@@ -158,13 +372,13 @@ function fillSettings(s) {
   $("s_concurrency").value = s.concurrency === 0 ? "" : s.concurrency;
   $("s_concurrency").disabled = s.concurrency === 0;
   fillSelect($("s_format"), FORMATS, s.format);
-  fillSelect($("s_audioQuality"), ["0","1","2","3","4","5","6","7","8","9"], s.audioQuality);
+  fillSelect($("s_audioQuality"), ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"], s.audioQuality);
   fillSelect($("s_notifyOn"), Object.keys(NOTIFY_ON), s.notifyOn, NOTIFY_ON);
   for (const k of SETTING_IDS) {
-    const el = $("s_" + k);
-    if (!el) continue;
-    if (el.type === "checkbox") el.checked = !!s[k];
-    else el.value = s[k];
+    const e = $("s_" + k);
+    if (!e) continue;
+    if (e.type === "checkbox") e.checked = !!s[k];
+    else e.value = s[k];
   }
 }
 
@@ -172,11 +386,11 @@ function readSettings() {
   const out = {};
   for (const k of SETTING_IDS) {
     if (k === "concurrency") continue; // handled explicitly below
-    const el = $("s_" + k);
-    if (!el) continue;
-    if (el.type === "checkbox") out[k] = el.checked;
-    else if (el.type === "number") out[k] = parseInt(el.value, 10) || 0;
-    else out[k] = el.value;
+    const e = $("s_" + k);
+    if (!e) continue;
+    if (e.type === "checkbox") out[k] = e.checked;
+    else if (e.type === "number") out[k] = parseInt(e.value, 10) || 0;
+    else out[k] = e.value;
   }
   // 0 = unlimited, and only when the user ticked the box on purpose. An empty or
   // unparseable field keeps the recommended default instead.
@@ -197,6 +411,7 @@ async function loadSettings() {
   const s = await r.json();
   fillSettings(s);
   fillSelect($("format"), FORMATS, s.format);
+  $("playlist").checked = !!s.playlistDefault;
 }
 
 $("settings").addEventListener("submit", async (ev) => {
@@ -210,9 +425,9 @@ $("settings").addEventListener("submit", async (ev) => {
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || "errore");
     fillSettings(data);
-    $("settingsMsg").innerHTML = '<span class="ok">✓ Impostazioni salvate.</span>';
+    setMsg("settingsMsg", "ok", "Impostazioni salvate.");
   } catch (err) {
-    $("settingsMsg").innerHTML = '<span class="bad">✗ ' + esc(err.message) + "</span>";
+    setMsg("settingsMsg", "bad", err.message);
   } finally {
     $("saveSettings").disabled = false;
   }
@@ -228,6 +443,7 @@ window.addEventListener("beforeunload", (e) => {
   }
 });
 
+showView(currentView());
 loadSettings().then(loadState).then(connect).catch(() => {
-  $("msg").innerHTML = '<span class="bad">✗ Motore non raggiungibile.</span>';
+  setMsg("msg", "bad", "Motore non raggiungibile.");
 });
