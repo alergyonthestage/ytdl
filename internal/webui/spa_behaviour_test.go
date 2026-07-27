@@ -96,3 +96,57 @@ console.log("numeric-string:" + settingsDirty());
 		t.Errorf("a number round-tripped through a form field reads as a change:\n%s", out)
 	}
 }
+
+// TestOlderHistoryResponseCannotOverwriteANewerOne is the regression test for the
+// review's request-ordering finding: type a search, click a filter within the
+// 200 ms debounce, and the older (unfiltered) response landed last. The chip
+// showed pressed over the wrong rows, and BOTH responses added to the same
+// offset, so the next "Carica altri" silently skipped a page the user never saw.
+// The same race fires with no user haste when an SSE queue frame refreshes the
+// view while a load is in flight.
+func TestOlderHistoryResponseCannotOverwriteANewerOne(t *testing.T) {
+	out := runNode(t, harness+`
+const loadFn = extract(/let historySeq = 0;[\s\S]*?\nasync function loadHistory\(append\) \{[\s\S]*?\n\}/);
+
+// Minimal stand-ins for the DOM and network the function touches.
+const rendered = { rows: null };
+const nodes = { historyList: {}, loadMore: { hidden: true }, logPanel: { hidden: false } };
+const $ = (id) => nodes[id];
+const el = (tag, cls, text) => ({ tag, cls, text });
+const replaceChildren = (node, children) => { rendered.rows = children; };
+const setMsg = () => {};
+const historyRow = (h) => h.tag;
+const historyEmptyText = () => "empty";
+const historyQuery = { filter: "all", q: "", offset: 0 };
+let historyPaged = false;
+const historyURL = () => "/api/history?filter=" + historyQuery.filter;
+
+// The slow response is the UNFILTERED one, requested first.
+const responses = {
+  "/api/history?filter=all":    { delay: 40, body: { items: [{tag:"ALL-1"},{tag:"ALL-2"}], offset: 0, more: true } },
+  "/api/history?filter=failed": { delay: 5,  body: { items: [{tag:"FAILED-1"}], offset: 0, more: false } },
+};
+global.fetch = (url) => new Promise((res) => {
+  const r = responses[url];
+  setTimeout(() => res({ ok: true, json: async () => r.body }), r.delay);
+});
+
+eval(loadFn);
+
+(async () => {
+  const first = loadHistory(false);              // the search, unfiltered + slow
+  historyQuery.filter = "failed";                // the user clicks a chip
+  const second = loadHistory(false);             // filtered + fast
+  await Promise.all([first, second]);
+  console.log("rows:" + rendered.rows.map((r) => r).join(","));
+  console.log("offset:" + historyQuery.offset);
+})();
+`)
+
+	if !strings.Contains(out, "rows:FAILED-1") {
+		t.Errorf("an older response overwrote the newer one — the list disagrees with the pressed filter:\n%s", out)
+	}
+	if !strings.Contains(out, "offset:1") {
+		t.Errorf("the offset was accumulated from both responses, so the next page would skip records:\n%s", out)
+	}
+}

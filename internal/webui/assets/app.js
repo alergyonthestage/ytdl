@@ -125,20 +125,45 @@ function progressLine(p) {
   ].filter(Boolean).join(" · ");
 }
 
+// liveRows maps a running job's id to the nodes a progress frame updates, so a
+// frame does NOT rebuild the queue. Rebuilding replaced the "Annulla" button
+// five times a second: a keyboard user could never keep focus on it long enough
+// to press it, and a mouse click whose mousedown and mouseup land on different
+// nodes fires no click event at all.
+const liveRows = new Map();
+
 function runningRow(job) {
   const p = progress.get(job.id);
   const meta = [];
   const bar = el("div", "bar");
   const fill = el("i");
+  bar.appendChild(fill);
+  meta.push(bar);
+  const metaLine = el("div", "meta", "");
+  meta.push(metaLine);
+
+  const titleEl = document.createTextNode("");
+  const row = itemRow("", meta, [cancelButton(job)]);
+  const titleBox = row.querySelector(".item-title");
+  titleBox.textContent = "";
+  titleBox.appendChild(titleEl);
+
+  liveRows.set(job.id, { fill, metaLine, titleEl, job });
+  paintProgress(job.id);
+  return row;
+}
+
+// paintProgress writes one job's live numbers into the nodes already on screen.
+function paintProgress(id) {
+  const row = liveRows.get(id);
+  if (!row) return;
+  const p = progress.get(id);
   // The one value that becomes a style rather than text: forced numeric and
   // clamped, so it can never carry anything but a percentage.
   const pct = Math.max(0, Math.min(100, Number(p && p.percent) || 0));
-  fill.style.width = pct + "%";
-  bar.appendChild(fill);
-  meta.push(bar);
-  meta.push(el("div", "meta", progressLine(p) + " · ." + job.format));
-  const title = (p && p.title) || job.title || job.url;
-  return itemRow(title, meta, [cancelButton(job)]);
+  row.fill.style.width = pct + "%";
+  row.metaLine.textContent = progressLine(p) + " · ." + row.job.format;
+  row.titleEl.textContent = (p && p.title) || row.job.title || row.job.url;
 }
 
 function pendingRow(job) {
@@ -181,6 +206,13 @@ function renderQueue() {
   replaceChildren($("queue"), rows);
 }
 
+// queueShape is what actually requires a rebuild: which jobs are in the list and
+// in what order. Progress numbers never change it.
+function queueShape() {
+  return running.map((j) => "r" + j.id).concat(pending.map((j) => "p" + j.id)).join("|");
+}
+let lastQueueShape = null;
+
 function applyQueue(q) {
   counts = q.counts || counts;
   running = q.running || [];
@@ -188,7 +220,17 @@ function applyQueue(q) {
   // Drop progress for jobs that are no longer running, so the map stays bounded.
   const live = new Set(running.map((j) => j.id));
   for (const id of progress.keys()) if (!live.has(id)) progress.delete(id);
-  renderQueue();
+
+  // Rebuild only when the SET of jobs changed; otherwise repaint in place, so a
+  // control the user is aiming at (or has focused) survives.
+  const shape = queueShape();
+  if (shape !== lastQueueShape) {
+    lastQueueShape = shape;
+    liveRows.clear();
+    renderQueue();
+    return;
+  }
+  for (const id of liveRows.keys()) paintProgress(id);
 }
 
 // ---- history rows --------------------------------------------------------
@@ -234,9 +276,10 @@ function overflowMenu(h) {
   const toggle = button("···", "secondary small overflow-btn", (ev) => {
     ev.stopPropagation();
     const open = menu.hidden;
-    closeMenus();
+    closeMenus(false);
     menu.hidden = !open;
     toggle.setAttribute("aria-expanded", String(open));
+    openMenuToggle = open ? toggle : null;
     if (open) {
       const first = menu.querySelector("button:not(:disabled)");
       if (first) first.focus();
@@ -248,7 +291,7 @@ function overflowMenu(h) {
 
   for (const [label, disabledReason, onClick] of overflowItems(h)) {
     const b = button(label, null, (ev) => {
-      closeMenus();
+      closeMenus(false);
       if (onClick) onClick(ev);
     });
     if (disabledReason) {
@@ -263,14 +306,21 @@ function overflowMenu(h) {
   return wrap;
 }
 
-function closeMenus() {
+// openMenuToggle remembers which control opened the menu, so Escape can hand
+// focus back instead of dropping the user at the top of the document.
+let openMenuToggle = null;
+
+function closeMenus(restoreFocus) {
   for (const m of document.querySelectorAll(".menu")) m.hidden = true;
   for (const b of document.querySelectorAll(".overflow-btn")) b.setAttribute("aria-expanded", "false");
+  const toggle = openMenuToggle;
+  openMenuToggle = null;
+  if (restoreFocus && toggle && document.contains(toggle)) toggle.focus();
 }
 
-document.addEventListener("click", closeMenus);
+document.addEventListener("click", () => closeMenus(false));
 document.addEventListener("keydown", (ev) => {
-  if (ev.key === "Escape") closeMenus();
+  if (ev.key === "Escape") closeMenus(true);
 });
 
 // historyRow renders one record. withOverflow is false for the Download view's
@@ -389,18 +439,27 @@ function historyEmptyText() {
 
 // loadHistory replaces the list; loadMoreHistory appends the next page. Paging
 // APPENDS so the rows already on screen do not jump.
+// historySeq orders concurrent loads. Without it an older response could land
+// after a newer one — type a search, click a filter within the debounce, and the
+// unfiltered rows would replace the filtered ones while the chip showed pressed;
+// worse, BOTH responses added to the same offset, so the next "Carica altri"
+// skipped a whole page the user never saw. The same race fires with no user
+// haste at all when an SSE queue frame refreshes the view mid-load.
+let historySeq = 0;
+
 async function loadHistory(append) {
   const list = $("historyList");
   if (!append) {
     historyQuery.offset = 0;
     historyPaged = false;
-    $("logPanel").hidden = true;
   } else {
     historyPaged = true;
   }
+  const seq = ++historySeq;
   try {
     const r = await fetch(historyURL());
-    const page = await r.json();
+    const page = await r.json().catch(() => ({}));
+    if (seq !== historySeq) return; // a newer load already won
     if (!r.ok) throw new Error(page.error || "errore " + r.status);
     const rows = (page.items || []).map((h) => historyRow(h, true));
     if (append) {
@@ -410,15 +469,19 @@ async function loadHistory(append) {
     } else {
       replaceChildren(list, [el("p", "empty", historyEmptyText())]);
     }
-    historyQuery.offset += (page.items || []).length;
+    // Take the offset from the SERVER's echo rather than accumulating locally,
+    // so a dropped or superseded response cannot desynchronise the paging.
+    historyQuery.offset = (page.offset || 0) + (page.items || []).length;
     $("loadMore").hidden = !page.more;
   } catch (err) {
+    if (seq !== historySeq) return;
     setMsg("historyMsg", "bad", "Impossibile leggere la cronologia: " + err.message);
   }
 }
 
 for (const chip of document.querySelectorAll(".chip")) {
   chip.addEventListener("click", () => {
+    $("logPanel").hidden = true; // an explicit change; the panel is about the old list
     historyQuery.filter = chip.dataset.filter;
     for (const c of document.querySelectorAll(".chip")) {
       c.setAttribute("aria-pressed", String(c === chip));
@@ -432,6 +495,7 @@ let searchTimer = 0;
 $("search").addEventListener("input", () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
+    $("logPanel").hidden = true;
     historyQuery.q = $("search").value.trim();
     loadHistory(false);
   }, 200);
@@ -471,6 +535,10 @@ function applyState(s) {
 
 async function loadState() {
   const r = await fetch("/api/state");
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    throw new Error(data.error || "errore " + r.status);
+  }
   applyState(await r.json());
 }
 
@@ -491,9 +559,36 @@ function connect() {
   es.addEventListener("progress", (e) => {
     const p = JSON.parse(e.data);
     progress.set(p.id, p);
-    renderQueue();
+    // Repaint the numbers only — never rebuild the row and its button.
+    paintProgress(p.id);
   });
-  es.onerror = () => setDaemon(false);
+  es.onerror = () => {
+    setDaemon(false);
+    // A transient drop is retried by the browser itself. A CLOSED EventSource is
+    // NOT: per the spec a non-200 response (a 401 from a daemon restarted with a
+    // fresh token, say) fails the connection permanently. Without a rebuild the
+    // tab would sit there holding no SSE connection at all — and an open SSE
+    // connection is the "GUI connected" clause of the daemon's exit test
+    // (ADR-0008), so the daemon could idle-exit under a tab the user still has
+    // open. Reconnect with a backoff instead of dying quietly.
+    if (es.readyState === EventSource.CLOSED) {
+      es.close();
+      scheduleReconnect();
+    }
+  };
+}
+
+let reconnectDelay = 1000;
+let reconnectTimer = 0;
+
+function scheduleReconnect() {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => {
+    reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+    connect();
+    // A fresh state fetch re-syncs anything missed while disconnected.
+    loadState().then(() => { reconnectDelay = 1000; }).catch(() => {});
+  }, reconnectDelay);
 }
 
 // ---- new download --------------------------------------------------------
@@ -527,10 +622,18 @@ $("dl").addEventListener("submit", async (ev) => {
 $("saveSession").addEventListener("click", async () => {
   const dir = $("sessionOut").value.trim();
   try {
-    await fetch("/api/session", {
+    // fetch rejects only on a NETWORK error, so without an r.ok check a 400 or a
+    // 401 landed in the success branch: the GUI answered "✓ aggiornata" and the
+    // next download went to the configured folder anyway. A ✓ on a failed write
+    // is worse than an error.
+    const r = await fetch("/api/session", {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ outputDir: dir }),
     });
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      throw new Error(data.error || "errore " + r.status);
+    }
     setMsg("sessionMsg", "ok", "Cartella di sessione aggiornata.");
   } catch (err) {
     setMsg("sessionMsg", "bad", err.message);
@@ -642,6 +745,12 @@ function applySettings(s) {
 
 async function loadSettings() {
   const r = await fetch("/api/settings");
+  if (!r.ok) {
+    // Without this the 401 body {"error":…} was fed to fillSettings, which wrote
+    // the literal string "undefined" into every text input.
+    const data = await r.json().catch(() => ({}));
+    throw new Error(data.error || "errore " + r.status);
+  }
   const s = await r.json();
   applySettings(s);
   fillSelect($("format"), FORMATS, s.format);
@@ -681,7 +790,13 @@ window.addEventListener("beforeunload", (e) => {
   }
 });
 
+// The SSE connection is opened WHATEVER happens to the initial fetches. It used
+// to be chained after them, so a single failed /api/state left the tab with no
+// EventSource for its whole lifetime — and an open SSE connection is the "GUI
+// connected" clause of the daemon's exit test (ADR-0008), so the daemon could
+// idle-exit under a tab the user still had open.
 showView(currentView());
-loadSettings().then(loadState).then(connect).catch(() => {
-  setMsg("msg", "bad", "Motore non raggiungibile.");
-});
+loadSettings()
+  .then(loadState)
+  .catch((err) => setMsg("msg", "bad", err.message || "Motore non raggiungibile."))
+  .finally(connect);

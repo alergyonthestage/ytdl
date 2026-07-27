@@ -184,7 +184,7 @@ func TestOverflowMenuHoldsTheSecondaryActions(t *testing.T) {
 // keyboard users (ux-principles.md §4).
 func TestOverflowMenuIsDismissibleAndReachable(t *testing.T) {
 	js := assetText(t, "assets/app.js")
-	if !strings.Contains(js, `document.addEventListener("click", closeMenus)`) {
+	if !strings.Contains(js, `document.addEventListener("click", () => closeMenus(false))`) {
 		t.Error("the overflow menu does not close on an outside click")
 	}
 	if !strings.Contains(js, `ev.key === "Escape"`) {
