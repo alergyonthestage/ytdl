@@ -228,6 +228,52 @@ func TestLoadFileJobTimeout(t *testing.T) {
 	}
 }
 
+// TestLoadFileOpenFolderOnDone covers the Cycle 5 key (improvements.md U4). Its
+// default is OFF, so an unparseable value must fall through to nil rather than
+// be coerced to false — the difference between "the user said nothing" and "the
+// user said no" matters for the layer precedence.
+func TestLoadFileOpenFolderOnDone(t *testing.T) {
+	for _, good := range []struct {
+		in   string
+		want bool
+	}{{"true", true}, {"false", false}} {
+		t.Run("valid "+good.in, func(t *testing.T) {
+			p, warns, err := LoadFile(writeConfig(t, "open_folder_on_done = "+good.in+"\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(warns) != 0 {
+				t.Fatalf("unexpected warnings: %v", warns)
+			}
+			if p.OpenFolderOnDone == nil || *p.OpenFolderOnDone != good.want {
+				t.Errorf("OpenFolderOnDone = %v, want %v", p.OpenFolderOnDone, good.want)
+			}
+		})
+	}
+	for _, bad := range []string{"yes", "1", "", "sì"} {
+		t.Run("invalid "+bad, func(t *testing.T) {
+			p, warns, err := LoadFile(writeConfig(t, "open_folder_on_done = "+bad+"\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(warns) != 1 {
+				t.Fatalf("want 1 warning for %q, got %d: %v", bad, len(warns), warns)
+			}
+			if p.OpenFolderOnDone != nil {
+				t.Errorf("invalid open_folder_on_done %q was kept: %v", bad, *p.OpenFolderOnDone)
+			}
+		})
+	}
+}
+
+// TestOpenFolderOnDoneDefaultsOff pins the default the design chose: a Finder
+// window must never appear for a user who did not ask for one.
+func TestOpenFolderOnDoneDefaultsOff(t *testing.T) {
+	if Defaults().OpenFolderOnDone {
+		t.Error("open_folder_on_done defaults to true; the design requires off")
+	}
+}
+
 func TestLoadFileBackendKeys(t *testing.T) {
 	t.Setenv("HOME", "/home/tester")
 	path := writeConfig(t, `

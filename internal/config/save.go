@@ -65,6 +65,7 @@ func Save(path string, s Settings) error {
 		{"notify_sound", strconv.FormatBool(s.NotifySound)},
 		{"concurrency", concurrencyValue(s.Concurrency)},
 		{"job_timeout", strconv.Itoa(s.JobTimeout)},
+		{"open_folder_on_done", strconv.FormatBool(s.OpenFolderOnDone)},
 	}
 
 	var b strings.Builder

@@ -43,6 +43,14 @@ type Settings struct {
 	// daemon-drained download. 0 (the default) means no limit — a hung yt-dlp is
 	// only stopped by an explicit `ytdl cancel`. Not read by core.BuildArgs.
 	JobTimeout int // default: 0 (no timeout); seconds
+
+	// Cycle 5 UX setting: show the finished file in the file manager when a
+	// FOREGROUND download succeeds (improvements.md U4). Off by default and
+	// deliberately never applied to background/queued jobs — a Finder window
+	// appearing by itself while the user is doing something else is hostile, and
+	// a background completion already notifies (design §9.4). Not read by
+	// core.BuildArgs.
+	OpenFolderOnDone bool // default: false
 }
 
 // Defaults copied verbatim from the Bash ytdl (lines 31-41, 196).
@@ -132,6 +140,8 @@ func Defaults() Settings {
 
 		Concurrency: DefaultConcurrency,
 		JobTimeout:  DefaultJobTimeout,
+
+		OpenFolderOnDone: false,
 	}
 }
 
@@ -178,6 +188,8 @@ type Partial struct {
 
 	Concurrency *int
 	JobTimeout  *int
+
+	OpenFolderOnDone *bool
 }
 
 // Env is the environment layer. For parity with the Bash tool only
@@ -275,6 +287,9 @@ func apply(s *Settings, p Partial) {
 	}
 	if p.JobTimeout != nil {
 		s.JobTimeout = *p.JobTimeout
+	}
+	if p.OpenFolderOnDone != nil {
+		s.OpenFolderOnDone = *p.OpenFolderOnDone
 	}
 }
 

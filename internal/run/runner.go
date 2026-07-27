@@ -27,6 +27,7 @@ import (
 	"github.com/alergyonthestage/ytdl/internal/daemon"
 	"github.com/alergyonthestage/ytdl/internal/logstore"
 	"github.com/alergyonthestage/ytdl/internal/notify"
+	"github.com/alergyonthestage/ytdl/internal/open"
 	"github.com/alergyonthestage/ytdl/internal/queue"
 )
 
@@ -197,7 +198,8 @@ func runVerbose(o core.Options, w io.Writer) int {
 	// Verbose has no saved-file capture, so it can report neither a title nor a
 	// path/count — its history record says what ran and how it ended, no more.
 	recordJob(o, outcome{Mode: "verbose", RC: rc, Success: success, Stderr: errbuf.Bytes(), Now: now})
-	maybeNotify(o, true, success, 0) // foreground; verbose has no saved-file count
+	maybeNotify(o, true, success, 0)  // foreground; verbose has no saved-file count
+	maybeRevealOutput(o, success, "") // no saved-file capture → the folder, not a file
 	return rc
 }
 
@@ -240,6 +242,7 @@ func runDefault(o core.Options, w io.Writer) int {
 		SavedPath: first, Count: count, Stderr: errbuf.Bytes(), Now: now,
 	})
 	maybeNotify(o, true, success, count) // foreground
+	maybeRevealOutput(o, success, first)
 	return rc
 }
 
@@ -801,6 +804,40 @@ func absSavedPath(saved, outputDir string) string {
 	}
 	return filepath.Join(outputDir, saved)
 }
+
+// maybeRevealOutput shows the finished download in the file manager when
+// open_folder_on_done is on (improvements.md U4, design §9.4). Two rules make it
+// tolerable rather than intrusive:
+//
+//   - Only on SUCCESS. A window opening after a failure tells the user nothing.
+//   - Only from a FOREGROUND run. The caller decides that — the queued/daemon
+//     path never calls this, because a Finder window appearing out of a
+//     background job while the user is doing something else is hostile, and a
+//     background completion already notifies.
+//
+// With a known file it reveals that file; a mode that saved nothing it can name
+// (verbose has no saved-file capture) falls back to opening the download folder,
+// which is what the key promises. Best-effort like the notification: a launcher
+// failure must never change the download's exit code.
+func maybeRevealOutput(o core.Options, success bool, savedPath string) {
+	if !o.Settings.OpenFolderOnDone || !success {
+		return
+	}
+	if savedPath != "" {
+		_ = revealFile(savedPath)
+		return
+	}
+	if o.Settings.OutputDir != "" {
+		_ = openFile(o.Settings.OutputDir)
+	}
+}
+
+// revealFile and openFile are the platform launcher, indirected through
+// variables so tests can assert what would be opened without opening it.
+var (
+	revealFile = open.Reveal
+	openFile   = open.File
+)
 
 // titleFromPath derives a display title from a saved file path: its base name
 // without the extension ("…/Artist - Track.mp3" → "Artist - Track"). An empty

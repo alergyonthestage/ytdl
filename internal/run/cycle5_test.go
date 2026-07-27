@@ -200,6 +200,133 @@ func TestVerboseRecordsNoPath(t *testing.T) {
 	}
 }
 
+// revealCall records one launcher invocation the run layer would have made.
+type revealCall struct {
+	action string // "reveal" | "open"
+	path   string
+}
+
+// captureReveal swaps the run layer's platform launcher for a recorder, so the
+// tests assert what WOULD be opened without opening anything.
+func captureReveal(t *testing.T) *[]revealCall {
+	t.Helper()
+	var calls []revealCall
+	oldReveal, oldOpen := revealFile, openFile
+	revealFile = func(p string) error { calls = append(calls, revealCall{"reveal", p}); return nil }
+	openFile = func(p string) error { calls = append(calls, revealCall{"open", p}); return nil }
+	t.Cleanup(func() { revealFile, openFile = oldReveal, oldOpen })
+	return &calls
+}
+
+// TestOpenFolderOnDoneRevealsOnForegroundSuccess is the feature: with the key on,
+// a finished foreground download shows itself in the file manager (U4, §9.4).
+func TestOpenFolderOnDoneRevealsOnForegroundSuccess(t *testing.T) {
+	fakeYtDlp(t)
+	dest := t.TempDir()
+	t.Setenv("YTDLP_FAKE_NLINES", "1")
+	t.Setenv("YTDLP_FAKE_DIR", dest)
+	calls := captureReveal(t)
+
+	o := runOptions(t, core.ModeDefault, dest)
+	o.Settings.OpenFolderOnDone = true
+	var buf bytes.Buffer
+	if rc := Dispatch(o, &buf, &buf); rc != 0 {
+		t.Fatalf("rc = %d, want 0", rc)
+	}
+
+	if len(*calls) != 1 {
+		t.Fatalf("launcher calls = %+v, want exactly one", *calls)
+	}
+	if (*calls)[0].action != "reveal" {
+		t.Errorf("action = %q, want a reveal (show the file, not play it)", (*calls)[0].action)
+	}
+	if want := filepath.Join(dest, "track1.mp3"); (*calls)[0].path != want {
+		t.Errorf("revealed %q, want the saved file %q", (*calls)[0].path, want)
+	}
+}
+
+// TestOpenFolderOnDoneIsOffByDefault: the key must be opt-in. A window appearing
+// unbidden after every download is the failure mode the design guards against.
+func TestOpenFolderOnDoneIsOffByDefault(t *testing.T) {
+	fakeYtDlp(t)
+	dest := t.TempDir()
+	t.Setenv("YTDLP_FAKE_NLINES", "1")
+	t.Setenv("YTDLP_FAKE_DIR", dest)
+	calls := captureReveal(t)
+
+	o := runOptions(t, core.ModeDefault, dest) // Defaults(): OpenFolderOnDone = false
+	var buf bytes.Buffer
+	if rc := Dispatch(o, &buf, &buf); rc != 0 {
+		t.Fatalf("rc = %d, want 0", rc)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("a default-configured download opened %+v", *calls)
+	}
+}
+
+// TestOpenFolderOnDoneSkipsFailures: opening a folder after a failure shows the
+// user an empty result and tells them nothing.
+func TestOpenFolderOnDoneSkipsFailures(t *testing.T) {
+	fakeYtDlp(t)
+	dest := t.TempDir()
+	t.Setenv("YTDLP_FAKE_NLINES", "0")
+	t.Setenv("YTDLP_FAKE_RC", "1")
+	calls := captureReveal(t)
+
+	o := runOptions(t, core.ModeDefault, dest)
+	o.Settings.OpenFolderOnDone = true
+	var buf bytes.Buffer
+	Dispatch(o, &buf, &buf)
+
+	if len(*calls) != 0 {
+		t.Errorf("a failed download opened %+v", *calls)
+	}
+}
+
+// TestOpenFolderOnDoneNeverFiresInBackground is the rule that keeps the feature
+// tolerable (design §9.4): a Finder window out of a daemon-drained job, while
+// the user is doing something else entirely, is hostile. The queued path is
+// where most downloads run, so this is the case that matters.
+func TestOpenFolderOnDoneNeverFiresInBackground(t *testing.T) {
+	fakeYtDlp(t)
+	dest := t.TempDir()
+	t.Setenv("YTDLP_FAKE_NLINES", "1")
+	t.Setenv("YTDLP_FAKE_DIR", dest)
+	calls := captureReveal(t)
+
+	o := runOptions(t, core.ModeSilent, dest)
+	o.Settings.OpenFolderOnDone = true
+	if rc := RunQueued(context.Background(), o, nil, nil); rc != 0 {
+		t.Fatalf("rc = %d, want 0", rc)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("a queued download opened %+v; the key is foreground-only", *calls)
+	}
+}
+
+// TestOpenFolderOnDoneFallsBackToTheFolder: verbose mode knows the download
+// folder but not the file. Opening the folder honours what the key promises;
+// doing nothing would look broken.
+func TestOpenFolderOnDoneFallsBackToTheFolder(t *testing.T) {
+	fakeYtDlp(t)
+	dest := t.TempDir()
+	calls := captureReveal(t)
+
+	o := runOptions(t, core.ModeVerbose, dest)
+	o.Settings.OpenFolderOnDone = true
+	var buf bytes.Buffer
+	if rc := Dispatch(o, &buf, &buf); rc != 0 {
+		t.Fatalf("rc = %d, want 0", rc)
+	}
+
+	if len(*calls) != 1 {
+		t.Fatalf("launcher calls = %+v, want exactly one", *calls)
+	}
+	if (*calls)[0].action != "open" || (*calls)[0].path != dest {
+		t.Errorf("got %+v, want the output folder %q opened", (*calls)[0], dest)
+	}
+}
+
 func TestAbsSavedPath(t *testing.T) {
 	tests := []struct {
 		name      string

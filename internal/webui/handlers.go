@@ -347,12 +347,14 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		settings := dto.toSettings()
-		// job_timeout has no GUI control this cycle (Cycle 2B-plus is CLI-only), and
-		// the editor rewrites the whole document — so without this a save would reset
-		// a CLI-set job_timeout to 0. Carry the current persisted value through
-		// untouched. Drop this override when a GUI control lands.
+		// job_timeout and open_folder_on_done have no GUI control YET (the Cycle 5
+		// settings view adds both), and the editor rewrites the whole document — so
+		// without this a save would reset them to their zero values. Carry the
+		// current persisted values through untouched. Both overrides go away in the
+		// same commit as the controls.
 		cur, _ := s.deps.Resolve(config.Partial{})
 		settings.JobTimeout = cur.JobTimeout
+		settings.OpenFolderOnDone = cur.OpenFolderOnDone
 		if err := validateSettings(settings); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return

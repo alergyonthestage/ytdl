@@ -22,6 +22,7 @@ func sampleSettings(dir string) Settings {
 	s.NotifyForeground = true
 	s.Concurrency = 4
 	s.JobTimeout = 300
+	s.OpenFolderOnDone = true
 	return s
 }
 
