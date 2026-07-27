@@ -59,6 +59,12 @@ type Parsed struct {
 	// Cycle 5 fields.
 	OpenFolder     bool // `open --folder`: show it in the file manager instead
 	ConfigPathOnly bool // `config --path`: print only the config file path
+
+	// Help fields (valid when Action == ActionHelp). Three shapes: the short
+	// usage (both false/empty), the topic index (`ytdl help`), and one page
+	// (`ytdl help <argomento>` or `ytdl <comando> --help`).
+	HelpCommand bool   // invoked as `ytdl help …` rather than -h / no arguments
+	HelpTopic   string // the requested page; "" = index (HelpCommand) or short usage
 }
 
 // ParseError is a user-facing parse failure. Usage requests that the help text
@@ -81,11 +87,21 @@ func (e *ParseError) Error() string { return e.Msg }
 // `ytdl -o "" URL` (e.g. an unset shell variable) fails fast with exit 1 rather
 // than silently resolving an empty output dir.
 func Parse(args []string) (*Parsed, error) {
+	// No arguments at all is someone finding out what the tool does, not a
+	// misuse: show the short usage and exit cleanly. Flags WITHOUT a URL
+	// (`ytdl -f mp3`) still fail with MsgNoURL further down — that one is a
+	// genuine mistake and a script needs it to fail.
+	if len(args) == 0 {
+		return &Parsed{Action: ActionHelp}, nil
+	}
+
 	// Subcommand dispatch: a reserved first token routes to the queue front-end
 	// instead of the download parser. A URL never collides with these keywords.
 	// The hidden `__daemon` role is intercepted by main before Parse is reached.
 	if len(args) > 0 {
 		switch args[0] {
+		case "help":
+			return parseHelp(args[1:])
 		case "queue":
 			return parseQueue(args[1:])
 		case "status":
@@ -213,9 +229,51 @@ func Parse(args []string) (*Parsed, error) {
 	return p, nil
 }
 
+// parseHelp parses `help [argomento]`: with no argument the topic index, with
+// one the page. An unknown topic is an ERROR rather than a silent fallback to
+// the index, so it can suggest the nearest name — the same Levenshtein hint the
+// Cycle 4 command guard gives, applied to help pages.
+func parseHelp(rest []string) (*Parsed, error) {
+	switch len(rest) {
+	case 0:
+		return &Parsed{Action: ActionHelp, HelpCommand: true}, nil
+	case 1:
+		topic := rest[0]
+		if _, ok := LookupTopic(topic); !ok {
+			if near := nearestTopic(topic); near != "" {
+				return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownTopicNear, topic, near)}
+			}
+			return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownTopic, topic)}
+		}
+		return &Parsed{Action: ActionHelp, HelpCommand: true, HelpTopic: strings.ToLower(topic)}, nil
+	default:
+		return nil, &ParseError{Msg: MsgTooManyTopics}
+	}
+}
+
+// wantsHelp reports whether a subcommand's arguments ask for its own help page.
+// Every subcommand accepts -h/--help wherever it appears, so a user who has just
+// been shown "ytdl <comando> --help" can type it without thinking about order.
+func wantsHelp(rest []string) bool {
+	for _, a := range rest {
+		if a == "-h" || a == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
+// helpPage builds the parse result for one command's own help page.
+func helpPage(command string) *Parsed {
+	return &Parsed{Action: ActionHelp, HelpCommand: true, HelpTopic: command}
+}
+
 // parseQueue parses `queue [--watch]`. The only accepted option is --watch/-w;
 // anything else is an unknown-option error (with usage), like the download parser.
 func parseQueue(rest []string) (*Parsed, error) {
+	if wantsHelp(rest) {
+		return helpPage("queue"), nil
+	}
 	p := &Parsed{Action: ActionQueue}
 	for _, a := range rest {
 		switch a {
@@ -232,6 +290,9 @@ func parseQueue(rest []string) (*Parsed, error) {
 // parseGUI accepts `ytdl gui` with no options: the interface itself is where
 // every setting lives, so the command only has to open it.
 func parseGUI(rest []string) (*Parsed, error) {
+	if wantsHelp(rest) {
+		return helpPage("gui"), nil
+	}
 	if len(rest) > 0 {
 		return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, rest[0]), Usage: true}
 	}
@@ -239,6 +300,9 @@ func parseGUI(rest []string) (*Parsed, error) {
 }
 
 func parseStatus(rest []string) (*Parsed, error) {
+	if wantsHelp(rest) {
+		return helpPage("status"), nil
+	}
 	if len(rest) > 0 {
 		return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, rest[0]), Usage: true}
 	}
@@ -251,6 +315,9 @@ func parseStatus(rest []string) (*Parsed, error) {
 // the GUI's search box so the two channels find the same records. Unknown
 // options error with usage, like the other subcommands.
 func parseHistory(rest []string) (*Parsed, error) {
+	if wantsHelp(rest) {
+		return helpPage("history"), nil
+	}
 	p := &Parsed{Action: ActionHistory, HistoryLimit: DefaultHistoryLimit}
 	for i := 0; i < len(rest); i++ {
 		switch rest[i] {
@@ -287,6 +354,12 @@ func parseHistory(rest []string) (*Parsed, error) {
 // command lists what it could act on (the caller decides), so an empty invocation
 // is valid, not an error.
 func parseTargeted(action Action, rest []string) (*Parsed, error) {
+	if wantsHelp(rest) {
+		if action == ActionCancel {
+			return helpPage("cancel"), nil
+		}
+		return helpPage("retry"), nil
+	}
 	p := &Parsed{Action: action}
 	for _, a := range rest {
 		switch {
@@ -316,6 +389,9 @@ func parseTargeted(action Action, rest []string) (*Parsed, error) {
 // There is deliberately no --all: opening twenty files at once is not a thing
 // anyone means to do, unlike cancelling twenty queued jobs.
 func parseOpen(rest []string) (*Parsed, error) {
+	if wantsHelp(rest) {
+		return helpPage("open"), nil
+	}
 	p := &Parsed{Action: ActionOpen}
 	for _, a := range rest {
 		switch {
@@ -336,6 +412,9 @@ func parseOpen(rest []string) (*Parsed, error) {
 // open, no --all: "download all of these again" is a way to flood the queue by
 // accident.
 func parseAgain(rest []string) (*Parsed, error) {
+	if wantsHelp(rest) {
+		return helpPage("again"), nil
+	}
 	p := &Parsed{Action: ActionAgain}
 	for _, a := range rest {
 		switch {
@@ -355,6 +434,9 @@ func parseAgain(rest []string) (*Parsed, error) {
 // GUI and a text editor already serve. --path prints only the file path, for
 // scripts that want to open or back it up.
 func parseConfig(rest []string) (*Parsed, error) {
+	if wantsHelp(rest) {
+		return helpPage("config"), nil
+	}
 	p := &Parsed{Action: ActionConfig}
 	for _, a := range rest {
 		switch a {

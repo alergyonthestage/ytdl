@@ -56,15 +56,17 @@ func realMain(args []string) int {
 		fmt.Fprintln(os.Stderr, err.Error())
 		var pe *cli.ParseError
 		if errors.As(err, &pe) && pe.Usage {
+			// The SHORT screen: burying a one-line error under sixty lines of
+			// reference is how the error gets missed (design §9.1).
 			fmt.Fprintln(os.Stderr)
-			fmt.Fprint(os.Stderr, cli.Usage)
+			fmt.Fprint(os.Stderr, cli.ShortUsage)
 		}
 		return 1
 	}
 
 	switch parsed.Action {
 	case cli.ActionHelp:
-		fmt.Print(cli.Usage)
+		fmt.Print(cli.HelpText(parsed))
 		return 0
 	case cli.ActionVersion:
 		return run.ShowVersion(os.Stdout)

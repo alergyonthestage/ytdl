@@ -411,6 +411,196 @@ func TestNewCommandsAreSuggestedOnATypo(t *testing.T) {
 	}
 }
 
+// ---- help ----------------------------------------------------------------
+
+// TestBareInvocationShowsShortUsage: someone typing `ytdl` is finding out what
+// the tool does, not misusing it. Flags without a URL remain an error.
+func TestBareInvocationShowsShortUsage(t *testing.T) {
+	p, err := Parse(nil)
+	if err != nil {
+		t.Fatalf("bare `ytdl` errored: %v", err)
+	}
+	if p.Action != ActionHelp {
+		t.Fatalf("Action = %v, want ActionHelp", p.Action)
+	}
+	if got := HelpText(p); got != ShortUsage {
+		t.Errorf("bare `ytdl` does not print the short usage:\n%s", got)
+	}
+	if _, err := Parse([]string{"-f", "mp3"}); err == nil {
+		t.Error("flags without a URL were accepted; that is still a mistake")
+	}
+}
+
+// TestShortUsageFitsItsBudget: the whole point of the restructuring is that the
+// default screen is readable at a glance. A regression here is the wall coming
+// back one line at a time.
+func TestShortUsageFitsItsBudget(t *testing.T) {
+	lines := strings.Split(strings.TrimRight(ShortUsage, "\n"), "\n")
+	if len(lines) > 22 {
+		t.Errorf("the short usage is %d lines; the design budgets ~18", len(lines))
+	}
+	for _, line := range lines {
+		if w := term.DisplayWidth(line); w > 80 {
+			t.Errorf("line is %d columns wide, want ≤ 80: %q", w, line)
+		}
+	}
+}
+
+// TestShortUsageCoversEveryTaskGroup: the five things people actually type, the
+// recovery path, and where to find more. Missing any of them means a user never
+// discovers that part of the tool.
+func TestShortUsageCoversEveryTaskGroup(t *testing.T) {
+	for _, want := range []string{
+		`ytdl "<url>"`,  // T1 download
+		"ytdl -b",       // T1 in background
+		"ytdl queue",    // T2 is it working
+		"ytdl history",  // T3/T5 where is my file
+		"ytdl gui",      // T7 settings
+		"ytdl --update", // T8 it broke
+		"VIRGOLETTE",    // the most-reported breakage
+		"ytdl help",     // where the rest lives
+	} {
+		if !strings.Contains(ShortUsage, want) {
+			t.Errorf("the short usage never mentions %q", want)
+		}
+	}
+}
+
+// TestEveryTopicIsReachableAndNonEmpty: a listed topic that prints nothing is
+// worse than no topic at all.
+func TestEveryTopicIsReachableAndNonEmpty(t *testing.T) {
+	for _, tp := range topics {
+		t.Run(tp.Name, func(t *testing.T) {
+			if strings.TrimSpace(tp.Body) == "" {
+				t.Fatal("empty body")
+			}
+			got, ok := LookupTopic(tp.Name)
+			if !ok {
+				t.Fatalf("topic %q is in the registry but does not resolve", tp.Name)
+			}
+			if got.Body != tp.Body {
+				t.Error("lookup returned a different page")
+			}
+			p, err := Parse([]string{"help", tp.Name})
+			if err != nil {
+				t.Fatalf("`ytdl help %s` errored: %v", tp.Name, err)
+			}
+			if HelpText(p) != tp.Body {
+				t.Error("`ytdl help <name>` printed a different page")
+			}
+		})
+	}
+}
+
+// TestTopicIndexListsTheTopics: the index is the map. A topic missing from it is
+// undiscoverable even though it works.
+func TestTopicIndexListsTheTopics(t *testing.T) {
+	idx := TopicIndex()
+	for _, tp := range topics {
+		if !tp.Listed {
+			continue
+		}
+		if !strings.Contains(idx, tp.Name) {
+			t.Errorf("topic %q missing from the index:\n%s", tp.Name, idx)
+		}
+		if !strings.Contains(idx, tp.Title) {
+			t.Errorf("topic %q has no description in the index", tp.Name)
+		}
+	}
+	p, err := Parse([]string{"help"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if HelpText(p) != idx {
+		t.Error("`ytdl help` does not print the index")
+	}
+}
+
+// TestHelpTuttoIsTheFullReference: nothing was deleted in the restructuring, it
+// moved one step away — and this is the text docs/cli-reference.md tracks.
+func TestHelpTuttoIsTheFullReference(t *testing.T) {
+	p, err := Parse([]string{"help", "tutto"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if HelpText(p) != Usage {
+		t.Error("`ytdl help tutto` is not the full reference text")
+	}
+	for _, cmd := range []string{"ytdl open", "ytdl again", "ytdl config", "--search"} {
+		if !strings.Contains(Usage, cmd) {
+			t.Errorf("the full reference never mentions %q", cmd)
+		}
+	}
+}
+
+// TestUnknownTopicSuggestsTheNearest — the Cycle 4 hint applied to help pages.
+func TestUnknownTopicSuggestsTheNearest(t *testing.T) {
+	tests := map[string]string{"stroico": "storico", "opzoini": "opzioni", "impostazoini": "impostazioni"}
+	for typo, want := range tests {
+		t.Run(typo, func(t *testing.T) {
+			_, err := Parse([]string{"help", typo})
+			if err == nil {
+				t.Fatalf("`ytdl help %s` was accepted", typo)
+			}
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not suggest %q", err.Error(), want)
+			}
+		})
+	}
+	// A word near nothing gets the index pointer instead of a wrong suggestion.
+	_, err := Parse([]string{"help", "zzzzzzzzzz"})
+	if err == nil {
+		t.Fatal("an unrelated topic was accepted")
+	}
+	if !strings.Contains(err.Error(), "ytdl help") {
+		t.Errorf("error %q does not point at the topic index", err.Error())
+	}
+}
+
+// TestEveryCommandHasItsOwnHelp: `ytdl <comando> --help` must work for every
+// command, in either argument position, and print that command's page.
+func TestEveryCommandHasItsOwnHelp(t *testing.T) {
+	for _, cmd := range []string{"queue", "status", "history", "gui", "cancel", "retry", "open", "again", "config"} {
+		t.Run(cmd, func(t *testing.T) {
+			page, ok := LookupTopic(cmd)
+			if !ok {
+				t.Fatalf("no help page for %q", cmd)
+			}
+			for _, flag := range []string{"--help", "-h"} {
+				p, err := Parse([]string{cmd, flag})
+				if err != nil {
+					t.Fatalf("`ytdl %s %s` errored: %v", cmd, flag, err)
+				}
+				if p.Action != ActionHelp {
+					t.Fatalf("`ytdl %s %s` → action %v, want ActionHelp", cmd, flag, p.Action)
+				}
+				if HelpText(p) != page.Body {
+					t.Errorf("`ytdl %s %s` printed the wrong page", cmd, flag)
+				}
+			}
+			// The flag wins wherever it appears, so a user does not have to
+			// think about argument order.
+			p, err := Parse([]string{cmd, "--help", "2"})
+			if err != nil || p.Action != ActionHelp {
+				t.Errorf("`ytdl %s --help 2` → %v (%v), want the help page", cmd, p, err)
+			}
+		})
+	}
+}
+
+// TestPerCommandPagesAreNotInTheIndex: listing nine more names would rebuild the
+// wall this restructuring removed.
+func TestPerCommandPagesAreNotInTheIndex(t *testing.T) {
+	idx := TopicIndex()
+	if !strings.Contains(idx, "ytdl <comando> --help") {
+		t.Error("the index does not say how to reach a single command's help")
+	}
+	lines := strings.Split(strings.TrimRight(idx, "\n"), "\n")
+	if len(lines) > 14 {
+		t.Errorf("the topic index is %d lines; it must stay a short map", len(lines))
+	}
+}
+
 // TestBareVideoIDStillPasses is the Cycle 4 CRITICAL, re-asserted now that three
 // more commands are in the similarity table: a bare YouTube id is valid yt-dlp
 // input and must reach it.

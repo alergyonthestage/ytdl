@@ -17,9 +17,10 @@ func looksLikeURL(tok string) bool {
 }
 
 // knownCommands are the subcommands a mistyped bare word might be aiming at, for
-// the "did you mean" hint. Help/version/update are flags, not positionals, so a
-// bare "help" would not reach here; they are intentionally omitted.
-var knownCommands = []string{"queue", "status", "history", "gui", "cancel", "retry", "open", "again", "config"}
+// the "did you mean" hint. `help` is included because Cycle 5 made it a
+// positional command; version and update remain flags, so a bare word could not
+// be aiming at them.
+var knownCommands = []string{"queue", "status", "history", "gui", "cancel", "retry", "open", "again", "config", "help"}
 
 // nearestCommand returns the closest known subcommand to tok, or "" if nothing is
 // close enough. Comparison is case-insensitive ("Queue" is as much a typo as
