@@ -245,6 +245,9 @@ func (s *Server) queueSignature() string {
 // ---- handlers ------------------------------------------------------------
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if s.serveAsset(w, r) {
+		return
+	}
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return

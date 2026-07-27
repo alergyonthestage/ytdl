@@ -83,9 +83,31 @@ func TestIndexIsSelfContained(t *testing.T) {
 	if !strings.Contains(body, "<title>ytdl</title>") {
 		t.Error("index does not look like the GUI page")
 	}
-	for _, bad := range []string{`src="http`, `href="http`, `src='http`, `@import`, `<script src=`, `<link rel="stylesheet"`} {
+	// Since Cycle 5 the CSS and JS are separate files, but they are still served
+	// BY THIS BINARY from the same origin. What must never appear is a reference
+	// off the machine: a CDN, a protocol-relative URL, an @import.
+	for _, bad := range []string{`src="http`, `href="http`, `src='http`, `@import`, `src="//`, `href="//`} {
 		if strings.Contains(body, bad) {
 			t.Errorf("index references an external resource (%q)", bad)
+		}
+	}
+	// Every asset the page references must actually be served, or the GUI is a
+	// blank document.
+	for _, path := range []string{"/app.css", "/app.js"} {
+		if !strings.Contains(body, path) {
+			t.Errorf("index does not reference %s", path)
+		}
+		r, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		asset, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		if r.StatusCode != http.StatusOK {
+			t.Errorf("GET %s: status = %d, want 200", path, r.StatusCode)
+		}
+		if len(asset) == 0 {
+			t.Errorf("GET %s served an empty body", path)
 		}
 	}
 }

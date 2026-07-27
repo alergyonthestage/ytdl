@@ -748,6 +748,90 @@ func TestNewEndpointsAreBehindTheGuards(t *testing.T) {
 	}
 }
 
+// ---- assets --------------------------------------------------------------
+
+// TestAssetAllowListServesExactlyThreeFiles: the assets are served from an
+// explicit map, not an http.FileServer over the embed.FS, so a file added to the
+// directory later is not automatically published.
+func TestAssetAllowListServesExactlyThreeFiles(t *testing.T) {
+	ts, _, _, _ := apiServer(t)
+
+	for _, path := range []string{"/", "/app.css", "/app.js"} {
+		resp, body := getPath(t, ts, path)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s: status = %d, want 200", path, resp.StatusCode)
+		}
+		if len(body) == 0 {
+			t.Errorf("GET %s: empty body", path)
+		}
+	}
+	for _, path := range []string{
+		"/assets/app.js",        // the on-disk name, not the served one
+		"/app.css/",             // trailing slash
+		"/app.ts",               // near miss
+		"/../assets/index.html", // traversal
+		"/index.html",           // the shell has one URL, and it is "/"
+	} {
+		t.Run(path, func(t *testing.T) {
+			resp, _ := getPath(t, ts, path)
+			if resp.StatusCode != http.StatusNotFound {
+				t.Errorf("GET %s: status = %d, want 404", path, resp.StatusCode)
+			}
+		})
+	}
+}
+
+// TestAssetsAreNotCached: an upgraded ytdl serves a new app.js against the same
+// URL. A cached old script paired with a new API is a mix that only ever appears
+// on a user's machine.
+func TestAssetsAreNotCached(t *testing.T) {
+	ts, _, _, _ := apiServer(t)
+	for _, path := range []string{"/app.css", "/app.js"} {
+		resp, _ := getPath(t, ts, path)
+		if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+			t.Errorf("GET %s: Cache-Control = %q, want no-store", path, cc)
+		}
+	}
+}
+
+func TestAssetContentTypes(t *testing.T) {
+	ts, _, _, _ := apiServer(t)
+	want := map[string]string{"/app.css": "text/css", "/app.js": "application/javascript"}
+	for path, prefix := range want {
+		resp, _ := getPath(t, ts, path)
+		if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, prefix) {
+			t.Errorf("GET %s: Content-Type = %q, want %s…", path, ct, prefix)
+		}
+	}
+}
+
+// TestCSPForbidsInlineScript is the point of the split. The page renders
+// user-controlled strings — titles, URLs, failure reasons — and this header is
+// the backstop for a missed escape: with 'unsafe-inline' gone, an injected
+// <script> does not run.
+func TestCSPForbidsInlineScript(t *testing.T) {
+	ts, _, _, _ := apiServer(t)
+	resp, _ := getPath(t, ts, "/")
+	csp := resp.Header.Get("Content-Security-Policy")
+	if csp == "" {
+		t.Fatal("no Content-Security-Policy header")
+	}
+	if !strings.Contains(csp, "script-src 'self'") {
+		t.Errorf("CSP does not restrict scripts to same-origin files: %q", csp)
+	}
+	// The check that matters: 'unsafe-inline' must not appear in the script
+	// directive. It legitimately remains under style-src.
+	for _, directive := range strings.Split(csp, ";") {
+		d := strings.TrimSpace(directive)
+		if strings.HasPrefix(d, "script-src") && strings.Contains(d, "unsafe-inline") {
+			t.Errorf("script-src still allows inline script: %q", d)
+		}
+	}
+	if !strings.Contains(csp, "default-src 'none'") {
+		t.Errorf("CSP no longer denies by default: %q", csp)
+	}
+}
+
 // TestNewEndpointsRejectTheWrongMethod keeps a GET-shaped action (which a plain
 // <img> or a link could trigger) from ever existing.
 func TestNewEndpointsRejectTheWrongMethod(t *testing.T) {

@@ -190,11 +190,18 @@ const MarkerHeader = "X-Ytdl-Gui"
 // securityHeaders locks the page down: it is entirely self-contained, so a CSP
 // that forbids every external origin costs nothing and blocks a whole class of
 // injection consequences.
+//
+// Cycle 5 moved the script out of the document, which lets script-src drop
+// 'unsafe-inline' for 'self'. That is the difference between "an injected
+// <script> would run" and "it would not": the page renders user-controlled
+// strings (titles, URLs, failure reasons) and this is the backstop for a missed
+// escape. style-src keeps 'unsafe-inline' because the markup still uses a couple
+// of style attributes; 'self' is added for the now-external stylesheet.
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(MarkerHeader, "1")
 		w.Header().Set("Content-Security-Policy",
-			"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'")
+			"default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'none'; base-uri 'none'")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		next.ServeHTTP(w, r)
