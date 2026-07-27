@@ -595,9 +595,28 @@ $("s_noLimit").addEventListener("change", () => {
 
 let savedSettings = null; // the last state known to be persisted
 
+// settingsDirty compares FIELD BY FIELD, deliberately not by serialising both
+// sides. JSON.stringify is key-order sensitive: readSettings() builds its object
+// in SETTING_IDS order with concurrency appended last, while the server document
+// carries it in Go struct order — so two objects with identical values produced
+// different strings and the bar was pinned open from the first paint, in every
+// state, which is the "a warning that is always on is a warning nobody reads"
+// failure. A field-wise loop also survives the server adding a key.
 function settingsDirty() {
   if (!savedSettings) return false;
-  return JSON.stringify(readSettings()) !== JSON.stringify(savedSettings);
+  const current = readSettings();
+  for (const k of SETTING_IDS) {
+    const a = current[k], b = savedSettings[k];
+    if (a === undefined && b === undefined) continue;
+    // Numeric fields round-trip through form values as strings; compare on
+    // value, not on type.
+    if (typeof a === "number" || typeof b === "number") {
+      if (Number(a) !== Number(b)) return true;
+      continue;
+    }
+    if (a !== b) return true;
+  }
+  return false;
 }
 
 function refreshSaveBar() {
