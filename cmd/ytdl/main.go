@@ -1027,6 +1027,12 @@ func runAgainCmd(p *cli.Parsed) int {
 			fmt.Fprintln(os.Stderr, "  Guarda a che punto è con:  ytdl queue")
 			return 1
 		}
+		if errors.Is(err, jobs.ErrBadURL) {
+			// The record's link is not something ytdl may hand to yt-dlp. Only a
+			// hand-edited or imported history gets here.
+			fmt.Fprintf(os.Stderr, "✗ Il link registrato per questo download non è valido: %v\n", err)
+			return 1
+		}
 		fmt.Fprintf(os.Stderr, "✗ Impossibile accodare: %v\n", err)
 		return 1
 	}

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -272,35 +271,6 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Write(indexHTML)
 }
 
-// validateDownloadURL rejects anything that is not a plain http(s) URL. This is
-// a security boundary, not a nicety: core.BuildArgs appends the URL as the LAST
-// argv element with no "--" separator, and is frozen byte-for-byte by the parity
-// gate, so a value starting with "-" reaches yt-dlp as an OPTION. Real examples
-// an attacker would reach for: --update-to=<repo>@<tag> makes yt-dlp replace its
-// own binary from an arbitrary GitHub repo, and --config-locations=<file> loads
-// arbitrary options (including --exec) from a planted file. The CLI path is not
-// exposed the same way — its flag parser rejects a leading "-" first.
-func validateDownloadURL(raw string) (string, error) {
-	v := strings.TrimSpace(raw)
-	if v == "" {
-		return "", errors.New("url mancante")
-	}
-	if strings.HasPrefix(v, "-") {
-		return "", errors.New("url non valido: non può iniziare con '-'")
-	}
-	u, err := url.Parse(v)
-	if err != nil {
-		return "", errors.New("url non valido")
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", errors.New("url non valido: sono ammessi solo http e https")
-	}
-	if u.Host == "" {
-		return "", errors.New("url non valido: manca il dominio")
-	}
-	return v, nil
-}
-
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeErr(w, http.StatusMethodNotAllowed, "GET only")
@@ -433,7 +403,7 @@ func (s *Server) handleDownloads(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "corpo JSON non valido")
 		return
 	}
-	cleanURL, err := validateDownloadURL(req.URL)
+	cleanURL, err := jobs.ValidateURL(req.URL)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -634,6 +604,9 @@ func (s *Server) handleHistoryAgain(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.Is(err, jobs.ErrNoURL):
 		writeErr(w, http.StatusBadRequest, "questo record non ha un link da riscaricare")
+		return
+	case errors.Is(err, jobs.ErrBadURL):
+		writeErr(w, http.StatusBadRequest, "il link registrato per questo download non è valido: "+err.Error())
 		return
 	case err != nil:
 		writeErr(w, http.StatusInternalServerError, "impossibile accodare: "+err.Error())

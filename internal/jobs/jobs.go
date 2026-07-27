@@ -137,9 +137,16 @@ func Cancel(sp *queue.Spool, id string) (wasPending bool, err error) {
 // still slip through; it closes the case that actually happens, not a race
 // between two humans.
 func Again(sp *queue.Spool, e logstore.Entry, s config.Settings) (string, error) {
-	url := strings.TrimSpace(e.URL)
-	if url == "" {
+	if strings.TrimSpace(e.URL) == "" {
 		return "", ErrNoURL
+	}
+	// The record is untrusted input (design §7): history.jsonl is a plain file,
+	// and its URL is about to become the last element of yt-dlp's argv with no
+	// "--" separator. Validate it exactly as a brand-new download is validated —
+	// this path used to skip the check entirely.
+	url, err := ValidateURL(e.URL)
+	if err != nil {
+		return "", err
 	}
 	snap, err := sp.List()
 	if err != nil {
