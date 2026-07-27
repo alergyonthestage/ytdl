@@ -152,11 +152,29 @@ func TestHistoryEndpointFiltersAndSearches(t *testing.T) {
 		t.Errorf("failed=1 returned %+v, want only the failure", page.Items)
 	}
 
+	// The complement: the view's three filters are tutti / completati / non
+	// riusciti, and `failed` alone cannot express "only the ones that worked".
+	_, body = getPath(t, ts, "/api/history?ok=1")
+	page = historyPageDTO{}
+	json.Unmarshal(body, &page)
+	if len(page.Items) != 1 || !page.Items[0].Success {
+		t.Errorf("ok=1 returned %+v, want only the success", page.Items)
+	}
+
 	_, body = getPath(t, ts, "/api/history?q=mina")
 	page = historyPageDTO{}
 	json.Unmarshal(body, &page)
 	if len(page.Items) != 1 || page.Items[0].Title != "Mina - Grande" {
 		t.Errorf("q=mina returned %+v, want the matching record", page.Items)
+	}
+
+	// Both halves at once is a contradiction; returning nothing is the honest
+	// answer, not an arbitrary winner.
+	_, body = getPath(t, ts, "/api/history?ok=1&failed=1")
+	page = historyPageDTO{}
+	json.Unmarshal(body, &page)
+	if len(page.Items) != 0 {
+		t.Errorf("ok=1&failed=1 returned %+v, want nothing", page.Items)
 	}
 }
 

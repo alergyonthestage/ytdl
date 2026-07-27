@@ -164,6 +164,182 @@ func TestHistoryRowsRankTheirActions(t *testing.T) {
 	}
 }
 
+// TestOverflowMenuHoldsTheSecondaryActions: the maintainer's instruction was a
+// visual hierarchy, not a row of equal buttons — one primary control, the rest
+// behind ···.
+func TestOverflowMenuHoldsTheSecondaryActions(t *testing.T) {
+	js := assetText(t, "assets/app.js")
+	for _, action := range []string{"Mostra nel Finder", "Mostra la cartella", "Vedi errore", "Copia link"} {
+		if !strings.Contains(js, action) {
+			t.Errorf("overflow action %q missing", action)
+		}
+	}
+	if !strings.Contains(js, "overflowMenu") {
+		t.Error("no overflow menu; the row would show a stack of equal buttons")
+	}
+}
+
+// TestOverflowMenuIsDismissibleAndReachable: a menu that only closes by
+// selecting something is a trap, and one reachable only by mouse excludes
+// keyboard users (ux-principles.md §4).
+func TestOverflowMenuIsDismissibleAndReachable(t *testing.T) {
+	js := assetText(t, "assets/app.js")
+	if !strings.Contains(js, `document.addEventListener("click", closeMenus)`) {
+		t.Error("the overflow menu does not close on an outside click")
+	}
+	if !strings.Contains(js, `ev.key === "Escape"`) {
+		t.Error("the overflow menu does not close on Escape")
+	}
+	for _, attr := range []string{"aria-haspopup", "aria-expanded", "aria-label"} {
+		if !strings.Contains(js, attr) {
+			t.Errorf("the overflow control has no %s", attr)
+		}
+	}
+	// Items are real buttons, so they are tabbable and operable with Enter/Space.
+	if !strings.Contains(js, "menu.appendChild(b)") {
+		t.Error("overflow items are not buttons")
+	}
+}
+
+// TestUnavailableActionsAreDisabledWithAReason: never rendered live only to
+// fail, never silently missing (ux-principles.md §4).
+func TestUnavailableActionsAreDisabledWithAReason(t *testing.T) {
+	js := assetText(t, "assets/app.js")
+	if !strings.Contains(js, "b.disabled = true") || !strings.Contains(js, "disabledReason") {
+		t.Error("an unavailable overflow action is not disabled with a reason")
+	}
+	for _, reason := range []string{"il file non è più al suo posto", "nessun log disponibile"} {
+		if !strings.Contains(js, reason) {
+			t.Errorf("missing explanation %q for an unavailable action", reason)
+		}
+	}
+}
+
+// TestHistoryFiltersAndSearchGoToTheServer: filtering client-side would search
+// only the rows already loaded, so a search would miss everything past the first
+// page (design §8.3).
+func TestHistoryFiltersAndSearchGoToTheServer(t *testing.T) {
+	html := assetText(t, "assets/index.html")
+	js := assetText(t, "assets/app.js")
+
+	for _, filter := range []string{`data-filter="all"`, `data-filter="ok"`, `data-filter="failed"`} {
+		if !strings.Contains(html, filter) {
+			t.Errorf("missing filter control %s", filter)
+		}
+	}
+	if !strings.Contains(js, `p.set("failed", "1")`) || !strings.Contains(js, `p.set("ok", "1")`) {
+		t.Error("the filters do not reach the server as query parameters")
+	}
+	if !strings.Contains(js, `p.set("q"`) {
+		t.Error("the search box does not reach the server as a query parameter")
+	}
+	if !strings.Contains(js, `p.set("offset"`) {
+		t.Error("paging does not send an offset")
+	}
+}
+
+// TestHistoryEmptyStatesTeach: three different reasons for an empty list, three
+// different things to say (ux-principles.md §5).
+func TestHistoryEmptyStatesTeach(t *testing.T) {
+	js := assetText(t, "assets/app.js")
+	for _, text := range []string{
+		"Nessun download corrisponde a questa ricerca",
+		"Nessun download non riuscito",
+		"Nessun download registrato",
+	} {
+		if !strings.Contains(js, text) {
+			t.Errorf("missing empty state %q", text)
+		}
+	}
+	if !strings.Contains(js, "Incolla un link") {
+		t.Error("the empty queue does not teach the next step")
+	}
+}
+
+// TestFailureLogGoesIntoAPreAsText: the .log is arbitrary program output served
+// as text/plain; it must be DISPLAYED, never interpreted.
+func TestFailureLogGoesIntoAPreAsText(t *testing.T) {
+	html := assetText(t, "assets/index.html")
+	js := assetText(t, "assets/app.js")
+	if !strings.Contains(html, `<pre id="logBody">`) {
+		t.Error("the log panel is not a <pre>")
+	}
+	if !strings.Contains(js, `$("logBody").textContent = text`) {
+		t.Error("the log body is not set as text")
+	}
+	if !strings.Contains(js, "/api/history/log?id=") {
+		t.Error("the panel never fetches the log")
+	}
+}
+
+// TestSettingsAreGrouped: the flat list of 17 fields was the reported problem
+// (design §8.4). Order matters — Download first, Avanzate last and collapsed.
+func TestSettingsAreGrouped(t *testing.T) {
+	html := assetText(t, "assets/index.html")
+	groups := []string{"Download", "Notifiche", "Nomi e metadati", "Log e manutenzione"}
+	at := -1
+	for _, g := range groups {
+		i := strings.Index(html, "<h2>"+g+"</h2>")
+		if i < 0 {
+			t.Fatalf("settings group %q missing", g)
+		}
+		if i < at {
+			t.Errorf("group %q is out of order", g)
+		}
+		at = i
+	}
+	// The two strip regexes are the rarest thing in the document; they belong
+	// behind a disclosure, not on the main plane.
+	adv := strings.Index(html, "<summary>Avanzate</summary>")
+	if adv < 0 {
+		t.Fatal("no Avanzate disclosure")
+	}
+	for _, id := range []string{"s_stripBrackets", "s_stripTags"} {
+		if strings.Index(html, id) < adv {
+			t.Errorf("%s is outside the Avanzate disclosure", id)
+		}
+	}
+}
+
+// TestSettingsHaveAnUnsavedChangesBar: the form is long enough that a Save
+// button at the bottom is easy to leave un-pressed.
+func TestSettingsHaveAnUnsavedChangesBar(t *testing.T) {
+	html := assetText(t, "assets/index.html")
+	js := assetText(t, "assets/app.js")
+	if !strings.Contains(html, `id="saveBar"`) || !strings.Contains(html, "Modifiche non salvate") {
+		t.Error("no unsaved-changes bar")
+	}
+	if !strings.Contains(html, `id="revertSettings"`) {
+		t.Error("the bar offers no way back")
+	}
+	if !strings.Contains(js, "settingsDirty") || !strings.Contains(js, "refreshSaveBar") {
+		t.Error("the bar is not driven by a dirty check")
+	}
+	// Measured against what the SERVER says is persisted, not against the form's
+	// initial paint — otherwise a value the server normalised reads as dirty for
+	// ever.
+	if !strings.Contains(js, "savedSettings = s") {
+		t.Error("the saved snapshot does not come from the server response")
+	}
+}
+
+// TestNewSettingsHaveControls is what let the handleSettings carry-through
+// workaround be deleted: a key with no control gets silently reset on save.
+func TestNewSettingsHaveControls(t *testing.T) {
+	html := assetText(t, "assets/index.html")
+	js := assetText(t, "assets/app.js")
+	for _, id := range []string{"s_jobTimeout", "s_openFolderOnDone"} {
+		if !strings.Contains(html, `id="`+id+`"`) {
+			t.Errorf("no control for %s", id)
+		}
+	}
+	for _, key := range []string{`"jobTimeout"`, `"openFolderOnDone"`} {
+		if !strings.Contains(js, key) {
+			t.Errorf("%s is not in SETTING_IDS, so it would not be sent", key)
+		}
+	}
+}
+
 // TestSPAUsesTheSharedVocabulary keeps the two channels from inventing synonyms
 // (ux-principles.md §3).
 func TestSPAUsesTheSharedVocabulary(t *testing.T) {

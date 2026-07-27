@@ -89,7 +89,7 @@ function showView(name) {
     if (a.dataset.view === name) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   }
-  if (name === "history") loadHistory();
+  if (name === "history") loadHistory(false);
   if (name === "download") $("url").focus();
 }
 
@@ -201,18 +201,130 @@ function primaryAction(h) {
   return button("Riscarica", "secondary small", (ev) => againRecord(ev, h));
 }
 
-function historyRow(h) {
+// overflowItems is everything the row can do EXCEPT its primary action. An
+// action that cannot work here is listed disabled with the reason, rather than
+// hidden (so the row does not change shape) or live-and-failing.
+function overflowItems(h) {
+  const items = [];
+  if (h.success && h.canOpenFile) {
+    items.push(["Mostra nel Finder", null, (ev) => openRecord(ev, h, "folder")]);
+    items.push(["Riscarica", null, (ev) => againRecord(ev, h)]);
+  } else if (h.success) {
+    if (h.canOpenFolder) items.push(["Mostra la cartella", null, (ev) => openRecord(ev, h, "folder")]);
+    else items.push(["Apri", "il file non è più al suo posto", null]);
+  } else {
+    items.push(h.hasLog
+      ? ["Vedi errore", null, () => showLog(h)]
+      : ["Vedi errore", "nessun log disponibile", null]);
+  }
+  items.push(h.url
+    ? ["Copia link", null, (ev) => copyLink(ev, h)]
+    : ["Copia link", "nessun link registrato", null]);
+  return items;
+}
+
+// overflowMenu builds the ··· control. Only one menu is open at a time; it
+// closes on outside click and on Escape, and its items are ordinary buttons so
+// they are reachable and operable from the keyboard.
+function overflowMenu(h) {
+  const wrap = el("div", "overflow");
+  const menu = el("div", "menu");
+  menu.hidden = true;
+
+  const toggle = button("···", "secondary small overflow-btn", (ev) => {
+    ev.stopPropagation();
+    const open = menu.hidden;
+    closeMenus();
+    menu.hidden = !open;
+    toggle.setAttribute("aria-expanded", String(open));
+    if (open) {
+      const first = menu.querySelector("button:not(:disabled)");
+      if (first) first.focus();
+    }
+  });
+  toggle.setAttribute("aria-haspopup", "menu");
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.setAttribute("aria-label", "Altre azioni");
+
+  for (const [label, disabledReason, onClick] of overflowItems(h)) {
+    const b = button(label, null, (ev) => {
+      closeMenus();
+      if (onClick) onClick(ev);
+    });
+    if (disabledReason) {
+      b.disabled = true;
+      b.title = disabledReason;
+      b.textContent = label + " — " + disabledReason;
+    }
+    menu.appendChild(b);
+  }
+  wrap.appendChild(toggle);
+  wrap.appendChild(menu);
+  return wrap;
+}
+
+function closeMenus() {
+  for (const m of document.querySelectorAll(".menu")) m.hidden = true;
+  for (const b of document.querySelectorAll(".overflow-btn")) b.setAttribute("aria-expanded", "false");
+}
+
+document.addEventListener("click", closeMenus);
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") closeMenus();
+});
+
+// historyRow renders one record. withOverflow is false for the Download view's
+// "ultimi download", which shows the primary action only.
+function historyRow(h, withOverflow) {
   const meta = [];
   const bits = [whenText(h.time)];
   if (h.format) bits.push("." + h.format);
   if (h.count > 1) bits.push(h.count + " tracce");
   if (h.success && h.location) bits.push(h.location);
   meta.push(el("div", "meta", bits.filter(Boolean).join(" · ")));
-  // Why it failed, inline: "why" must need no click.
+  // Why it failed, inline: "why" must need no click. The full .log is one.
   if (!h.success && h.error) meta.push(el("div", "reason", h.error));
 
   const mark = h.success ? "✓ " : "✗ ";
-  return itemRow(mark + (h.title || h.url), meta, [primaryAction(h)]);
+  const actions = [primaryAction(h)];
+  if (withOverflow) actions.push(overflowMenu(h));
+  return itemRow(mark + (h.title || h.url), meta, actions);
+}
+
+async function copyLink(ev, h) {
+  try {
+    if (!navigator.clipboard) throw new Error("appunti non disponibili");
+    await navigator.clipboard.writeText(h.url);
+    setMsg(msgBox(), "ok", "Link copiato.");
+  } catch (err) {
+    setMsg(msgBox(), "bad", "Impossibile copiare il link: " + err.message);
+  }
+}
+
+// showLog fetches the per-job .log and shows it in the panel. The response is
+// plain text served with nosniff, and it lands in a <pre> via textContent, so a
+// log full of markup is displayed, never interpreted.
+async function showLog(h) {
+  const panel = $("logPanel");
+  $("logTitle").textContent = "Dettaglio: " + (h.title || h.url);
+  $("logBody").textContent = "Carico…";
+  panel.hidden = false;
+  try {
+    const r = await fetch("/api/history/log?id=" + encodeURIComponent(h.id));
+    const text = await r.text();
+    if (!r.ok) throw new Error(text || "errore " + r.status);
+    $("logBody").textContent = text;
+  } catch (err) {
+    $("logBody").textContent = "Log non disponibile: " + err.message;
+  }
+}
+
+$("logClose").addEventListener("click", () => { $("logPanel").hidden = true; });
+
+// msgBox is the status line of whichever view is showing, so a message from a
+// shared row action lands where the user is looking.
+function msgBox() {
+  return currentView() === "history" ? "historyMsg" : "msg";
 }
 
 async function openRecord(ev, h, target) {
@@ -221,7 +333,7 @@ async function openRecord(ev, h, target) {
   try {
     await api("/api/history/open", { id: h.id, target: target });
   } catch (err) {
-    setMsg(currentView() === "history" ? "historyMsg" : "msg", "bad", err.message);
+    setMsg(msgBox(), "bad", err.message);
   } finally {
     b.disabled = false;
   }
@@ -233,9 +345,9 @@ async function againRecord(ev, h) {
   try {
     const data = await api("/api/history/again", { id: h.id });
     if (data.queue) applyQueue(data.queue);
-    setMsg(currentView() === "history" ? "historyMsg" : "msg", "ok", "Rimesso in coda.");
+    setMsg(msgBox(), "ok", "Rimesso in coda.");
   } catch (err) {
-    setMsg(currentView() === "history" ? "historyMsg" : "msg", "bad", err.message);
+    setMsg(msgBox(), "bad", err.message);
   } finally {
     b.disabled = false;
   }
@@ -243,27 +355,89 @@ async function againRecord(ev, h) {
 
 function renderRecent(items) {
   if (!items || !items.length) {
-    replaceChildren($("recent"), [el("p", "empty", "Nessun download registrato.")]);
+    replaceChildren($("recent"), [el("p", "empty", "Nessun download registrato. Il primo comparirà qui.")]);
     return;
   }
-  replaceChildren($("recent"), items.slice(0, RECENT_LIMIT).map(historyRow));
+  replaceChildren($("recent"), items.slice(0, RECENT_LIMIT).map((h) => historyRow(h, false)));
 }
 
-async function loadHistory() {
+// ---- the history view ----------------------------------------------------
+
+// The view's query. Filters and search go to the SERVER, so they search the
+// whole retention window rather than only the rows already loaded.
+const historyQuery = { filter: "all", q: "", offset: 0 };
+// Set once the user has paged past the first screen: a live refresh would then
+// yank away rows they are reading, so auto-refresh stops until they re-filter.
+let historyPaged = false;
+
+function historyURL() {
+  const p = new URLSearchParams();
+  if (historyQuery.filter === "failed") p.set("failed", "1");
+  if (historyQuery.filter === "ok") p.set("ok", "1");
+  if (historyQuery.q) p.set("q", historyQuery.q);
+  if (historyQuery.offset) p.set("offset", String(historyQuery.offset));
+  const qs = p.toString();
+  return "/api/history" + (qs ? "?" + qs : "");
+}
+
+function historyEmptyText() {
+  if (historyQuery.q) return "Nessun download corrisponde a questa ricerca.";
+  if (historyQuery.filter === "failed") return "Nessun download non riuscito. Buon segno.";
+  if (historyQuery.filter === "ok") return "Nessun download completato in questo periodo.";
+  return "Nessun download registrato. Il primo comparirà qui.";
+}
+
+// loadHistory replaces the list; loadMoreHistory appends the next page. Paging
+// APPENDS so the rows already on screen do not jump.
+async function loadHistory(append) {
   const list = $("historyList");
+  if (!append) {
+    historyQuery.offset = 0;
+    historyPaged = false;
+    $("logPanel").hidden = true;
+  } else {
+    historyPaged = true;
+  }
   try {
-    const r = await fetch("/api/history");
+    const r = await fetch(historyURL());
     const page = await r.json();
-    if (!r.ok) throw new Error(page.error || "errore");
-    if (!page.items || !page.items.length) {
-      replaceChildren(list, [el("p", "empty", "Nessun download registrato.")]);
-      return;
+    if (!r.ok) throw new Error(page.error || "errore " + r.status);
+    const rows = (page.items || []).map((h) => historyRow(h, true));
+    if (append) {
+      for (const row of rows) list.appendChild(row);
+    } else if (rows.length) {
+      replaceChildren(list, rows);
+    } else {
+      replaceChildren(list, [el("p", "empty", historyEmptyText())]);
     }
-    replaceChildren(list, page.items.map(historyRow));
+    historyQuery.offset += (page.items || []).length;
+    $("loadMore").hidden = !page.more;
   } catch (err) {
-    replaceChildren(list, [el("p", "bad", "Impossibile leggere la cronologia: " + err.message)]);
+    setMsg("historyMsg", "bad", "Impossibile leggere la cronologia: " + err.message);
   }
 }
+
+for (const chip of document.querySelectorAll(".chip")) {
+  chip.addEventListener("click", () => {
+    historyQuery.filter = chip.dataset.filter;
+    for (const c of document.querySelectorAll(".chip")) {
+      c.setAttribute("aria-pressed", String(c === chip));
+    }
+    loadHistory(false);
+  });
+}
+
+// A short debounce: typing a query should not fire a request per keystroke.
+let searchTimer = 0;
+$("search").addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    historyQuery.q = $("search").value.trim();
+    loadHistory(false);
+  }, 200);
+});
+
+$("loadMore").addEventListener("click", () => loadHistory(true));
 
 // ---- API helper ----------------------------------------------------------
 
@@ -308,7 +482,10 @@ function connect() {
     fetch("/api/state").then((r) => r.json()).then((s) => {
       renderRecent(s.history);
       setDaemon(s.daemonRunning);
-      if (currentView() === "history") loadHistory();
+      // Only refresh the history view while the user is on the first page:
+      // reloading under someone who has clicked "Carica altri" would yank away
+      // the rows they are reading.
+      if (currentView() === "history" && !historyPaged) loadHistory(false);
     }).catch(() => {});
   });
   es.addEventListener("progress", (e) => {
@@ -404,12 +581,50 @@ $("s_noLimit").addEventListener("change", () => {
   if (!$("s_noLimit").checked && !$("s_concurrency").value) {
     $("s_concurrency").value = DEFAULT_CONCURRENCY;
   }
+  refreshSaveBar();
 });
+
+// ---- unsaved-changes bar -------------------------------------------------
+// The settings form is long enough that a Save button at the bottom is easy to
+// miss and easy to leave un-pressed. A sticky bar appears the moment anything
+// differs from what is persisted, and offers the way back as well as forward.
+//
+// The API is a whole-document PUT, so there is one bar for the whole form
+// rather than one per group: per-group saves would imply a guarantee the
+// transport does not make.
+
+let savedSettings = null; // the last state known to be persisted
+
+function settingsDirty() {
+  if (!savedSettings) return false;
+  return JSON.stringify(readSettings()) !== JSON.stringify(savedSettings);
+}
+
+function refreshSaveBar() {
+  $("saveBar").hidden = !settingsDirty();
+}
+
+$("settings").addEventListener("input", refreshSaveBar);
+$("settings").addEventListener("change", refreshSaveBar);
+
+$("revertSettings").addEventListener("click", () => {
+  if (savedSettings) fillSettings(savedSettings);
+  refreshSaveBar();
+  setMsg("settingsMsg", "", "");
+});
+
+// applySettings fills the form and records the state as persisted, so the
+// unsaved-changes bar is measured against what is really on disk.
+function applySettings(s) {
+  savedSettings = s;
+  fillSettings(s);
+  refreshSaveBar();
+}
 
 async function loadSettings() {
   const r = await fetch("/api/settings");
   const s = await r.json();
-  fillSettings(s);
+  applySettings(s);
   fillSelect($("format"), FORMATS, s.format);
   $("playlist").checked = !!s.playlistDefault;
 }
@@ -424,7 +639,11 @@ $("settings").addEventListener("submit", async (ev) => {
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || "errore");
-    fillSettings(data);
+    // The response is the RESOLVED settings, which may differ from what was
+    // sent (a trailing slash trimmed, say) — so the saved snapshot comes from
+    // the server, not from the form.
+    applySettings(data);
+    fillSelect($("format"), FORMATS, data.format);
     setMsg("settingsMsg", "ok", "Impostazioni salvate.");
   } catch (err) {
     setMsg("settingsMsg", "bad", err.message);

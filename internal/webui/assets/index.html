@@ -67,8 +67,26 @@
   <div class="view" id="view-history" hidden>
     <section>
       <h2>Cronologia</h2>
+      <div class="toolbar">
+        <div class="filters" role="group" aria-label="Filtra">
+          <button type="button" class="chip" data-filter="all" aria-pressed="true">Tutti</button>
+          <button type="button" class="chip" data-filter="ok" aria-pressed="false">Completati</button>
+          <button type="button" class="chip" data-filter="failed" aria-pressed="false">Non riusciti</button>
+        </div>
+        <input id="search" type="search" placeholder="Cerca titolo, link o file…" autocomplete="off">
+      </div>
       <div class="msg" id="historyMsg"></div>
+
+      <div class="panel" id="logPanel" hidden>
+        <div class="panel-head">
+          <strong id="logTitle">Dettaglio errore</strong>
+          <button type="button" class="secondary small" id="logClose">Chiudi</button>
+        </div>
+        <pre id="logBody"></pre>
+      </div>
+
       <div id="historyList"></div>
+      <div class="foot"><button type="button" class="secondary" id="loadMore" hidden>Carica altri</button></div>
     </section>
   </div>
 
@@ -84,9 +102,9 @@
       <div class="msg" id="sessionMsg"></div>
     </section>
 
-    <section>
-      <h2>Impostazioni</h2>
-      <form id="settings">
+    <form id="settings">
+      <section>
+        <h2>Download</h2>
         <div class="row">
           <div class="field"><label for="s_outputDir">Cartella predefinita</label><input id="s_outputDir"></div>
           <div class="field"><label for="s_format">Formato</label><select id="s_format"></select></div>
@@ -101,33 +119,60 @@
             </div>
           </div>
         </div>
-        <div class="field"><label for="s_nameTemplate">Template del nome file</label><input id="s_nameTemplate"></div>
-        <div class="row">
-          <div class="field"><label for="s_stripBrackets">Rimuovi (regex, parentesi quadre)</label><input id="s_stripBrackets"></div>
-          <div class="field"><label for="s_stripTags">Rimuovi (regex, tag ridondanti)</label><input id="s_stripTags"></div>
+        <div class="checks field">
+          <label><input type="checkbox" id="s_playlistDefault"> Scarica sempre l'intera playlist</label>
+          <label><input type="checkbox" id="s_openFolderOnDone"> A fine download mostra il file</label>
         </div>
+        <div class="hint">"Mostra il file" vale solo per i download in primo piano.</div>
+      </section>
+
+      <section>
+        <h2>Notifiche</h2>
+        <div class="field"><label for="s_notifyOn">Notifica quando</label><select id="s_notifyOn"></select></div>
+        <div class="checks field">
+          <label><input type="checkbox" id="s_notify"> Notifiche di sistema</label>
+          <label><input type="checkbox" id="s_notifyForeground"> Anche in primo piano</label>
+          <label><input type="checkbox" id="s_notifySound"> Suono</label>
+        </div>
+      </section>
+
+      <section>
+        <h2>Nomi e metadati</h2>
+        <div class="field"><label for="s_nameTemplate">Template del nome file</label><input id="s_nameTemplate"></div>
+        <div class="checks field">
+          <label><input type="checkbox" id="s_embedThumbnail"> Incorpora copertina</label>
+          <label><input type="checkbox" id="s_embedMetadata"> Incorpora metadati</label>
+        </div>
+        <details>
+          <summary>Avanzate</summary>
+          <div class="row">
+            <div class="field"><label for="s_stripBrackets">Rimuovi dal titolo (regex, [..])</label><input id="s_stripBrackets"></div>
+            <div class="field"><label for="s_stripTags">Rimuovi dal titolo (regex, tag ridondanti)</label><input id="s_stripTags"></div>
+          </div>
+        </details>
+      </section>
+
+      <section>
+        <h2>Log e manutenzione</h2>
         <div class="row">
           <div class="field"><label for="s_logDir">Cartella dei log</label><input id="s_logDir"></div>
           <div class="field"><label for="s_logRetentionDays">Giorni di storico (0 = per sempre)</label><input id="s_logRetentionDays" type="number" min="0"></div>
         </div>
         <div class="row">
-          <div class="field"><label for="s_notifyOn">Notifica quando</label><select id="s_notifyOn"></select></div>
           <div class="field"><label for="s_jobTimeout">Timeout per download, secondi (0 = nessuno)</label><input id="s_jobTimeout" type="number" min="0"></div>
         </div>
         <div class="checks field">
-          <label><input type="checkbox" id="s_playlistDefault"> Playlist per impostazione predefinita</label>
-          <label><input type="checkbox" id="s_openFolderOnDone"> A fine download mostra il file</label>
-          <label><input type="checkbox" id="s_embedThumbnail"> Incorpora copertina</label>
-          <label><input type="checkbox" id="s_embedMetadata"> Incorpora metadati</label>
           <label><input type="checkbox" id="s_breadcrumbOnFailure"> Lascia un .log accanto all'audio se fallisce</label>
-          <label><input type="checkbox" id="s_notify"> Notifiche di sistema</label>
-          <label><input type="checkbox" id="s_notifyForeground"> Notifica anche in primo piano</label>
-          <label><input type="checkbox" id="s_notifySound"> Suono della notifica</label>
         </div>
-        <button type="submit" id="saveSettings">Salva impostazioni</button>
-        <div class="msg" id="settingsMsg"></div>
-      </form>
-    </section>
+      </section>
+
+      <div class="savebar" id="saveBar" hidden>
+        <span class="savebar-text">Modifiche non salvate</span>
+        <button type="button" class="secondary" id="revertSettings">Annulla</button>
+        <button type="submit" id="saveSettings">Salva</button>
+      </div>
+      <div class="msg" id="settingsMsg"></div>
+    </form>
   </div>
 
 </main>

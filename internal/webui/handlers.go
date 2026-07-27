@@ -493,9 +493,13 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	// second count query — the alternative is a "Carica altri" button that
 	// sometimes loads nothing.
 	entries, err := s.loadHistory(logstore.QueryOpts{
-		Limit:      limit + 1,
-		Offset:     offset,
-		OnlyFailed: q.Get("failed") == "1" || q.Get("failed") == "true",
+		Limit:  limit + 1,
+		Offset: offset,
+		// The view's three filters are tutti / completati / non riusciti, so the
+		// query needs both halves; `failed` alone cannot express "only the ones
+		// that worked".
+		OnlyFailed: isTrue(q.Get("failed")),
+		OnlyOK:     isTrue(q.Get("ok")),
 		Search:     q.Get("q"),
 	})
 	if err != nil {
@@ -510,6 +514,9 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		Items: s.toHistoryDTOs(entries), Offset: offset, More: more,
 	})
 }
+
+// isTrue reads a boolean query parameter in the forms a URL actually carries.
+func isTrue(v string) bool { return v == "1" || v == "true" || v == "yes" }
 
 // clampQueryInt parses a query parameter, falling back to def for anything
 // missing or unparseable and clamping the rest into [lo, hi]. A garbage limit

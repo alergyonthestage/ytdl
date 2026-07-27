@@ -374,6 +374,33 @@ func TestLoadOffsetAppliesAfterFiltering(t *testing.T) {
 	}
 }
 
+// TestLoadOnlyOK is the complement of OnlyFailed, needed because the GUI offers
+// three filters (tutti / completati / non riusciti) and "only the ones that
+// worked" cannot be expressed by the absence of a failure filter.
+func TestLoadOnlyOK(t *testing.T) {
+	dir := searchFixture(t)
+	got, err := Load(dir, QueryOpts{OnlyOK: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("OnlyOK returned %d records, want the 3 successes", len(got))
+	}
+	for _, e := range got {
+		if !e.Success {
+			t.Errorf("OnlyOK returned a failure: %+v", e)
+		}
+	}
+	// Both at once is a contradiction; nothing matches, which is what was asked.
+	got, err = Load(dir, QueryOpts{OnlyOK: true, OnlyFailed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("OnlyOK+OnlyFailed returned %d records, want 0", len(got))
+	}
+}
+
 func TestFindResolvesFullIDAndPrefix(t *testing.T) {
 	dir := searchFixture(t)
 	all, err := Load(dir, QueryOpts{})

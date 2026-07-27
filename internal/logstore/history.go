@@ -137,7 +137,10 @@ type QueryOpts struct {
 	Limit      int       // at most this many, newest first (<= 0 = no limit)
 	Offset     int       // skip this many of the newest matches first (<= 0 = none)
 	OnlyFailed bool      // only failures
-	Search     string    // case-insensitive substring of title, URL or saved file name ("" = no filter)
+	// OnlyOK is the complement of OnlyFailed: only successes. Both set is a
+	// contradiction and yields nothing, which is what the caller asked for.
+	OnlyOK bool
+	Search string // case-insensitive substring of title, URL or saved file name ("" = no filter)
 }
 
 // Append writes j as one JSON line to <dir>/history.jsonl, creating the dir and
@@ -199,6 +202,9 @@ func Load(dir string, opts QueryOpts) ([]Entry, error) {
 			continue // skip a malformed line
 		}
 		if opts.OnlyFailed && e.Success {
+			continue
+		}
+		if opts.OnlyOK && !e.Success {
 			continue
 		}
 		if !opts.Since.IsZero() && e.Time.Before(opts.Since) {
