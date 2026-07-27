@@ -1,6 +1,6 @@
 # Design — Cycle 5: unified UX across GUI and CLI
 
-- **Status:** proposed (awaiting gate B)
+- **Status:** approved at gate B (2026-07-27) — implementation may start
 - **Date:** 2026-07-27
 - **Scope:** roadmap "GUI multi-page + broader UX overhaul (CLI + GUI)"
   ([roadmap.md](roadmap.md)), brought forward ahead of the Phase-5 hardening cycle
@@ -102,29 +102,12 @@ on one plane, which is the cause of the reported confusion.
 
 ## 3. Shared vocabulary
 
-One concept, one word, in both channels. This table is normative: labels, help
-text and messages must not invent synonyms.
-
-| Concept | GUI label (it) | CLI surface | Notes |
-|---|---|---|---|
-| queued, not started | "In attesa" | `in attesa` | spool `pending/` |
-| currently downloading | "In corso" | `in corso` | spool `running/` |
-| finished OK | "Completato" ✓ | ✓ | |
-| finished badly | "Non riuscito" ✗ | ✗ | with a one-line reason |
-| stop a live job | "Annulla" | `ytdl cancel` | spool marker (ADR-0011) |
-| requeue a failed spool job | "Riprova" | `ytdl retry` | spool `failed/` → `pending/` |
-| download the same thing again | "Riscarica" | `ytdl again` | new job from a history record |
-| open the audio file | "Apri" | `ytdl open` | default app |
-| show it in the file manager | "Mostra nel Finder" | `ytdl open --folder` | `open -R` on macOS |
-| the durable record | "Cronologia" | `ytdl history` | log store |
-| the settings document | "Impostazioni" | `ytdl config` (read-only) | config file |
-
-**Riprova vs. Riscarica.** They are distinct on purpose and the user meets them
-in distinct places: *Riprova* acts on a job the queue still holds (it keeps the
-job's own settings snapshot and its spool identity), *Riscarica* creates a new
-job from a history record (which may long outlive the spool entry). The history
-view only ever offers *Riscarica*; the queue only ever offers *Annulla* and, in
-the CLI, *Riprova*.
+One concept, one word, in both channels. The normative table — labels, CLI
+surface, and the *Riprova* vs *Riscarica* rule — lives in
+[ux-principles.md](ux-principles.md) §3, extracted there because it governs every
+future cycle, not only this one. The same document carries the information
+hierarchy of §2.2, the action-ranking rule this cycle's history view implements
+(§8.3), and the message conventions both channels follow.
 
 ## 4. Information architecture
 

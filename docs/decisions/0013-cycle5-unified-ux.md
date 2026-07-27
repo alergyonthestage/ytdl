@@ -1,6 +1,6 @@
 # ADR-0013 — Cycle 5: one task model for GUI and CLI, an actionable history, and a safe open primitive
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-07-27
 - **Context:** [roadmap.md](../roadmap.md) ("GUI multi-page + broader UX
   overhaul", brought forward), [ADR-0009](0009-cycle2c-cli-ux.md) (command roles
@@ -113,6 +113,11 @@ from `script-src 'unsafe-inline'` to `script-src 'self'`.
   cannot drift); CLI `open`, `again`, `config`, `help <topic>` and per-command
   `--help`; four new API routes; the `open_folder_on_done` config key, at last
   implemented, foreground-only and off by default.
+- **The conventions become normative and durable.** The vocabulary, the
+  information hierarchy, the action-ranking rule and the message conventions are
+  extracted into [ux-principles.md](../ux-principles.md), which every later cycle
+  either conforms to or amends in its own ADR — including the rule that a new
+  capability lands in both channels or records why it does not.
 - **The history file grows** by roughly a hundred bytes per record. At the
   default 30-day retention this is immaterial; retention already governs it.
 - **Records written before this cycle stay useful but offer fewer actions** —
