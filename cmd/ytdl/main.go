@@ -24,6 +24,7 @@ import (
 	"github.com/alergyonthestage/ytdl/internal/config"
 	"github.com/alergyonthestage/ytdl/internal/core"
 	"github.com/alergyonthestage/ytdl/internal/daemon"
+	"github.com/alergyonthestage/ytdl/internal/jobs"
 	"github.com/alergyonthestage/ytdl/internal/logstore"
 	"github.com/alergyonthestage/ytdl/internal/queue"
 	"github.com/alergyonthestage/ytdl/internal/run"
@@ -632,7 +633,7 @@ func runCancelCmd(p *cli.Parsed) int {
 
 	failures := 0
 	for _, e := range targets {
-		was, err := cancelOne(sp, e)
+		was, err := jobs.Cancel(sp, e.ID)
 		if err != nil {
 			// The marker is how the daemon stops a running job, so a failure to write
 			// it means the cancel is a no-op — say so rather than claim success.
@@ -653,26 +654,6 @@ func runCancelCmd(p *cli.Parsed) int {
 		return 1
 	}
 	return 0
-}
-
-// cancelOne cancels a single live entry: it drops the marker FIRST (so a job the
-// daemon claims in the meantime is still stopped by the watcher), then deletes it
-// if it is still pending. Returns wasPending=true if it was pending (deleted now),
-// false if it was already running/gone (the marker is left for the daemon's
-// watcher). A non-nil error means the cancel did NOT take effect (the marker
-// could not be written, or the pending-delete hit a real filesystem error).
-func cancelOne(sp *queue.Spool, e queue.Entry) (wasPending bool, err error) {
-	if err := sp.RequestCancel(e.ID); err != nil {
-		return false, err
-	}
-	was, err := sp.CancelPending(e.ID)
-	if err != nil {
-		return false, err
-	}
-	if was {
-		_ = sp.ClearCancel(e.ID) // deleted before it ran → the marker is unneeded
-	}
-	return was, nil
 }
 
 // runRetryCmd re-queues failed jobs (failed/ → pending/) and resumes the daemon to
