@@ -118,7 +118,9 @@ func TestBackgroundEnqueues(t *testing.T) {
 // vs id-tagged), emitting: a single title (YTDLP_FAKE_TITLE), YTDLP_FAKE_NLINES
 // saved filepaths, and — for a playlist — attempted "id\ttitle" lines
 // (YTDLP_FAKE_ATTEMPTED="id:Title,...") and succeeded ids
-// (YTDLP_FAKE_SUCCEEDED="id,..."). It exits YTDLP_FAKE_RC.
+// (YTDLP_FAKE_SUCCEEDED="id,..."). YTDLP_FAKE_STDERR is emitted on stderr with
+// escapes interpreted (so a test can inject a multi-line or ANSI-coloured error).
+// It exits YTDLP_FAKE_RC.
 func fakeYtDlp(t *testing.T) {
 	t.Helper()
 	bin := t.TempDir()
@@ -177,6 +179,7 @@ if [ -n "$YTDLP_FAKE_PROGRESS" ]; then
   printf '@@YTDLP-PROGRESS@@\tprocessing\t\t\t\t\t\t"Artist - Track"\n' >&2
   printf 'a genuine stderr warning\n' >&2
 fi
+[ -n "$YTDLP_FAKE_STDERR" ] && printf '%b\n' "$YTDLP_FAKE_STDERR" >&2
 exit "${YTDLP_FAKE_RC:-0}"
 `
 	for _, name := range []string{"yt-dlp", "ffmpeg"} {

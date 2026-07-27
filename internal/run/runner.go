@@ -194,8 +194,10 @@ func runVerbose(o core.Options, w io.Writer) int {
 		fmt.Fprintf(w, "\n✓ Fatto → %s\n", o.Settings.OutputDir)
 	}
 	now := time.Now()
-	recordJob(o, "verbose", "", rc, success, errbuf.Bytes(), now) // verbose has no saved-file capture → no title
-	maybeNotify(o, true, success, 0)                              // foreground; verbose has no saved-file count
+	// Verbose has no saved-file capture, so it can report neither a title nor a
+	// path/count — its history record says what ran and how it ended, no more.
+	recordJob(o, outcome{Mode: "verbose", RC: rc, Success: success, Stderr: errbuf.Bytes(), Now: now})
+	maybeNotify(o, true, success, 0) // foreground; verbose has no saved-file count
 	return rc
 }
 
@@ -233,7 +235,10 @@ func runDefault(o core.Options, w io.Writer) int {
 	}
 	success := rc == 0 && count > 0
 	now := time.Now()
-	recordJob(o, "default", titleFromPath(first), rc, success, errbuf.Bytes(), now)
+	recordJob(o, outcome{
+		Mode: "default", Title: titleFromPath(first), RC: rc, Success: success,
+		SavedPath: first, Count: count, Stderr: errbuf.Bytes(), Now: now,
+	})
 	maybeNotify(o, true, success, count) // foreground
 	return rc
 }
@@ -424,7 +429,7 @@ func runSilentSink(ctx context.Context, o core.Options, sink ProgressSink, cance
 	// and the notification — consistent with default mode (an empty or
 	// blank-only saved list is a failure, matching the Bash tool's zero-files
 	// case, ytdl lines 290-293).
-	_, count := readSavedPaths(saved)
+	first, count := readSavedPaths(saved)
 	success := rc == 0 && count > 0
 
 	// A ctx cancel or timeout that stopped an unfinished job is not a genuine
@@ -447,7 +452,10 @@ func runSilentSink(ctx context.Context, o core.Options, sink ProgressSink, cance
 	// core.silentBeforeDL), NOT the saved filename — the latter depends on the
 	// user's name_template, the former does not. Empty on an early failure → the
 	// history falls back to the URL.
-	recordJob(o, mode, lastLine(title), rc, success, readCapped(errlog, stderrCap), now)
+	recordJob(o, outcome{
+		Mode: mode, Title: lastLine(title), RC: rc, Success: success,
+		SavedPath: first, Count: count, Stderr: readCapped(errlog, stderrCap), Now: now,
+	})
 
 	if o.Settings.BreadcrumbOnFailure && !stopped {
 		if o.Playlist {
@@ -725,28 +733,73 @@ func readSavedPaths(path string) (first string, count int) {
 	return first, count
 }
 
+// outcome is what a finished run has to say about itself, as handed to
+// recordJob. It is a struct rather than a parameter list because the fields are
+// same-typed and easy to transpose: Mode/Title/SavedPath are all strings, RC and
+// Count both ints.
+type outcome struct {
+	Mode      string    // "default" | "verbose" | "silent" | "cancelled" | "timeout"
+	Title     string    // resolved "Artist - Track"; "" if never resolved
+	RC        int       // yt-dlp's exit code
+	Success   bool      // exited 0 AND actually saved a file
+	SavedPath string    // first after_move path; "" when nothing was saved
+	Count     int       // how many files the job saved
+	Stderr    []byte    // captured yt-dlp stderr
+	Now       time.Time // completion time
+}
+
 // recordJob writes the central log-store record for a completed download —
 // both the per-job .log (failure detail) and a structured history.jsonl line
 // (the durable history that `ytdl history`/`status` read) — then prunes expired
 // records (U7, ADR-0009). All best-effort: a logging failure must never change
 // the download's exit code, so errors are dropped. dry-run and the background
 // launcher do not call this (the background child, running silent, records the
-// real job). title is the resolved "Artist - Track" (empty on failure/verbose),
-// shown title-first in history.
-func recordJob(o core.Options, mode, title string, rc int, success bool, stderr []byte, now time.Time) {
+// real job).
+//
+// Cycle 5: the record also carries WHERE the files landed and, on a failure, a
+// one-line reason — the facts "apri", "riscarica" and "vedi errore" are built on
+// in both channels (design §5.2). Every one of them is already at hand here;
+// none costs an extra syscall.
+func recordJob(o core.Options, out outcome) {
 	j := logstore.Job{
-		URL:     o.URL,
-		Title:   title,
-		Mode:    mode,
-		Format:  o.Settings.Format,
-		RC:      rc,
-		Success: success,
-		Time:    now,
-		Stderr:  stderr,
+		URL:      o.URL,
+		Title:    out.Title,
+		Mode:     out.Mode,
+		Format:   o.Settings.Format,
+		RC:       out.RC,
+		Success:  out.Success,
+		Time:     out.Now,
+		Stderr:   out.Stderr,
+		Path:     absSavedPath(out.SavedPath, o.Settings.OutputDir),
+		Dir:      o.Settings.OutputDir,
+		Count:    out.Count,
+		Playlist: o.Playlist,
+	}
+	// Only a failure carries a reason: on success yt-dlp's last stderr line is a
+	// warning at best, and labelling it "why it failed" would be a lie. logstore
+	// sanitises and caps the line on the way to disk.
+	if !out.Success {
+		j.Error = lastNonEmptyLine(string(out.Stderr))
 	}
 	logstore.Record(o.Settings.LogDir, j)
 	logstore.Append(o.Settings.LogDir, j)
 	logstore.Prune(o.Settings.LogDir, o.Settings.LogRetentionDays)
+}
+
+// absSavedPath makes the recorded path absolute, which is what Entry.Path
+// promises and what the open/reveal validation requires (design §7). yt-dlp
+// prints an absolute %(filepath)s because TempRedirectArgs pairs a relative -o
+// with an absolute `-P home:`; this only has to hold when that pairing does not,
+// e.g. a relative output_dir. An empty path stays empty — "nothing was saved" is
+// not a path.
+func absSavedPath(saved, outputDir string) string {
+	if saved == "" || filepath.IsAbs(saved) {
+		return saved
+	}
+	if outputDir == "" {
+		return saved
+	}
+	return filepath.Join(outputDir, saved)
 }
 
 // titleFromPath derives a display title from a saved file path: its base name
