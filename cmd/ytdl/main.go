@@ -913,12 +913,19 @@ func loadHistoryFor(limit int, onlyFailed bool, search string) (config.Settings,
 // historyView assembles the rendering context at the edge, so the renderer stays
 // pure (no clock, no $HOME, no ioctl inside the formatting code).
 func historyView(settings config.Settings, p *cli.Parsed) cli.HistoryView {
+	// `open`/`again` always resolve <n> against the DEFAULT history query, so an
+	// index printed under a narrowed listing would point at a different record.
+	// Say so rather than let the footer promise otherwise: a narrowed listing
+	// advertises the id instead, and prints one on every row.
+	indexUsable := !p.HistoryFailed && p.HistorySearch == "" && p.HistoryLimit == cli.DefaultHistoryLimit
 	return cli.HistoryView{
 		RetentionDays: settings.LogRetentionDays,
 		Width:         listWidth(),
 		Home:          homeDir(),
 		Search:        p.HistorySearch,
 		OnlyFailed:    p.HistoryFailed,
+		IndexUsable:   indexUsable,
+		ShowIDs:       p.HistoryIDs,
 	}
 }
 
@@ -1052,11 +1059,18 @@ func runAgainCmd(p *cli.Parsed) int {
 var spawnQueueDaemon = daemon.Spawn
 
 // resolveRecord maps an `open`/`again` target to a history record, using exactly
-// the grammar cancel/retry use: a short integer is a 1-based index into the list
-// the command just printed, anything else is an id-prefix. The index is resolved
-// against the SAME query the listing used, so what the user counted is what gets
-// acted on; the id-prefix goes to logstore.Find, which searches the whole
-// retention window and so still works for a record below the listing's limit.
+// the grammar cancel/retry use: a short integer is a 1-based index, anything
+// else is an id-prefix.
+//
+// The index is resolved against the DEFAULT history query — the same one a bare
+// `ytdl open` prints, so that listing and this resolution always agree, exactly
+// as cancel/retry agree with the lists they print. It does NOT track the flags
+// of a separate `ytdl history --failed` invocation, which is why RenderHistory
+// stops advertising <n> (and starts printing ids) as soon as a filter narrows
+// its list.
+//
+// The id-prefix goes to logstore.Find, which searches the whole retention window
+// and so still works for a record below the listing's limit.
 func resolveRecord(target string, entries []logstore.Entry, logDir string) (logstore.Entry, targetResult) {
 	if isIndex(target) {
 		n, _ := strconv.Atoi(target)

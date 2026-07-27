@@ -32,7 +32,7 @@ CODA
        dell'id, stabile — preferiscilo negli script)
 
 STORICO
-  ytdl history [--failed] [--limit N] [--search TESTO]
+  ytdl history [--failed] [--limit N] [--search TESTO] [--ids]
                                        Storico dei download (anche in primo piano),
                                        con dove è finito il file e perché è fallito
   ytdl open  <n | id> [--folder]       Apre l'audio (--folder: lo mostra nel Finder)

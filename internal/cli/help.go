@@ -184,7 +184,7 @@ RIPROVA vs RISCARICA
 
 const topicHistory = `STORICO — cosa ho scaricato
 
-  ytdl history [--failed] [--limit N] [--search TESTO]
+  ytdl history [--failed] [--limit N] [--search TESTO] [--ids]
                                        elenco numerato, dal più recente
   ytdl open  <n | id> [--folder]       apre l'audio (--folder: lo mostra nel Finder)
   ytdl again <n | id>                  lo riscarica (nuovo job in coda)
@@ -314,7 +314,7 @@ const helpStatus = `ytdl status
   "daemon inattivo" è normale: parte da solo quando c'è da lavorare.
 `
 
-const helpHistory = `ytdl history [--failed] [--limit N] [--search TESTO]
+const helpHistory = `ytdl history [--failed] [--limit N] [--search TESTO] [--ids]
 
   Elenco numerato dei download, dal più recente. Ogni riga: esito, quando,
   titolo, formato e — se è andata bene — dove è finito il file; se è andata
@@ -323,8 +323,15 @@ const helpHistory = `ytdl history [--failed] [--limit N] [--search TESTO]
   --failed        solo i download non riusciti
   --limit N       quante righe (default: 20; 0 = nessun limite)
   --search TESTO  cerca nel titolo, nel link e nel nome del file salvato
+  --ids           mostra anche l'id di ogni record
 
-  Il numero fra [ ] si passa direttamente a:  ytdl open <n>  ·  ytdl again <n>
+INDICE E ID
+  Senza filtri, il numero fra [ ] si passa direttamente a  ytdl open <n>  e
+  ytdl again <n>.
+
+  Con --failed, --search o un --limit diverso la lista si accorcia, ma quei due
+  comandi continuano a contare sulla lista COMPLETA. In quel caso ytdl stampa
+  l'id su ogni riga e ti dice di usare quello: l'id è stabile e vale sempre.
 `
 
 const helpCancel = `ytdl cancel [<n> | <id> | --all]
@@ -357,9 +364,12 @@ const helpOpen = `ytdl open <n | id> [--folder]
   Apre il file audio di un download dello storico. Senza argomenti stampa lo
   storico numerato da cui leggere <n>.
 
-  <n>        indice nella lista di adesso
+  <n>        indice nella lista di  ytdl history  SENZA filtri
   <id>       prefisso dell'id del record — stabile, da preferire negli script
   --folder   invece di aprirlo, lo mostra nel gestore file
+
+  Se hai filtrato la lista (--failed, --search) usa l'id: una lista filtrata lo
+  stampa su ogni riga, e  ytdl history --ids  lo mostra sempre.
 
   Apre solo file audio prodotti da ytdl e ancora al loro posto. Se il file è
   stato spostato o cancellato te lo dice: riscaricalo con  ytdl again <n>.
@@ -370,8 +380,11 @@ const helpAgain = `ytdl again <n | id>
   Riscarica un record dello storico: crea un NUOVO download in coda. Senza
   argomenti stampa lo storico numerato da cui leggere <n>.
 
-  <n>    indice nella lista di adesso
+  <n>    indice nella lista di  ytdl history  SENZA filtri
   <id>   prefisso dell'id del record — stabile, da preferire negli script
+
+  Se hai filtrato la lista (--failed, --search) usa l'id: una lista filtrata lo
+  stampa su ogni riga, e  ytdl history --ids  lo mostra sempre.
 
   Riprende dal record il formato e se era una playlist intera; la cartella di
   destinazione è invece quella configurata ADESSO.

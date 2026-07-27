@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/alergyonthestage/ytdl/internal/logstore"
@@ -27,7 +28,23 @@ type HistoryView struct {
 	Search        string // the active --search query, echoed in the header
 	OnlyFailed    bool   // whether --failed is active, echoed in the header
 	Offset        int    // rows already listed before this page; the numbering starts after it
+
+	// IndexUsable says whether `ytdl open <n>` / `ytdl again <n>` would resolve
+	// <n> against THIS listing. Those commands always reload the default,
+	// unfiltered history, so the index only means what the reader thinks it
+	// means when no filter narrowed this list. When it is false the footer
+	// advertises the id instead — see the row rendering below.
+	IndexUsable bool
+	// ShowIDs adds the stable id column. Forced on when IndexUsable is false
+	// (the id is then the only handle that works) and available on demand via
+	// `ytdl history --ids` for scripts.
+	ShowIDs bool
 }
+
+// idCols is how much of the 16-hex record id is shown. Eight characters is
+// already far past the point of ambiguity for one user's history, and Find
+// accepts any unambiguous prefix.
+const idCols = 8
 
 // RenderHistory formats `ytdl history`: the durable log-store records (foreground
 // and background), newest first, one line each, NUMBERED so the number can be
@@ -60,18 +77,52 @@ func RenderHistory(entries []logstore.Entry, v HistoryView) string {
 		labelCols = labelMaxCols
 	}
 
+	// The index column is padded to the widest index, so row 10 does not shift
+	// every column to its right by one (the whole point of the term.Pad work).
+	idxCols := len(strconv.Itoa(v.Offset + len(entries)))
+
 	for i, e := range entries {
 		mark := "✓"
 		if !e.Success {
 			mark = "✗"
 		}
-		fmt.Fprintf(&b, "  [%d] %s %s  %s  %-5s  %s\n",
-			v.Offset+i+1, mark, e.Time.Format(historyTimeFormat),
+		id := ""
+		if v.ShowIDs || !v.IndexUsable {
+			id = shortID(e) + " "
+		}
+		fmt.Fprintf(&b, "  [%*d] %s%s %s  %s  %-5s  %s\n",
+			idxCols, v.Offset+i+1, id, mark, e.Time.Format(historyTimeFormat),
 			term.Pad(labels[i], labelCols), formatCell(e), detailCell(e, v.Home))
 	}
-	b.WriteString("Apri:  ytdl open <n>   ·   riscarica:  ytdl again <n>   ·   solo falliti:  ytdl history --failed\n")
-	b.WriteString("  (l'indice riflette questa lista; negli script usa il prefisso dell'id)\n")
+	b.WriteString(historyFooter(v))
 	return clipTo(b.String(), v.Width)
+}
+
+// shortID is the printed prefix of a record's stable id.
+func shortID(e logstore.Entry) string {
+	id := e.ID()
+	if len(id) > idCols {
+		return id[:idCols]
+	}
+	return id
+}
+
+// historyFooter tells the user what to type — and, crucially, only advertises
+// the grammar that actually works for the list above it.
+//
+// `ytdl open`/`again` reload the DEFAULT history, so an index read off a
+// filtered or re-limited listing would act on a different record. Rather than
+// letting the footer promise something false (it used to say "l'indice riflette
+// questa lista" under every listing, including filtered ones), a narrowed
+// listing prints ids on its rows and points at those instead.
+func historyFooter(v HistoryView) string {
+	if !v.IndexUsable {
+		return "Apri:  ytdl open <id>   ·   riscarica:  ytdl again <id>\n" +
+			"  (questa lista è filtrata: l'indice vale solo per  ytdl history  senza filtri —\n" +
+			"   qui usa l'id, che resta valido comunque)\n"
+	}
+	return "Apri:  ytdl open <n>   ·   riscarica:  ytdl again <n>   ·   solo falliti:  ytdl history --failed\n" +
+		"  (l'indice riflette questa lista; negli script usa l'id:  ytdl history --ids)\n"
 }
 
 // historyFilterSuffix states the active filters in the header, so a short list

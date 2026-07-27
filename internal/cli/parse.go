@@ -51,6 +51,7 @@ type Parsed struct {
 	HistoryFailed bool   // --failed: only failures
 	HistoryLimit  int    // --limit N: cap the rows (DefaultHistoryLimit if unset)
 	HistorySearch string // --search Q: match title, link or saved file name
+	HistoryIDs    bool   // --ids: show the stable record id on every row
 
 	// Cancel/retry/open/again field (valid for those actions).
 	Target string // the <n> index or <id-prefix>; "" with !All means "list them"
@@ -323,6 +324,8 @@ func parseHistory(rest []string) (*Parsed, error) {
 		switch rest[i] {
 		case "--failed":
 			p.HistoryFailed = true
+		case "--ids":
+			p.HistoryIDs = true
 		case "--search":
 			// An empty query is rejected rather than treated as "no filter": the
 			// user typed --search meaning to narrow, and silently listing

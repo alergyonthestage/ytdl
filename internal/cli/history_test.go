@@ -10,7 +10,7 @@ import (
 )
 
 func TestRenderHistoryEmpty(t *testing.T) {
-	got := RenderHistory(nil, HistoryView{RetentionDays: 30})
+	got := RenderHistory(nil, HistoryView{RetentionDays: 30, IndexUsable: true})
 	if !strings.Contains(got, "ultimi 30 giorni") {
 		t.Errorf("history header missing window label:\n%s", got)
 	}
@@ -25,7 +25,7 @@ func TestRenderHistoryRows(t *testing.T) {
 		{Time: at, Title: "Massive Attack - Black Milk", Success: true},
 		{Time: at.Add(-time.Hour), URL: "https://www.youtube.com/watch?v=Xk3long", Success: false},
 	}
-	got := RenderHistory(entries, HistoryView{}) // retention 0 = keep forever
+	got := RenderHistory(entries, HistoryView{IndexUsable: true}) // retention 0 = keep forever
 	if !strings.Contains(got, "da sempre") {
 		t.Errorf("retention 0 should label 'da sempre':\n%s", got)
 	}

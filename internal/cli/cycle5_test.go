@@ -33,7 +33,7 @@ func sampleHistory() []logstore.Entry {
 // TestRenderHistoryShowsWhereFilesLanded is the gap the cycle exists to close:
 // a successful row must say where the audio went (T3).
 func TestRenderHistoryShowsWhereFilesLanded(t *testing.T) {
-	got := RenderHistory(sampleHistory(), HistoryView{RetentionDays: 30, Home: "/home/u"})
+	got := RenderHistory(sampleHistory(), HistoryView{RetentionDays: 30, Home: "/home/u", IndexUsable: true})
 	if !strings.Contains(got, "~/Music/ytdl") {
 		t.Errorf("no home-relative location in the rows:\n%s", got)
 	}
@@ -46,7 +46,7 @@ func TestRenderHistoryShowsWhereFilesLanded(t *testing.T) {
 // FILE, so a playlist shows the subfolder it actually landed in, not the
 // configured parent.
 func TestRenderHistoryShowsAPlaylistSubfolder(t *testing.T) {
-	got := RenderHistory(sampleHistory(), HistoryView{RetentionDays: 30, Home: "/home/u"})
+	got := RenderHistory(sampleHistory(), HistoryView{RetentionDays: 30, Home: "/home/u", IndexUsable: true})
 	if !strings.Contains(got, "~/Music/ytdl/Playlist") {
 		t.Errorf("playlist row does not show its own subfolder:\n%s", got)
 	}
@@ -55,7 +55,7 @@ func TestRenderHistoryShowsAPlaylistSubfolder(t *testing.T) {
 // TestRenderHistoryShowsWhyItFailed: previously a failure was a bare ✗ and the
 // user had to find the .log by hand (T6).
 func TestRenderHistoryShowsWhyItFailed(t *testing.T) {
-	got := RenderHistory(sampleHistory(), HistoryView{RetentionDays: 30, Home: "/home/u"})
+	got := RenderHistory(sampleHistory(), HistoryView{RetentionDays: 30, Home: "/home/u", IndexUsable: true})
 	if !strings.Contains(got, "HTTP Error 403: Forbidden") {
 		t.Errorf("the failure reason is not shown inline:\n%s", got)
 	}
@@ -67,7 +67,7 @@ func TestRenderHistoryFailureWithoutAReason(t *testing.T) {
 	entries := []logstore.Entry{{
 		Time: time.Now(), URL: "https://youtu.be/x", Format: "mp3", Success: false,
 	}}
-	got := RenderHistory(entries, HistoryView{RetentionDays: 30})
+	got := RenderHistory(entries, HistoryView{RetentionDays: 30, IndexUsable: true})
 	if !strings.Contains(got, ".log") {
 		t.Errorf("a reasonless failure should point at the per-job log:\n%s", got)
 	}
@@ -76,7 +76,7 @@ func TestRenderHistoryFailureWithoutAReason(t *testing.T) {
 // TestRenderHistoryCountsMultipleTracks: one title cannot represent five files,
 // so a multi-file job says how many.
 func TestRenderHistoryCountsMultipleTracks(t *testing.T) {
-	got := RenderHistory(sampleHistory(), HistoryView{RetentionDays: 30, Home: "/home/u"})
+	got := RenderHistory(sampleHistory(), HistoryView{RetentionDays: 30, Home: "/home/u", IndexUsable: true})
 	if !strings.Contains(got, "(3 tracce)") {
 		t.Errorf("a 3-file job does not report its count:\n%s", got)
 	}
@@ -88,7 +88,7 @@ func TestRenderHistoryCountsMultipleTracks(t *testing.T) {
 // TestRenderHistoryIsNumberedForOpenAndAgain: the number in the listing is the
 // argument to the next command, so it must be there and start at 1.
 func TestRenderHistoryIsNumberedForOpenAndAgain(t *testing.T) {
-	got := RenderHistory(sampleHistory(), HistoryView{RetentionDays: 30, Home: "/home/u"})
+	got := RenderHistory(sampleHistory(), HistoryView{RetentionDays: 30, Home: "/home/u", IndexUsable: true})
 	for _, want := range []string{"[1] ", "[2] ", "[3] "} {
 		if !strings.Contains(got, want) {
 			t.Errorf("row marker %q missing:\n%s", want, got)
@@ -99,10 +99,101 @@ func TestRenderHistoryIsNumberedForOpenAndAgain(t *testing.T) {
 	}
 }
 
+// TestFilteredListingAdvertisesTheIDNotTheIndex is the review CRITICAL, as a
+// regression test. `ytdl open`/`again` resolve <n> against the DEFAULT history
+// query, so an index read off a filtered listing points at a different record.
+// The footer used to promise "l'indice riflette questa lista" under every
+// listing — actively instructing the user into the bug.
+func TestFilteredListingAdvertisesTheIDNotTheIndex(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		view HistoryView
+	}{
+		{"filtered by outcome", HistoryView{RetentionDays: 30, OnlyFailed: true}},
+		{"narrowed by search", HistoryView{RetentionDays: 30, Search: "mina"}},
+		{"a different limit", HistoryView{RetentionDays: 30}}, // IndexUsable false
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := RenderHistory(sampleHistory(), tc.view)
+			if strings.Contains(got, "ytdl open <n>") || strings.Contains(got, "ytdl again <n>") {
+				t.Errorf("a narrowed listing still advertises the index:\n%s", got)
+			}
+			if !strings.Contains(got, "ytdl open <id>") {
+				t.Errorf("a narrowed listing does not advertise the id:\n%s", got)
+			}
+			if strings.Contains(got, "l'indice riflette questa lista") {
+				t.Errorf("the false promise is still printed:\n%s", got)
+			}
+		})
+	}
+}
+
+// TestNarrowedListingPrintsTheIDs: telling the user to use the id is only useful
+// if the id is on screen. Before this fix no CLI surface ever printed one.
+func TestNarrowedListingPrintsTheIDs(t *testing.T) {
+	entries := sampleHistory()
+	got := RenderHistory(entries, HistoryView{RetentionDays: 30, OnlyFailed: true})
+	for _, e := range entries {
+		if !strings.Contains(got, e.ID()[:idCols]) {
+			t.Errorf("record id %q is not printed:\n%s", e.ID()[:idCols], got)
+		}
+	}
+}
+
+// TestIDsOnDemand: scripts can ask for the stable handle without narrowing the
+// list, and the everyday listing stays free of hex noise.
+func TestIDsOnDemand(t *testing.T) {
+	entries := sampleHistory()
+	plain := RenderHistory(entries, HistoryView{RetentionDays: 30, IndexUsable: true})
+	if strings.Contains(plain, entries[0].ID()[:idCols]) {
+		t.Errorf("the default listing shows ids; it should stay clean:\n%s", plain)
+	}
+	withIDs := RenderHistory(entries, HistoryView{RetentionDays: 30, IndexUsable: true, ShowIDs: true})
+	for _, e := range entries {
+		if !strings.Contains(withIDs, e.ID()[:idCols]) {
+			t.Errorf("--ids did not print %q:\n%s", e.ID()[:idCols], withIDs)
+		}
+	}
+	if !strings.Contains(plain, "ytdl history --ids") {
+		t.Errorf("the footer does not tell scripts how to get an id:\n%s", plain)
+	}
+}
+
+// TestIndexColumnIsPadded: [9] is three characters and [10] is four, so an
+// unpadded index shifts every column to its right from row 10 on — defeating the
+// term.Pad work two lines below it.
+func TestIndexColumnIsPadded(t *testing.T) {
+	at := time.Date(2026, 7, 27, 18, 0, 0, 0, time.Local)
+	var entries []logstore.Entry
+	for i := 0; i < 12; i++ {
+		entries = append(entries, logstore.Entry{
+			Time: at.Add(-time.Duration(i) * time.Minute), Title: "Traccia", Format: "mp3",
+			Success: true, Path: "/m/a.mp3", Dir: "/m",
+		})
+	}
+	got := RenderHistory(entries, HistoryView{RetentionDays: 30, IndexUsable: true})
+
+	var cols []int
+	for _, line := range strings.Split(got, "\n") {
+		if idx := strings.Index(line, "✓"); idx >= 0 {
+			cols = append(cols, term.DisplayWidth(line[:idx]))
+		}
+	}
+	if len(cols) != 12 {
+		t.Fatalf("found %d data rows, want 12", len(cols))
+	}
+	for i, c := range cols {
+		if c != cols[0] {
+			t.Fatalf("row %d starts its mark at column %d, row 1 at %d — the table shifts:\n%s",
+				i+1, c, cols[0], got)
+		}
+	}
+}
+
 // TestRenderHistoryOffsetContinuesTheNumbering keeps a paged listing honest: row
 // 1 of page 2 is not "[1]".
 func TestRenderHistoryOffsetContinuesTheNumbering(t *testing.T) {
-	got := RenderHistory(sampleHistory(), HistoryView{RetentionDays: 30, Offset: 20})
+	got := RenderHistory(sampleHistory(), HistoryView{RetentionDays: 30, Offset: 20, IndexUsable: true})
 	if !strings.Contains(got, "[21] ") {
 		t.Errorf("offset numbering wrong:\n%s", got)
 	}
@@ -116,7 +207,7 @@ func TestRenderHistoryEmptyStatesTeach(t *testing.T) {
 		view HistoryView
 		want string
 	}{
-		{"nothing at all", HistoryView{RetentionDays: 30}, "ytdl <url>"},
+		{"nothing at all", HistoryView{RetentionDays: 30, IndexUsable: true}, "ytdl <url>"},
 		{"no failures", HistoryView{RetentionDays: 30, OnlyFailed: true}, "ytdl history"},
 		{"no search hit", HistoryView{RetentionDays: 30, Search: "zzz"}, "--search"},
 	}
@@ -149,7 +240,7 @@ func TestRenderHistoryClipsByDisplayWidth(t *testing.T) {
 		Path: "/home/u/Music/ytdl/a.mp3", Dir: "/home/u/Music/ytdl",
 	}}
 	const width = 60
-	got := RenderHistory(entries, HistoryView{RetentionDays: 30, Width: width, Home: "/home/u"})
+	got := RenderHistory(entries, HistoryView{RetentionDays: 30, Width: width, Home: "/home/u", IndexUsable: true})
 	for _, line := range strings.Split(strings.TrimRight(got, "\n"), "\n") {
 		if w := term.DisplayWidth(line); w > width {
 			t.Errorf("line is %d columns wide, want at most %d: %q", w, width, line)
@@ -166,7 +257,7 @@ func TestRenderHistoryAlignsColumnsWithWideTitles(t *testing.T) {
 		{Time: at, Title: "ASCII title", Format: "mp3", Success: true, Path: "/m/a.mp3", Dir: "/m"},
 		{Time: at, Title: "日本語タイトル", Format: "mp3", Success: true, Path: "/m/b.mp3", Dir: "/m"},
 	}
-	got := RenderHistory(entries, HistoryView{RetentionDays: 30})
+	got := RenderHistory(entries, HistoryView{RetentionDays: 30, IndexUsable: true})
 	lines := strings.Split(got, "\n")
 	var cols []int
 	for _, line := range lines {
