@@ -11,6 +11,11 @@ Earlier conventions it absorbs: [ADR-0009](decisions/0009-cycle2c-cli-ux.md)
 [ADR-0012](decisions/0012-cycle4-cli-ux-title-disambiguation.md) (titles,
 display-width clipping).
 
+Amended by [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md)
+(gate-C review of Cycle 5): the scope vocabulary and §8 below, and the partial
+outcome in §3 and §5. Section numbers are stable — amendments append rather than
+renumber, because code comments and design documents cite them.
+
 ## 1. The tasks the tool serves
 
 Design against these, not against the list of existing commands. The full
@@ -52,6 +57,7 @@ invent synonyms.
 | queued, not started | "In attesa" | `in attesa` |
 | currently downloading | "In corso" | `in corso` |
 | finished OK | "Completato" ✓ | ✓ |
+| finished with some items lost | "Completato parzialmente" ! | `!` (see §5) |
 | finished badly | "Non riuscito" ✗ | ✗ |
 | stop a live job | "Annulla" | `ytdl cancel` |
 | requeue a failed **spool** job | "Riprova" | `ytdl retry` |
@@ -60,6 +66,9 @@ invent synonyms.
 | show it in the file manager | "Mostra nel Finder" | `ytdl open --folder` |
 | the durable record | "Cronologia" | `ytdl history` |
 | the settings document | "Impostazioni" | `ytdl config` |
+| the stored default (config file) | "predefinita" | `ytdl config` |
+| in force until the GUI is closed | "di sessione" | — (GUI only, see §8) |
+| in force for one enqueue | "solo questo download" | `-o` / `-f` / `-p` on one invocation |
 
 **Riprova vs. Riscarica** are distinct verbs because they act on distinct
 objects: *Riprova* requeues a job the spool still holds, keeping its settings
@@ -91,8 +100,13 @@ rendered live only to fail.
 - **Language:** everything the user reads is Italian; code, comments, identifiers
   and documentation are English (`docs/guida-*.md` are the Italian exceptions, by
   audience).
-- **Marks:** `✓` success · `✗` failure · `▸` an action taken · `!` a warning ·
-  `•`/`▸` list items. Consistent across both channels.
+- **Marks:** `✓` success · `✗` failure · `▸` an action taken · `!` a warning **or
+  a partial outcome** · `•`/`▸` list items. Consistent across both channels.
+- **A partial outcome is never rounded to one of the other two** (ADR-0014): a
+  job that saved some items and lost others is marked `!` and states the ratio
+  (`21/22 tracce`) — a partial count always names its total, like every other
+  number here. The reason one item failed is never presented as the reason the
+  job failed.
 - **An error says what to do next.** A message that only states what went wrong
   is incomplete (e.g. a missing dependency points at `ytdl --update`, not at a
   package manager).
@@ -120,3 +134,37 @@ A capability lands in **both** channels, or the cycle's ADR records the asymmetr
 and its reason. The asymmetries Cycle 5 inherited (cancel/retry CLI-only, live
 progress GUI-only, "where is my file" in neither) all came from nobody having
 written this rule down.
+
+## 8. Scope of a choice
+
+Added by [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md). Three
+scopes exist, named in §3, and a surface must always make clear which one is in
+force.
+
+```mermaid
+flowchart LR
+  D["predefinita"] -->|resolves| E["the value actually used<br/>— always visible"]
+  S["di sessione"] -->|overrides| E
+  O["solo questo download"] -->|overrides| E
+  O -.->|"explicit promotion"| S
+```
+
+1. **A per-download control returns to the resolved default after a successful
+   submit.** This holds for *every* such control — folder, format, playlist —
+   not only the ones a user has complained about. A choice that should last is
+   promoted on purpose; sticky-by-accident is a defect.
+2. **The effective value is visible without opening anything**, together with the
+   scope it comes from: `Cartella: ~/Music/ytdl (predefinita)`. A collapsed
+   disclosure states its current value in the summary.
+3. **Promotion is one explicit act, made where the choice was made.** A promoted
+   value has one source of truth and is reflected everywhere that scope appears.
+4. **A control changed but not yet applied says so** — the unsaved-changes
+   pattern. A surface may never display a value that is not in force without
+   marking it as pending. This is the §5 honesty rule applied to input, not only
+   to output.
+
+**Channel asymmetry, recorded per §7:** the *session* scope is GUI-only. A CLI
+invocation is a process, so it has no session to hold one; its equivalents are
+the config file (`predefinita`) and per-invocation flags (`solo questo
+download`). A GUI session override is therefore invisible to a terminal running
+beside it, and the GUI label says so.
