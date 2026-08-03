@@ -20,9 +20,19 @@ and merged to `main` (2026-07-24; release pending)**; **Cycle 2B-plus
 done and merged to `main` (2026-07-24; release pending)**; **Cycle 4 (CLI UX pass
 #2 — command/URL disambiguation, job titles) is done and merged to `main`
 (2026-07-24; release pending)**; **Cycle 5 (unified GUI/CLI UX) is in progress —
-design approved at gate B (2026-07-27)**. After it: the dedicated Phase-5 cycle
-(auto-retry/backoff + YouTube rate-limit), the 6a AppleScript MVP, and the release
-of everything accumulated since v2.0.0.
+implemented and adversarially reviewed, verified by the maintainer at gate C
+(2026-08-03), now closing on its gate-C fixes before the merge**.
+
+That verification produced twenty-six findings
+([improvements.md § Gate-C findings](improvements.md#gate-c)) and two
+cross-cutting decisions ([ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md)).
+By maintainer decision (2026-08-03) they are executed **in class order —
+R → M → F → S** — as Cycle 5's closing plus four new cycles, described under
+[Implementation via development cycles](#implementation-via-development-cycles).
+The release of everything accumulated since v2.0.0 is cut **at the Cycle 5
+merge**, no longer at the end of the queue; the dedicated Phase-5 cycle
+(auto-retry/backoff + YouTube rate-limit) and the 6a AppleScript MVP follow the
+new cycles.
 
 ```mermaid
 flowchart LR
@@ -250,7 +260,8 @@ installed by default.
 |---|---|---|---|
 | 6a | AppleScript/Automator MVP: paste/drop URL, pick folder, enqueue | planned | zero-dep, works to Mojave, immediate value for non-devs |
 | 6b | Web UI served by the daemon: live progress, format/settings, per-run/session/global output dir, settings editor, queue + in-progress view | done (Cycle 3) | `net/http` + SSE; single binary; authenticated local API |
-| 6c | Multi-view GUI (Download · Cronologia · Impostazioni), actionable queue and history, open/reveal the downloaded file | in progress (Cycle 5) | designed with the CLI in one pass; [ADR-0013](decisions/0013-cycle5-unified-ux.md) |
+| 6c | Multi-view GUI (Download · Cronologia · Impostazioni), actionable queue and history, open/reveal the downloaded file | in progress (Cycle 5, closing) | designed with the CLI in one pass; [ADR-0013](decisions/0013-cycle5-unified-ux.md) |
+| 6d | GUI/CLI follow-through from the gate-C review: scope model, partial outcomes, destination presets, authentication, visual language | planned (Cycles 6–10) | [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md) · [findings](improvements.md#gate-c) |
 
 **Cycle 3 (6b) — done, merged to `main` (2026-07-24; release pending).** `ytdl gui`
 opens a self-contained embedded web page served by the same binary (a `__daemon
@@ -527,16 +538,171 @@ channels in one pass so they stop diverging. Runtime/CLI/GUI layers only —
 - **Designed in:** [design-cycle5-ux.md](design-cycle5-ux.md) ·
   [ADR-0013](decisions/0013-cycle5-unified-ux.md) ·
   [ux-principles.md](ux-principles.md) (normative for later cycles).
+- **Built and reviewed (2026-07-27):** ten feature commits (one per design §14
+  step) plus eight fixes from a three-reviewer adversarial pass (3 CRITICALs:
+  an unvalidated URL on the new "riscarica" path, `open`/`again` acting on the
+  wrong record under a narrowed listing, and a permanently-pinned unsaved-changes
+  bar). Suite green under `-race`; `internal/core` byte-unchanged; `internal/daemon`
+  untouched.
+- **Gate C (2026-08-03): passed with findings.** The maintainer verified the GUI
+  and the open/reveal actions on real hardware and returned twenty-six findings —
+  the register is [improvements.md § Gate-C findings](improvements.md#gate-c),
+  and the two decisions they forced are
+  [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md). The cycle does
+  **not** merge as-is: it closes on the `R` group below.
+
+### Cycle 5 closing — gate-C fixes (`R`) — **next**
+
+The eleven findings where a surface contradicts either `ux-principles.md` or its
+own label. None needs a new decision, so this session **starts at
+implementation** — no analysis, no design gate — on the existing branch, and ends
+at the merge and the long-deferred release.
+
+- **Scope:** G1 (queue rows state the destination, both channels) · G2 (the
+  session-folder field can no longer show a value that is not in force) · G3 (the
+  per-download folder really is per-download) · G4 (the playlist checkbox returns
+  to its default after a submit) · G5 (`open_folder_on_done` stops being a live
+  control that cannot work in the GUI) · G6 (the log panel scrolls into view) ·
+  G7 (`audio_quality` accepts yt-dlp's real 0-10 domain, help and docs follow) ·
+  G8 (failures carry an actionable hint, derived at render time from the stored
+  line — no schema change, retroactive on existing records, and only remedies
+  that exist today) · G10 (the `beforeunload` wording stops implying that closing
+  the tab cancels the queue).
+- **Needs the maintainer's word first (two label rulings):** G9 — "Mostra nel
+  Finder" on Linux, which means amending `ux-principles.md` §3 (proposed: "Mostra
+  nella cartella"); G11 — "Riprova" is normative vocabulary with no GUI surface,
+  so either the failed-spool row lands or the asymmetry is recorded per §7.
+- **Deliberately out:** everything requiring a decision or a data-model change.
+  G3 and G4 ship their *truthfulness* half here; the full scope model (visible
+  effective destination, explicit promotion, the same rule for the format
+  control) is Cycle 6. G8 ships the catalogue; the age/bot remedy needs Cycle 9.
+- **Done when:** no GUI surface asserts something untrue; suite green under
+  `-race`; goldens byte-unchanged; branch merged `--no-ff` into `main`; **the
+  release since v2.0.0 is tagged and verified on hardware**.
+- **Known, not blocking:** `TestRunQueuedCancelKillsProcessGroup` flaked once
+  under container load on a cold-cache `-race` run (it waits `killGrace+2s` for a
+  process-group signal). Pre-existing timing fragility → Phase-5 hardening cycle.
+
+### Post-gate-C cycles — `R → M → F → S`
+
+Class order, decided by the maintainer (2026-08-03): fix what misinforms the user
+first, decide what is ambiguous next, add capability after that, restyle last.
+Correlated findings are grouped so each session owns one coherent surface.
+
+```mermaid
+flowchart LR
+  R["Cycle 5 closing<br/><b>R</b> · fixes<br/>+ merge + release"] --> M["Cycle 6<br/><b>M</b> · scope model"]
+  M --> F1["Cycle 7<br/><b>F</b> · partial outcome<br/>playlists per track"]
+  F1 --> F2["Cycle 8<br/><b>F</b> · destination presets"]
+  F2 --> F3["Cycle 9<br/><b>F</b> · authentication<br/>+ error remedies"]
+  F3 --> S["Cycle 10<br/><b>S</b> · visual language"]
+```
+
+Every cycle from 6 onward **starts with its own analysis stage** and follows the
+full per-session protocol (analysis → gate A → design → gate B → implementation →
+review → gate C → docs). Cycle 5's closing is the only one that skips to
+implementation, because its findings carry no open questions.
+
+#### Cycle 6 — the scope model (`M`) — planned
+
+Implements [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md)
+decision 1 across the Download view, plus the three findings that live on the
+same controls.
+
+- **Scope:** G12 + G13 (one rule for folder, format and playlist: one-shot by
+  default, effective value always visible with its scope, explicit promotion) ·
+  G14 (the playlist control knows whether the link carries `list=`, and says so —
+  the `v=…&list=…` case is the one that silently downloads two hundred tracks) ·
+  G15 (named audio-quality steps; hidden or disabled with a reason for lossless
+  formats) · G16 (the session override is validated before it is accepted) · G17
+  (the GUI confirms a completion in the view the user is on, and offers "Apri" on
+  what just finished) · G18 (filters and search survive a reload).
+- **Analysis must settle:** whether destination presets (Cycle 8) **retire** the
+  session scope altogether. If they do, Cycle 6 builds the promotion affordance
+  differently and Cycle 8 inherits it — so this is answered before either is
+  built, not after.
+- **Done when:** a user can always see where the next download will land and
+  which scope decided it; no per-download control is sticky by accident; the same
+  rule is stated once in `ux-principles.md` §8 and holds in both channels.
+
+#### Cycle 7 — partial outcome and playlists per track (`F`) — planned
+
+Implements ADR-0014 decision 2, plus the storage work it forces.
+
+- **Scope:** G19 (three outcomes end to end: record, both history renderers, the
+  notifier, the breadcrumbs) · G20 (per-item data is persisted, not discarded —
+  expandable per-track detail in the GUI, an equivalent in the CLI, and a
+  "Riscarica" that offers the failed items) · G21 (`history.jsonl` stops being an
+  unbounded full-file scan, which per-item records make urgent) · G22 (cursor
+  paging, since the same read path is being reworked) · G23 (land the concurrent
+  `Append` stress test the Cycle 5 review wrote but never committed).
+- **Design must settle:** how a selective retry addresses items. Item ids are
+  stable and playlist indices are not, so `--match-filters` on id is the leading
+  candidate over `--playlist-items`, a per-item job fan-out, or
+  `--download-archive` (which would also block deliberate re-downloads). Whatever
+  it picks is appended **after** `core.BuildArgs`, like `TempRedirectArgs`, so the
+  parity gate holds.
+- **Done when:** a playlist that lost one track says so, in both channels, with
+  the ratio and the per-track detail one step away; retrying it does not
+  re-download what already succeeded; history reads no longer scale with the
+  whole file.
+
+#### Cycle 8 — destination presets (`F`) — planned
+
+- **Scope:** G24 — named folder presets recalled instead of retyped, in both
+  channels, plus a **native folder picker** driven by the daemon (`osascript -e
+  'choose folder'` on macOS, `zenity`/`kdialog` on Linux) exposed as an advertised
+  capability, since a browser cannot obtain a real path. `internal/open` already
+  owns desktop actions and the "never render a control the platform cannot
+  honour" rule.
+- **Design must settle:** the config representation. The file is strict
+  `key=value` with a whitelist and is never `source`d (U4, a security property,
+  not a convention), so a list needs a scheme — the leading candidate is a
+  `preset_<name>` prefix rule with a validated name charset, which keeps one
+  hand-editable, diffable document and lets `ytdl config` list them.
+- **Depends on:** the Cycle 6 ruling on whether presets replace the session scope.
+
+#### Cycle 9 — authentication and error remedies (`F`) — planned
+
+- **Scope:** G25 — a validated `cookies_from_browser` key wired through to
+  `--cookies-from-browser`, appended off the golden argv path, **off by default**
+  and plainly labelled, with its own failure modes anticipated (Full Disk Access
+  for Safari, a keychain prompt for Chrome). Completes the G8 hint catalogue with
+  the age- and bot-restriction remedies, which only become honest once the
+  remedy exists.
+- **Note:** the 429 / rate-limit hint shipped in the closing cycle points at the
+  same territory as the deferred Phase-5 hardening cycle (auto-retry/backoff).
+  If Phase-5 runs first, the hint text is revisited there instead.
+
+#### Cycle 10 — visual language (`S`) — planned
+
+- **Scope:** G26 — write `docs/ux-visual-language.md` (type scale, spacing scale,
+  radii, elevation, colour **semantics** separated from the action colour,
+  density, focus, motion) and then apply it. The document is the deliverable that
+  outlives the restyle, exactly as `ux-principles.md` outlived Cycle 5.
+- **Hard constraints:** no external assets — the CSP is `script-src 'self'` and
+  the binary is self-contained, so no CDN fonts and inline icons only; no
+  `innerHTML` (a test enforces it); dark mode; one document that never reloads
+  (ADR-0008's liveness clause).
+- **Runs last on purpose:** restyling a surface whose controls are still moving
+  would be done twice.
 
 ## Deferred / planned, not yet scheduled
 
 - **Phase-5 hardening cycle** — automatic retries/backoff (`Attempts`/`NotBefore`)
-  and YouTube rate-limit handling. A full design already exists from a mis-scoped
-  design fork during Cycle 4; it is a good starting point. Next after Cycle 5.
+  and YouTube rate-limit handling, plus the flaky
+  `TestRunQueuedCancelKillsProcessGroup` timing. A full design already exists from
+  a mis-scoped design fork during Cycle 4; it is a good starting point. It was
+  "next after Cycle 5" until the gate-C review; it now follows the R → M → F → S
+  cycles, and can be pulled forward ahead of Cycle 9, whose rate-limit hint text
+  overlaps with it.
 - **6a AppleScript/Automator MVP** — still planned (see Phase 6).
 - **Release of everything since v2.0.0** — `main` has accumulated Cycles 2A, 2B-core,
   2C, 3, 2B-plus and 4 unreleased. By maintainer decision (2026-07-26) the tag is cut
-  **after** Cycle 5, in one release.
+  **after** Cycle 5, in one release — i.e. at the merge that closes the gate-C `R`
+  fixes, **not** after the four cycles that follow it. Note the release-trigger
+  gotcha from v2.0.0: the workflow only fires once the tag reaches the default
+  branch.
 - **Writable CLI config editor** (`ytdl config set`) — deferred by ADR-0013: it would
   duplicate `config.Save`'s validation for a task the GUI already serves.
 - **Reordering the pending queue** — considered for Cycle 5 and left out: it needs a
