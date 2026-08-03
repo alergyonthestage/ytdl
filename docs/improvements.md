@@ -3,6 +3,10 @@
 Findings from the initial analysis of `ytdl`, plus the evolutions requested by
 the maintainer. Sequencing lives in [roadmap.md](roadmap.md).
 
+Two registers live here: the **initial analysis** (findings `C*`, `U*`, `M*` and
+the requested evolutions `E*`) and the **Cycle 5 gate-C findings** (`G*`, from
+the maintainer's hands-on verification of the GUI) at the end of the document.
+
 Status since the initial analysis: **E1 (distribution) is essentially done**
 (phase 1), and the engine will be rebuilt as a single Go binary — see
 [ADR-0003](decisions/0003-engine-language-go.md). That decision re-homes several
@@ -155,3 +159,102 @@ then the full web UI.
 The GUI is a **front-end over the engine**, not a reimplementation: it depends on
 U4 (config) and U5 (queue) existing first. Editing settings from the GUI is safe
 because the config is parsed with a whitelist, not `source`d (see U4).
+
+## Gate-C findings — Cycle 5 verification (2026-08-03)
+
+<a id="gate-c"></a>
+
+Cycle 5 shipped the three-view GUI and the actionable history, then stopped at
+**gate C**, whose whole purpose is the maintainer using the result on real
+hardware. They did, and produced a findings list. This section is that list,
+verified against the code, classified, and mapped onto cycles. Sequencing —
+which cycle runs when — lives in [roadmap.md](roadmap.md).
+
+Two cross-cutting decisions came out of the same review and settle roughly half
+of the list on their own; they are recorded in
+[ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md) and are now
+normative in [ux-principles.md](ux-principles.md).
+
+### How a finding is classified
+
+The class decides *where the work goes*, not how important it is. A finding that
+contradicts a document we have already declared normative is not a feature
+request — it is a defect, and it outranks everything additive.
+
+```mermaid
+flowchart TD
+  F["a gate-C finding"] --> Q1{"does the surface<br/>contradict ux-principles.md<br/>or its own label?"}
+  Q1 -->|yes| R["<b>R</b> — fix<br/>no new decision needed"]
+  Q1 -->|no| Q2{"is the concept itself<br/>unclear or inconsistent?"}
+  Q2 -->|yes| M["<b>M</b> — model<br/>decide, then implement"]
+  Q2 -->|no| Q3{"does it need capability<br/>that does not exist?"}
+  Q3 -->|yes| Ff["<b>F</b> — feature<br/>analysis + design + ADR"]
+  Q3 -->|no| S["<b>S</b> — visual language"]
+```
+
+> The class letters `R` / `M` / `F` / `S` are **not** the finding-ID prefixes used
+> by the initial-analysis register above (`C`/`U`/`M`/`E`). Gate-C findings are
+> numbered `G1…G26`; `M` as a *class* means "model decision", never
+> "maintainability".
+
+Order of execution, decided by the maintainer (2026-08-03): **R → M → F → S**.
+Fixes first because they are the ones actively misinforming the user; additive
+work last.
+
+### R — the surface contradicts itself (Cycle 5 closing, no new decisions)
+
+| # | Finding | Severity | Verified cause |
+|---|---|---|---|
+| G1 | The queue never says **where** a job will land | medium | `queue.Job.Settings` already carries the resolved `OutputDir`, frozen at enqueue; only `jobDTO` fails to expose it. The history row shows `location`, so the same row component says it in one list and not the other. `ytdl queue` omits it too — both channels. |
+| G2 | The session-folder field can display a value that is **not in force** | **high** | Only the "Applica alla sessione" button issues the `PUT /api/session`; there is no auto-apply. But nothing marks the field dirty — while the settings form immediately below it has a sticky unsaved-changes bar. Type without pressing, then download: the file goes to the old folder while the field shows the new one. |
+| G3 | "Vale solo per questo download" is **false** | **high** | The API is right (per-request dir wins for that request only); the SPA clears only the URL field after a submit, never the folder field, and leaves the disclosure open. The label promises one-shot, the UI delivers sticky. |
+| G4 | The playlist checkbox never returns to its default | **high** | Initialised from `playlist_default` and never reset. See G14 for why the consequence is worse than "one unwanted playlist". |
+| G5 | `open_folder_on_done` is a **dead control in the GUI** | medium | It applies to foreground downloads only, and *every* GUI download is enqueued — so the setting can never do anything for a GUI-only user, yet it is rendered live in the GUI's Download group. `ux-principles.md` §4 forbids exactly this. |
+| G6 | "Vedi errore" can appear to do nothing | low | The log panel sits above the list; opening it from a row far down reveals it off-screen, with no scroll into view. |
+| G7 | `audio_quality` accepts 0-9; yt-dlp's scale is **0-10** | low | The validator tests a single character, so `10` is unrepresentable; help and docs repeat "0-9". yt-dlp: *"a value between 0 (best) and 10 (worst) for VBR or a specific bitrate like 128K (default 5)"*. |
+| G8 | A failure says what went wrong, never **what to do** | **high** | `Entry.Error` is yt-dlp's last stderr line, in English, capped at 200 runes — the observed record ends mid-URL (`…github.com/yt-dl…`). `ux-principles.md` §5 requires the next step. Fixable with a **render-time** hint derived from the stored raw line: no schema change, and it works on records already written. Ships only with remedies that exist today; the age/bot remedy waits for G25. |
+| G9 | "Mostra nel Finder" is offered on Linux | low | Deferred at gate C. The label is what §3 prescribes, so changing it amends the normative document (proposed: "Mostra nella cartella"). |
+| G10 | `beforeunload` implies that closing the tab cancels the queue | low | "Vuoi uscire? Hai download in coda." — the daemon keeps draining, by design (ADR-0008). Wording only. |
+| G11 | "Riprova" is normative vocabulary with **no surface** | low | §3 lists it as a GUI label, but `queueDTO` exposes only `pending` and `running`: a job that failed in the spool is invisible in the GUI. Either implement the row or record the asymmetry per §7. |
+
+### M — the concept is unclear (Cycle 6, analysis first)
+
+| # | Finding | Severity | Notes |
+|---|---|---|---|
+| G12 | Three folder scopes, no visible model | **high** | Default (config) · session (GUI-only) · this download. Nothing on screen says which is in force, and §3 has no words for them. Settled in principle by [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md) decision 1; the surface work is Cycle 6. |
+| G13 | Format, playlist and folder are all per-request, with three different implicit behaviours | **high** | The folder claims one-shot and is sticky (G3); the checkbox is sticky and claims nothing (G4); the format is sticky and nobody ever mentioned it. One rule, applied identically to all three. |
+| G14 | The playlist control does not know whether the link **is** a playlist | **high** | The dangerous case is not a bare video — `--yes-playlist` is a no-op there. It is the link YouTube hands you when you click a track inside a playlist or a mix: it carries `v=…&list=…`, and a forgotten checkbox turns one track into the whole list. |
+| G15 | Audio quality exposes an ffmpeg VBR scale to a non-technical user, and is applied to lossless formats | medium | `--audio-quality` is passed for `flac`/`wav` too, where it means nothing. Proposal: named steps (massima/alta/media/compatta) mapped onto values, hidden or disabled with a reason for lossless formats. Default stays `0`, so no behaviour changes. |
+| G16 | The session override is never validated | medium | Non-existent or unwritable paths are accepted; the first download then silently `MkdirAll`s a new folder somewhere the user did not intend. |
+| G17 | Completion produces no feedback in the view the user is looking at | medium | The row leaves the queue and reappears under "Ultimi download". The system notification comes from the daemon; the GUI itself says nothing, and does not offer "Apri" on the thing that just finished. |
+| G18 | History filters and search are not in the URL hash | low | A reload loses them, and Back moves between views but not between filter states. |
+
+### F — capability that does not exist yet
+
+**Cycle 7 — partial outcome and playlists per track** (ADR-0014 decision 2):
+
+| # | Finding | Severity | Notes |
+|---|---|---|---|
+| G19 | A partially-failed playlist is recorded as a **total failure** | **high** | `success := rc == 0 && count > 0`, and yt-dlp returns a non-zero code when any item failed even under `-i`. The maintainer's own record is the proof: ✗, "21 tracce", and the error line of the single age-restricted track — while 21 files sit on disk. The record states something untrue about work that succeeded. |
+| G20 | Per-item data is collected and then thrown away | medium | The runner already captures attempted (`id\ttitle`) and succeeded (`id`) items and feeds them to `ReconcilePlaylist` for the per-item breadcrumbs — then discards them. Nothing reaches the history record, so there is no per-track detail and a retry re-downloads everything. Collection is also gated on `breadcrumb_on_failure` and on silent/background mode. |
+| G21 | `log_retention_days = 0` leaves `history.jsonl` unbounded, and every history operation is a full-file scan | medium | Deferred at gate C. Per-item arrays multiply record size, so this stops being theoretical in the same cycle that adds them. |
+| G22 | Offset paging can duplicate or skip a row | low | Deferred at gate C. Inherent to offset paging; the fix is cursor paging (`?before=<id>`), which is a design change. |
+| G23 | `Append`'s doc cites a concurrent stress test that is not in the repo | low | Deferred at gate C. The test was written during the Cycle 5 review and passes; it just never landed. |
+
+**Cycle 8 — destination presets:**
+
+| # | Finding | Severity | Notes |
+|---|---|---|---|
+| G24 | The only way to choose a folder is to type an absolute path into a browser text field | medium | Requested: named presets, recalled instead of retyped. Config is strict `key=value` with a whitelist, so a list needs a scheme (proposal: a `preset_<name>` prefix rule — one document, diffable, hand-editable). Related: a browser cannot obtain a real path, so a **native picker** driven by the daemon (`osascript -e 'choose folder'` / `zenity`) is the only way; `internal/open` already owns desktop actions. May retire the session override entirely — see the Cycle 6 entry in the roadmap. |
+
+**Cycle 9 — authentication and error remedies:**
+
+| # | Finding | Severity | Notes |
+|---|---|---|---|
+| G25 | Age- and bot-restricted videos have no remedy path | **high** | The real fix is `--cookies-from-browser`, i.e. a validated `cookies_from_browser` config key appended off the golden argv path. Sensitive by nature: off by default, plainly labelled, and its own failure modes anticipated (Full Disk Access for Safari, a keychain prompt for Chrome). Completes the G8 hint catalogue. |
+
+### S — visual language (Cycle 10)
+
+| # | Finding | Severity | Notes |
+|---|---|---|---|
+| G26 | The GUI has no visual language | medium | Not sloppy — anaemic, and the causes are nameable: no type scale (everything sits between 0.78 and 1rem; `h2` is *smaller* than the URL field, so headings do not read as headings); no spatial rhythm (1rem padding everywhere); the download form, the app's whole reason to exist, weighs the same as the log section; and one green means primary action, success **and** selected chip. The deliverable is a written `docs/ux-visual-language.md` (type scale, spacing scale, radii, elevation, colour **semantics** split from the action colour, density, focus, motion) applied afterwards. Hard constraints: no external assets (CSP `script-src 'self'`, self-contained binary → no CDN fonts, inline icons only), no `innerHTML`, dark mode, one document. |
