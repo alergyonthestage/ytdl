@@ -204,6 +204,70 @@ handler({ preventDefault: () => {} }).then(() => console.log(state()));
 	}
 }
 
+// sessionHarness evaluates the real session-folder logic plus applyState, with
+// stand-ins for everything else applyState touches.
+const sessionHarness = harness + `
+const nodes = {
+  sessionOut: { value: "" },
+  sessionPending: { hidden: true },
+  historyWindow: { textContent: "" },
+};
+const $ = (id) => nodes[id];
+const applyQueue = () => {}, renderRecent = () => {}, setDaemon = () => {};
+const setOpenFolderAvailability = () => {}, retentionLabel = () => "da sempre";
+let retentionDays = 0;
+let appliedSessionOut = "";
+
+eval(extract(/function sessionDirty\(\) \{[\s\S]*?\n\}/));
+eval(extract(/function refreshSessionPending\(\) \{[\s\S]*?\n\}/));
+eval(extract(/function applyState\(s\) \{[\s\S]*?\n\}/));
+const state = () => "field=" + nodes.sessionOut.value + " pending=" + !nodes.sessionPending.hidden;
+`
+
+// TestTypingASessionFolderMarksItPending: only "Applica alla sessione" puts the
+// value in force. Typed and left, it used to sit there looking authoritative
+// while the download went to the old folder (G2, ux-principles.md §8.4).
+func TestTypingASessionFolderMarksItPending(t *testing.T) {
+	out := runNode(t, sessionHarness+`
+nodes.sessionOut.value = "/tmp/altrove";   // typed, never applied
+refreshSessionPending();
+console.log("typed:" + state());
+appliedSessionOut = "/tmp/altrove";        // now applied
+refreshSessionPending();
+console.log("applied:" + state());
+`)
+	if !strings.Contains(out, "typed:field=/tmp/altrove pending=true") {
+		t.Errorf("an unapplied session folder is not marked:\n%s", out)
+	}
+	if !strings.Contains(out, "applied:field=/tmp/altrove pending=false") {
+		t.Errorf("the mark survives the value being applied:\n%s", out)
+	}
+}
+
+// TestAStateRefreshNeverOverwritesAPendingSessionEdit: /api/state lands on a
+// reconnect, at any moment. It must not throw away what the user is typing, and
+// it must not make a pending edit look applied.
+func TestAStateRefreshNeverOverwritesAPendingSessionEdit(t *testing.T) {
+	out := runNode(t, sessionHarness+`
+nodes.sessionOut.value = "/tmp/che-sto-scrivendo";
+refreshSessionPending();
+applyState({ queue: {}, history: [], sessionOutputDir: "" });
+console.log("dirty:" + state());
+
+// A field that agrees with what is in force does adopt the server's value.
+nodes.sessionOut.value = "";
+appliedSessionOut = "";
+applyState({ queue: {}, history: [], sessionOutputDir: "/srv/musica" });
+console.log("clean:" + state());
+`)
+	if !strings.Contains(out, "dirty:field=/tmp/che-sto-scrivendo pending=true") {
+		t.Errorf("a state refresh discarded an edit in progress, or cleared its mark:\n%s", out)
+	}
+	if !strings.Contains(out, "clean:field=/srv/musica pending=false") {
+		t.Errorf("an untouched field did not follow the server:\n%s", out)
+	}
+}
+
 // TestOpenFolderControlFollowsThePlatformCapability: where ytdl has no desktop
 // launcher the setting can do nothing on any channel, so the control is disabled
 // WITH the reason — and the reason goes away again when it can work, rather than

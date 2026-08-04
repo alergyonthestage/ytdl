@@ -134,6 +134,10 @@ details[open] > summary { margin-bottom: .6rem; }
   white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted);
 }
 
+/* A control changed but not yet applied says so (ux-principles.md §8.4).
+   Deliberately not muted like a hint: being noticed is the whole job. */
+.pending-note { font-size: .8rem; font-weight: 600; margin-top: .35rem; }
+
 /* ---- sticky unsaved-changes bar ---- */
 .savebar {
   position: sticky; bottom: 0; z-index: 4; display: flex; align-items: center; gap: .6rem;

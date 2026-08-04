@@ -592,7 +592,13 @@ function applyState(s) {
   setOpenFolderAvailability(s.canOpen !== false);
   retentionDays = Number(s.retentionDays) || 0;
   $("historyWindow").textContent = "— " + retentionLabel();
-  $("sessionOut").value = s.sessionOutputDir || "";
+  // Adopt the server's value only while the field agrees with what WAS in force:
+  // a state refresh (a reconnect, say) must never overwrite an edit in progress,
+  // and must never silently make a pending edit look applied.
+  const wasDirty = sessionDirty();
+  appliedSessionOut = s.sessionOutputDir || "";
+  if (!wasDirty) $("sessionOut").value = appliedSessionOut;
+  refreshSessionPending();
 }
 
 async function loadState() {
@@ -703,6 +709,25 @@ $("dl").addEventListener("submit", async (ev) => {
 
 // ---- settings ------------------------------------------------------------
 
+// ---- the session folder --------------------------------------------------
+// Only "Applica alla sessione" issues the PUT; typing in the field changes
+// nothing. Nothing said so, while the settings form immediately below has had a
+// sticky unsaved-changes bar all along — so the field could show one folder
+// while the download went to another (G2). ux-principles.md §8.4: a control
+// changed but not yet applied must say so.
+
+let appliedSessionOut = ""; // the override the server says is in force
+
+function sessionDirty() {
+  return $("sessionOut").value.trim() !== appliedSessionOut;
+}
+
+function refreshSessionPending() {
+  $("sessionPending").hidden = !sessionDirty();
+}
+
+$("sessionOut").addEventListener("input", refreshSessionPending);
+
 $("saveSession").addEventListener("click", async () => {
   const dir = $("sessionOut").value.trim();
   try {
@@ -714,10 +739,13 @@ $("saveSession").addEventListener("click", async () => {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ outputDir: dir }),
     });
-    if (!r.ok) {
-      const data = await r.json().catch(() => ({}));
-      throw new Error(data.error || "errore " + r.status);
-    }
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || "errore " + r.status);
+    // What is in force comes from the SERVER's echo, not from the field: only
+    // then does "no pending change" mean the two actually agree.
+    appliedSessionOut = typeof data.sessionOutputDir === "string" ? data.sessionOutputDir : dir;
+    $("sessionOut").value = appliedSessionOut;
+    refreshSessionPending();
     setMsg("sessionMsg", "ok", "Cartella di sessione aggiornata.");
   } catch (err) {
     setMsg("sessionMsg", "bad", err.message);
