@@ -722,8 +722,12 @@ $("dl").addEventListener("submit", async (ev) => {
 
 let appliedSessionOut = ""; // the override the server says is in force
 
+// Both sides are trimmed. Comparing a trimmed field against an untrimmed stored
+// value pins the marker open for ever on a value the GUI never typed (the API
+// stores whatever it is given), which is the "a warning that is always on is a
+// warning nobody reads" failure the settings bar already paid for once.
 function sessionDirty() {
-  return $("sessionOut").value.trim() !== appliedSessionOut;
+  return $("sessionOut").value.trim() !== appliedSessionOut.trim();
 }
 
 function refreshSessionPending() {

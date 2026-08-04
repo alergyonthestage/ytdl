@@ -47,6 +47,30 @@ type HistoryView struct {
 // record.
 const hintIndent = "        "
 
+// hintMinCols is the floor for the wrapped hint's text column. Below it — a
+// terminal narrower than the indent plus a couple of words — wrapping produces a
+// column of fragments, so the text is left to the final width clip instead.
+const hintMinCols = 24
+
+// writeHintLines writes hint under a failed row, wrapped to the terminal width
+// so an instruction is never truncated into a command that does not exist. An
+// empty hint (no honest remedy) writes nothing at all, and width 0 (not a
+// terminal — a pipe or a file) writes it on one line, since there is no width
+// to wrap to.
+func writeHintLines(b *strings.Builder, hint string, width int) {
+	if hint == "" {
+		return
+	}
+	cols := width - len(hintIndent)
+	if width <= 0 || cols < hintMinCols {
+		fmt.Fprintf(b, "%s%s\n", hintIndent, hint)
+		return
+	}
+	for _, line := range term.Wrap(hint, cols) {
+		fmt.Fprintf(b, "%s%s\n", hintIndent, line)
+	}
+}
+
 // idCols is how much of the 16-hex record id is shown. Eight characters is
 // already far past the point of ambiguity for one user's history, and Find
 // accepts any unambiguous prefix.
@@ -101,9 +125,13 @@ func RenderHistory(entries []logstore.Entry, v HistoryView) string {
 			term.Pad(labels[i], labelCols), formatCell(e), detailCell(e, v.Home))
 		// The next step goes on its own line: the row above is already a full
 		// terminal width of columns, and a hint appended to it would be the
-		// first thing clipped away (G8, ux-principles.md §5).
-		if hint := jobs.FailureHint(e.Error); hint != "" && !e.Success {
-			fmt.Fprintf(&b, "%s%s\n", hintIndent, hint)
+		// first thing clipped away (G8, ux-principles.md §5). It WRAPS rather
+		// than clipping, because clipping an instruction is worse than clipping
+		// a title: at 80 columns the ffmpeg hint ended in "ytdl --updat…", a
+		// command the user cannot run. `history` does not redraw in place, so
+		// extra lines cost nothing here.
+		if !e.Success {
+			writeHintLines(&b, jobs.FailureHint(e.Error), v.Width)
 		}
 	}
 	b.WriteString(historyFooter(v))

@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/alergyonthestage/ytdl/internal/logstore"
+	"github.com/alergyonthestage/ytdl/internal/term"
 )
 
 func TestRenderHistoryEmpty(t *testing.T) {
@@ -70,6 +71,49 @@ func TestRenderHistoryFailureCarriesTheNextStep(t *testing.T) {
 	}
 	if hintLines != 1 {
 		t.Errorf("expected exactly one hint line, got %d:\n%s", hintLines, got)
+	}
+}
+
+// TestRenderHistoryHintSurvivesTheTerminalWidth: every line of this listing is
+// clipped to the terminal width, and the longest hints are well over 80 columns
+// — the ffmpeg one used to end in "ytdl --updat…", a command that does not
+// exist. An instruction must WRAP where a title may be clipped.
+func TestRenderHistoryHintSurvivesTheTerminalWidth(t *testing.T) {
+	at := time.Date(2026, 7, 23, 20, 47, 0, 0, time.Local)
+	const width = 80
+	entries := []logstore.Entry{
+		{Time: at, URL: "https://youtu.be/A", Success: false,
+			Error: "ERROR: Postprocessing: ffprobe and ffmpeg not found"},
+		{Time: at.Add(-time.Minute), URL: "https://youtu.be/B", Success: false,
+			Error: "ERROR: Unable to download webpage: HTTP Error 429: Too Many Requests"},
+	}
+	got := RenderHistory(entries, HistoryView{IndexUsable: true, Width: width})
+
+	for _, ln := range strings.Split(got, "\n") {
+		if w := term.DisplayWidth(ln); w > width {
+			t.Errorf("line of %d columns exceeds the terminal width:\n%s", w, ln)
+		}
+	}
+	// The command must appear whole, not as the tail of a clipped line.
+	if !strings.Contains(got, "ytdl --update.") {
+		t.Errorf("the remedy was truncated into a command that does not exist:\n%s", got)
+	}
+	// And the actionable half of the long hint must still be there.
+	if !strings.Contains(got, "riduci i download in parallelo nelle impostazioni") {
+		t.Errorf("the long hint lost its actionable half:\n%s", got)
+	}
+}
+
+// A pipe has no width to wrap to: the hint stays on one line, whole.
+func TestRenderHistoryHintIsWholeWhenThereIsNoWidth(t *testing.T) {
+	at := time.Date(2026, 7, 23, 20, 47, 0, 0, time.Local)
+	entries := []logstore.Entry{
+		{Time: at, URL: "https://youtu.be/A", Success: false,
+			Error: "ERROR: Unable to download webpage: HTTP Error 429: Too Many Requests"},
+	}
+	got := RenderHistory(entries, HistoryView{IndexUsable: true}) // Width 0
+	if !strings.Contains(got, "riduci i download in parallelo nelle impostazioni.") {
+		t.Errorf("the hint was broken up with no width to wrap to:\n%s", got)
 	}
 }
 

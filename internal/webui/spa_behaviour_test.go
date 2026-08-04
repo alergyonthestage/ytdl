@@ -244,6 +244,21 @@ console.log("applied:" + state());
 	}
 }
 
+// TestAnUntouchedSessionFieldIsNeverMarkedPending: the field is compared
+// trimmed, so the value it is compared AGAINST must be trimmed too. The session
+// endpoint stores whatever it is given, and a padded value pinned the marker
+// open for ever on a field nobody had touched — the same "a warning that is
+// always on is a warning nobody reads" failure the settings bar already had.
+func TestAnUntouchedSessionFieldIsNeverMarkedPending(t *testing.T) {
+	out := runNode(t, sessionHarness+`
+applyState({ queue: {}, history: [], sessionOutputDir: " /tmp/con-spazi " });
+console.log("padded:" + state());
+`)
+	if !strings.Contains(out, "pending=false") {
+		t.Errorf("an untouched field was marked as changed:\n%s", out)
+	}
+}
+
 // TestAStateRefreshNeverOverwritesAPendingSessionEdit: /api/state lands on a
 // reconnect, at any moment. It must not throw away what the user is typing, and
 // it must not make a pending edit look applied.
