@@ -249,10 +249,10 @@ function primaryAction(h) {
 function overflowItems(h) {
   const items = [];
   if (h.success && h.canOpenFile) {
-    items.push(["Mostra nel Finder", null, (ev) => openRecord(ev, h, "folder")]);
+    items.push(["Mostra nella cartella", null, (ev) => openRecord(ev, h, "folder")]);
     items.push(["Riscarica", null, (ev) => againRecord(ev, h)]);
   } else if (h.success) {
-    if (h.canOpenFolder) items.push(["Mostra la cartella", null, (ev) => openRecord(ev, h, "folder")]);
+    if (h.canOpenFolder) items.push(["Apri la cartella", null, (ev) => openRecord(ev, h, "folder")]);
     else items.push(["Apri", "il file non è più al suo posto", null]);
   } else {
     items.push(h.hasLog

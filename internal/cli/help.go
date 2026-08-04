@@ -186,7 +186,7 @@ const topicHistory = `STORICO — cosa ho scaricato
 
   ytdl history [--failed] [--limit N] [--search TESTO] [--ids]
                                        elenco numerato, dal più recente
-  ytdl open  <n | id> [--folder]       apre l'audio (--folder: lo mostra nel Finder)
+  ytdl open  <n | id> [--folder]       apre l'audio (--folder: lo mostra nella cartella)
   ytdl again <n | id>                  lo riscarica (nuovo job in coda)
 
   Ogni riga dice com'è andata, quando, cosa, in che formato e — se è andata bene
@@ -216,7 +216,7 @@ CHIAVI
   audio_quality          0-9 (0 = massima)
   playlist_default       true|false — scaricare sempre l'intera playlist
   concurrency            quanti download in parallelo (o "unlimited")
-  open_folder_on_done    true|false — a fine download mostra il file nel Finder
+  open_folder_on_done    true|false — a fine download mostra il file nella cartella
                          (solo per i download in primo piano)
   name_template          template del nome file (yt-dlp)
   strip_brackets         regex: cosa togliere dal titolo, forma [..]
@@ -366,7 +366,7 @@ const helpOpen = `ytdl open <n | id> [--folder]
 
   <n>        indice nella lista di  ytdl history  SENZA filtri
   <id>       prefisso dell'id del record — stabile, da preferire negli script
-  --folder   invece di aprirlo, lo mostra nel gestore file
+  --folder   invece di aprirlo, lo mostra nella cartella
 
   Se hai filtrato la lista (--failed, --search) usa l'id: una lista filtrata lo
   stampa su ogni riga, e  ytdl history --ids  lo mostra sempre.

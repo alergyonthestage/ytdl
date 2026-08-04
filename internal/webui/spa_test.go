@@ -169,13 +169,24 @@ func TestHistoryRowsRankTheirActions(t *testing.T) {
 // behind ···.
 func TestOverflowMenuHoldsTheSecondaryActions(t *testing.T) {
 	js := assetText(t, "assets/app.js")
-	for _, action := range []string{"Mostra nel Finder", "Mostra la cartella", "Vedi errore", "Copia link"} {
+	for _, action := range []string{"Mostra nella cartella", "Apri la cartella", "Vedi errore", "Copia link"} {
 		if !strings.Contains(js, action) {
 			t.Errorf("overflow action %q missing", action)
 		}
 	}
 	if !strings.Contains(js, "overflowMenu") {
 		t.Error("no overflow menu; the row would show a stack of equal buttons")
+	}
+}
+
+// TestRevealLabelNamesTheFolderNotTheFileManager pins ADR-0014 §3: the reveal
+// action names the folder on every platform. "Mostra nel Finder" was false on
+// Linux, and it teaches a non-developer a product name they do not need in
+// order to find their music.
+func TestRevealLabelNamesTheFolderNotTheFileManager(t *testing.T) {
+	js := assetText(t, "assets/app.js")
+	if strings.Contains(js, "Finder") {
+		t.Error("a user-facing label still names the Finder; ADR-0014 §3 names the folder instead")
 	}
 }
 
