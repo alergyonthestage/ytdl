@@ -119,6 +119,36 @@ console.log(list.join(","));
 	}
 }
 
+// TestQueueRowsShowWhereTheJobWillLand executes the row builders: both the
+// running and the pending row must state the destination the server sent, and a
+// job without one must not render an empty label (G1).
+func TestQueueRowsShowWhereTheJobWillLand(t *testing.T) {
+	out := runNode(t, harness+`
+const destFn = extract(/function destinationLine\(job\) \{[\s\S]*?\n\}/);
+const pendFn = extract(/function pendingRow\(job\) \{[\s\S]*?\n\}/);
+
+const texts = [];
+const el = (tag, cls, text) => { const n = { tag, cls, text, kids: [] }; if (text != null) texts.push(text); return n; };
+const itemRow = (title, metaNodes) => ({ title, meta: metaNodes.filter(Boolean) });
+const cancelButton = () => ({ tag: "button" });
+
+eval(destFn);
+eval(pendFn);
+
+const withDir = pendingRow({ id: "1", url: "u", format: "mp3", location: "~/Music/ytdl" });
+const without = pendingRow({ id: "2", url: "u", format: "mp3" });
+console.log("with:" + withDir.meta.map((m) => m.text).join("|"));
+console.log("without:" + without.meta.map((m) => m.text).join("|"));
+`)
+
+	if !strings.Contains(out, "with:.mp3|cartella: ~/Music/ytdl") {
+		t.Errorf("a queued row does not say where the file will land:\n%s", out)
+	}
+	if !strings.Contains(out, "without:.mp3\n") {
+		t.Errorf("a job with no known destination rendered an empty label:\n%s", out)
+	}
+}
+
 // TestOpeningTheLogPanelBringsItIntoView: the panel sits above the list, so
 // "Vedi errore" on a row far down un-hid it off-screen — a control that appears
 // to do nothing (G6). It must be scrolled to, and focused, before the fetch, so

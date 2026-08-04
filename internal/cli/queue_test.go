@@ -13,7 +13,7 @@ func entry(url string, at time.Time, st queue.State) queue.Entry {
 }
 
 func TestRenderQueueEmpty(t *testing.T) {
-	got := RenderQueue(queue.Snapshot{}, true, 0)
+	got := RenderQueue(queue.Snapshot{}, QueueView{Full: true})
 	if !strings.Contains(got, "coda vuota") {
 		t.Errorf("empty queue render missing the empty notice:\n%s", got)
 	}
@@ -34,7 +34,7 @@ func TestRenderQueueListsLiveOnly(t *testing.T) {
 		Done:   []queue.Entry{entry("https://youtu.be/D", at, queue.Done)},
 		Failed: []queue.Entry{entry("https://youtu.be/F", at, queue.Failed)},
 	}
-	got := RenderQueue(snap, true, 0)
+	got := RenderQueue(snap, QueueView{Full: true})
 	for _, want := range []string{
 		"in corso (1):", "youtu.be/RUN", // full URL contains the shortened form as a substring
 		"in attesa (2):", "youtu.be/P1", "youtu.be/P2",
@@ -54,9 +54,40 @@ func TestRenderQueueListsLiveOnly(t *testing.T) {
 	}
 }
 
+// TestRenderQueueStatesTheDestination: the queue was the one list that never
+// said where a file was going, though the job froze its resolved output dir at
+// enqueue (G1). Both sections state it, ~-contracted like the history column.
+func TestRenderQueueStatesTheDestination(t *testing.T) {
+	at := time.Date(2026, 7, 23, 14, 5, 0, 0, time.Local)
+	run := entry("https://youtu.be/RUN", at, queue.Running)
+	run.Job.Settings.OutputDir = "/home/tester/Music/ytdl"
+	pend := entry("https://youtu.be/P1", at, queue.Pending)
+	pend.Job.Settings.OutputDir = "/mnt/backup/audio"
+	snap := queue.Snapshot{Running: []queue.Entry{run}, Pending: []queue.Entry{pend}}
+
+	got := RenderQueue(snap, QueueView{Full: true, Home: "/home/tester"})
+	if !strings.Contains(got, "cartella: ~/Music/ytdl") {
+		t.Errorf("the running job does not state its destination:\n%s", got)
+	}
+	// Outside $HOME there is nothing to contract: the path stays absolute.
+	if !strings.Contains(got, "cartella: /mnt/backup/audio") {
+		t.Errorf("the pending job does not state its destination:\n%s", got)
+	}
+}
+
+// A job whose spec could not be read has no settings to state; an empty label
+// would be a line that says nothing.
+func TestRenderQueueOmitsAnUnknownDestination(t *testing.T) {
+	snap := queue.Snapshot{Pending: []queue.Entry{{ID: "broken", State: queue.Pending}}}
+	got := RenderQueue(snap, QueueView{Full: true, Home: "/home/tester"})
+	if strings.Contains(got, "cartella:") {
+		t.Errorf("an unreadable job printed an empty destination:\n%s", got)
+	}
+}
+
 func TestRenderQueueUnreadableJob(t *testing.T) {
 	snap := queue.Snapshot{Pending: []queue.Entry{{ID: "broken", State: queue.Pending}}}
-	got := RenderQueue(snap, true, 0)
+	got := RenderQueue(snap, QueueView{Full: true})
 	if !strings.Contains(got, "broken") || !strings.Contains(got, "illeggibile") {
 		t.Errorf("unreadable job not surfaced:\n%s", got)
 	}

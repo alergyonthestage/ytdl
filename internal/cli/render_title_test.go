@@ -17,7 +17,7 @@ func TestRenderQueueTitleAndFullURL(t *testing.T) {
 	snap := queue.Snapshot{Running: []queue.Entry{
 		{ID: "r", State: queue.Running, Job: queue.Job{URL: fullURL, Title: "Rick Astley - Never Gonna Give You Up", EnqueuedAt: at}},
 	}}
-	got := RenderQueue(snap, true, 0)
+	got := RenderQueue(snap, QueueView{Full: true})
 	if !strings.Contains(got, "Rick Astley - Never Gonna Give You Up") {
 		t.Errorf("missing title:\n%s", got)
 	}
@@ -32,7 +32,7 @@ func TestRenderQueuePlaylistFlagNoTitle(t *testing.T) {
 	snap := queue.Snapshot{Pending: []queue.Entry{
 		{ID: "p", State: queue.Pending, Job: queue.Job{URL: "https://x/list", Title: "Should Not Show", Playlist: true}},
 	}}
-	got := RenderQueue(snap, true, 0)
+	got := RenderQueue(snap, QueueView{Full: true})
 	if strings.Contains(got, "Should Not Show") {
 		t.Errorf("playlist per-item title must not be shown:\n%s", got)
 	}
@@ -57,7 +57,7 @@ func TestRenderQueueWatchClipsToWidth(t *testing.T) {
 		snap := queue.Snapshot{Running: []queue.Entry{
 			{ID: "r", State: queue.Running, Job: queue.Job{URL: longURL, Title: title}},
 		}}
-		got := RenderQueue(snap, false, width)
+		got := RenderQueue(snap, QueueView{Width: width})
 		for _, line := range strings.Split(strings.TrimRight(got, "\n"), "\n") {
 			if w := term.DisplayWidth(line); w > width {
 				t.Errorf("line exceeds %d display columns (would wrap): %q (%d cols)", width, line, w)

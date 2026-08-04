@@ -136,6 +136,16 @@ function progressLine(p) {
 // nodes fires no click event at all.
 const liveRows = new Map();
 
+// destinationLine states where a queued job will land. The dir was resolved AT
+// ENQUEUE and frozen in the job's settings, so this is what THIS job will do,
+// not what the settings would do now. The queue used to be the only list that
+// never said where a file was going (G1). It is its own node rather than part
+// of the progress line, which a frame rewrites five times a second.
+function destinationLine(job) {
+  if (!job.location) return null;
+  return el("div", "meta", "cartella: " + job.location);
+}
+
 function runningRow(job) {
   const p = progress.get(job.id);
   const meta = [];
@@ -145,6 +155,7 @@ function runningRow(job) {
   meta.push(bar);
   const metaLine = el("div", "meta", "");
   meta.push(metaLine);
+  meta.push(destinationLine(job));
 
   const titleEl = document.createTextNode("");
   const row = itemRow("", meta, [cancelButton(job)]);
@@ -175,6 +186,7 @@ function pendingRow(job) {
   const meta = [];
   if (job.title) meta.push(el("div", "meta", job.url));
   meta.push(el("div", "meta", detail));
+  meta.push(destinationLine(job));
   return itemRow(job.title || job.url, meta, [cancelButton(job)]);
 }
 

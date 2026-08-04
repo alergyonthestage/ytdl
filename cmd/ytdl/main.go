@@ -497,7 +497,7 @@ func printQueueOnce(sp *queue.Spool) int {
 	}
 	resumeIfStalled(sp, snap)
 	// One-shot: show full URLs (a wrapped line is harmless without a redraw).
-	fmt.Print(term.Colorize(cli.RenderQueue(snap, true, 0), colorStdout()))
+	fmt.Print(term.Colorize(cli.RenderQueue(snap, cli.QueueView{Full: true, Home: homeDir()}), colorStdout()))
 	return 0
 }
 
@@ -524,6 +524,7 @@ func watchQueue(sp *queue.Spool) int {
 	var lastLines int // total lines drawn last frame (queue + spinner)
 	var baseDone, baseFailed int
 	haveBase, sawWork := false, false
+	home := homeDir() // resolved once: this loop redraws twice a second
 
 	for frame := 0; ; frame++ {
 		snap, err := sp.List()
@@ -547,7 +548,7 @@ func watchQueue(sp *queue.Spool) int {
 		if width <= 0 {
 			width = 80
 		}
-		content := cli.RenderQueue(snap, false, width)
+		content := cli.RenderQueue(snap, cli.QueueView{Width: width, Home: home})
 
 		// Auto-exit once the queue has drained: clear the region, print the final
 		// (empty) queue, and — if we actually watched work finish — a session summary.

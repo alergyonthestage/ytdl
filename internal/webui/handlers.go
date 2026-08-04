@@ -52,6 +52,12 @@ type jobDTO struct {
 	Format     string `json:"format"`
 	Playlist   bool   `json:"playlist"`
 	EnqueuedAt string `json:"enqueuedAt"`
+	// Location is where this job will land: the output dir RESOLVED AT ENQUEUE
+	// and frozen in its settings snapshot, ~-contracted for display. It answers
+	// "where is this going" before the fact, the same question the history row
+	// answers after it — the queue used to be the one list that never said (G1).
+	// Display only: like historyDTO.Location it is never sent back as a path.
+	Location string `json:"location,omitempty"`
 }
 
 type countsDTO struct {
@@ -191,6 +197,7 @@ func entryToDTO(e queue.Entry) jobDTO {
 	d := jobDTO{
 		ID: e.ID, URL: e.Job.URL, Format: e.Job.Settings.Format,
 		Playlist: e.Job.Playlist, EnqueuedAt: e.Job.EnqueuedAt.Format(time.RFC3339),
+		Location: contractHome(e.Job.Settings.OutputDir),
 	}
 	// A playlist's single resolved title would misrepresent the whole job, so it
 	// stays unnamed — the same rule the CLI queue view follows (Cycle 4).
@@ -369,6 +376,14 @@ func (s *Server) displayLocation(e logstore.Entry) string {
 	if e.Path != "" {
 		dir = filepath.Dir(e.Path)
 	}
+	return contractHome(dir)
+}
+
+// contractHome rewrites a path under $HOME as "~/…", the form a user recognises
+// at a glance. An unresolvable $HOME leaves the path absolute. Shared by the
+// history row's location and the queue row's destination, so the two lists say
+// where a file is in exactly the same words.
+func contractHome(dir string) string {
 	if dir == "" {
 		return ""
 	}

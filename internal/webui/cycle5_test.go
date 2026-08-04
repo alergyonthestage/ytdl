@@ -757,6 +757,35 @@ func TestStateCarriesQueueTitlesAndCapability(t *testing.T) {
 	}
 }
 
+// TestQueueRowsCarryTheirDestination: the history row has always said where a
+// file went; the queue row never said where one was going, though the job's
+// settings snapshot has carried the resolved dir since it was enqueued (G1).
+func TestQueueRowsCarryTheirDestination(t *testing.T) {
+	ts, _, sp, _ := apiServer(t)
+	settings := config.Defaults()
+	settings.OutputDir = t.TempDir()
+	if _, err := sp.Enqueue(queue.Job{URL: "https://youtu.be/A", Settings: settings}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, body := getPath(t, ts, "/api/state")
+	var st stateDTO
+	if err := json.Unmarshal(body, &st); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Queue.Pending) != 1 {
+		t.Fatalf("queue holds %d pending rows, want 1", len(st.Queue.Pending))
+	}
+	if got := st.Queue.Pending[0].Location; got != contractHome(settings.OutputDir) {
+		t.Errorf("queue row location = %q, want %q", got, contractHome(settings.OutputDir))
+	}
+	// The destination is a display string; the client never gets a path it could
+	// send back, which is what the open endpoint's security rests on.
+	if strings.Contains(string(body), `"path"`) {
+		t.Error("the queue payload leaked a path field")
+	}
+}
+
 // TestStateHistoryIsJustTheRecentRows: the full list moved to its own endpoint,
 // so the payload every SSE tick carries no longer holds 25 records.
 func TestStateHistoryIsJustTheRecentRows(t *testing.T) {
