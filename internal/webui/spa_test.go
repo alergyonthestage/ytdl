@@ -300,8 +300,10 @@ func TestSettingsAreGrouped(t *testing.T) {
 		at = i
 	}
 	// The two strip regexes are the rarest thing in the document; they belong
-	// behind a disclosure, not on the main plane.
-	adv := strings.Index(html, "<summary>Avanzate</summary>")
+	// behind a disclosure, not on the main plane. LastIndex, because the Download
+	// group grew its own Avanzate disclosure (G5) and this assertion is about the
+	// one in "Nomi e metadati".
+	adv := strings.LastIndex(html, "<summary>Avanzate</summary>")
 	if adv < 0 {
 		t.Fatal("no Avanzate disclosure")
 	}
@@ -348,6 +350,34 @@ func TestNewSettingsHaveControls(t *testing.T) {
 		if !strings.Contains(js, key) {
 			t.Errorf("%s is not in SETTING_IDS, so it would not be sent", key)
 		}
+	}
+}
+
+// TestOpenFolderOnDoneIsNotALiveDownloadControl: every download started in the
+// GUI is queued, and the setting applies to foreground downloads only — so as a
+// live control in the Download group it could never do anything for the user
+// looking at it (G5, ux-principles.md §4). It stays editable, because the CLI
+// honours it and this form is the only settings editor, but it sits behind the
+// Avanzate disclosure and its label names the channel it belongs to.
+func TestOpenFolderOnDoneIsNotALiveDownloadControl(t *testing.T) {
+	html := assetText(t, "assets/index.html")
+	js := assetText(t, "assets/app.js")
+
+	adv := strings.Index(html, "<summary>Avanzate</summary>")
+	box := strings.Index(html, `id="s_openFolderOnDone"`)
+	if adv < 0 || box < 0 {
+		t.Fatal("the open_folder_on_done control or the disclosure is missing")
+	}
+	if box < adv {
+		t.Error("open_folder_on_done is still a live control on the Download plane")
+	}
+	if !strings.Contains(html, "da terminale") {
+		t.Error("the label does not say which channel the setting applies to")
+	}
+	// And where the platform has no launcher it cannot work on any channel: then
+	// it is disabled with the reason.
+	if !strings.Contains(js, "setOpenFolderAvailability") {
+		t.Error("the control ignores the platform capability")
 	}
 }
 

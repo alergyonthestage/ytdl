@@ -567,10 +567,29 @@ function retentionLabel() {
   return "ultimi " + retentionDays + " giorni";
 }
 
+// The hint's normal text lives in the markup; keep a copy so the unavailable
+// reason can be swapped in and back out.
+const OPEN_FOLDER_HINT = $("openFolderHint").textContent;
+
+// setOpenFolderAvailability applies ux-principles.md §4 to the one setting that
+// depends on a desktop launcher: where ytdl has none, open_folder_on_done can do
+// nothing on ANY channel, so the control is disabled with the reason rather than
+// left live to fail. (Its other limit — never firing for a download started in
+// the GUI, because those are all queued — is stated by the label and by the
+// disclosure it sits in; the CLI still honours it, so the control stays.)
+function setOpenFolderAvailability(canOpen) {
+  const box = $("s_openFolderOnDone");
+  box.disabled = !canOpen;
+  $("openFolderHint").textContent = canOpen
+    ? OPEN_FOLDER_HINT
+    : "Non disponibile: su questo sistema ytdl non sa aprire una cartella.";
+}
+
 function applyState(s) {
   applyQueue(s.queue);
   renderRecent(s.history);
   setDaemon(s.daemonRunning);
+  setOpenFolderAvailability(s.canOpen !== false);
   retentionDays = Number(s.retentionDays) || 0;
   $("historyWindow").textContent = "— " + retentionLabel();
   $("sessionOut").value = s.sessionOutputDir || "";

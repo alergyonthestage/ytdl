@@ -124,9 +124,20 @@
         </div>
         <div class="checks field">
           <label><input type="checkbox" id="s_playlistDefault"> Scarica sempre l'intera playlist</label>
-          <label><input type="checkbox" id="s_openFolderOnDone"> A fine download mostra il file</label>
         </div>
-        <div class="hint">"Mostra il file" vale solo per i download in primo piano.</div>
+        <!-- open_folder_on_done applies to FOREGROUND downloads only, and every
+             download started in the GUI is queued, so it can never fire for
+             anything started here (G5). It stays editable — the CLI honours it
+             and this form is the only settings editor there is — but it is not a
+             live control in the Download group: it is a terminal setting, which
+             is tier 3 "rare but reachable" (ux-principles.md §2). -->
+        <details>
+          <summary>Avanzate</summary>
+          <div class="checks field">
+            <label><input type="checkbox" id="s_openFolderOnDone"> A fine download da terminale mostra il file nella cartella</label>
+          </div>
+          <div class="hint" id="openFolderHint">Vale solo per i download lanciati da terminale con <code>ytdl &lt;link&gt;</code>: quelli avviati da qui vanno sempre in coda, e a fine download arriva una notifica.</div>
+        </details>
       </section>
 
       <section>

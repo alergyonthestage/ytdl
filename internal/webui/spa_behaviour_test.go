@@ -119,6 +119,32 @@ console.log(list.join(","));
 	}
 }
 
+// TestOpenFolderControlFollowsThePlatformCapability: where ytdl has no desktop
+// launcher the setting can do nothing on any channel, so the control is disabled
+// WITH the reason — and the reason goes away again when it can work, rather than
+// staying pinned as a permanent error (G5).
+func TestOpenFolderControlFollowsThePlatformCapability(t *testing.T) {
+	out := runNode(t, harness+`
+const fn = extract(/function setOpenFolderAvailability\(canOpen\) \{[\s\S]*?\n\}/);
+const nodes = { s_openFolderOnDone: { disabled: false }, openFolderHint: { textContent: "" } };
+const $ = (id) => nodes[id];
+const OPEN_FOLDER_HINT = "IL-TESTO-NORMALE";
+
+eval(fn);
+setOpenFolderAvailability(false);
+console.log("off:" + nodes.s_openFolderOnDone.disabled + ":" + nodes.openFolderHint.textContent);
+setOpenFolderAvailability(true);
+console.log("on:" + nodes.s_openFolderOnDone.disabled + ":" + nodes.openFolderHint.textContent);
+`)
+
+	if !strings.Contains(out, "off:true:Non disponibile") {
+		t.Errorf("with no launcher the control is left live, or gives no reason:\n%s", out)
+	}
+	if !strings.Contains(out, "on:false:IL-TESTO-NORMALE") {
+		t.Errorf("the control does not come back when the platform can open a folder:\n%s", out)
+	}
+}
+
 // TestQueueRowsShowWhereTheJobWillLand executes the row builders: both the
 // running and the pending row must state the destination the server sent, and a
 // job without one must not render an empty label (G1).
