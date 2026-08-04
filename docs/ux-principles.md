@@ -63,7 +63,8 @@ invent synonyms.
 | requeue a failed **spool** job | "Riprova" | `ytdl retry` |
 | download the same thing again (from history) | "Riscarica" | `ytdl again` |
 | open the audio file | "Apri" | `ytdl open` |
-| show it in the file manager | "Mostra nel Finder" | `ytdl open --folder` |
+| show the file in the file manager | "Mostra nella cartella" | `ytdl open --folder` |
+| open the folder itself (the file is gone) | "Apri la cartella" | — |
 | the durable record | "Cronologia" | `ytdl history` |
 | the settings document | "Impostazioni" | `ytdl config` |
 | the stored default (config file) | "predefinita" | `ytdl config` |
@@ -76,6 +77,20 @@ snapshot and spool identity; *Riscarica* creates a new job from a history record
 which outlives the spool entry. Each is offered **only where its object is
 shown** — the queue never offers Riscarica, the history never offers Riprova.
 
+> **Riprova has no GUI surface yet.** The GUI queue shows running and pending
+> jobs only, so a job that failed in the spool is never displayed and its verb
+> never appears. Recorded as a deliberate asymmetry in
+> [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md) §4 and closed
+> in Cycle 6, which reworks that view anyway.
+
+**Naming the file manager.** The label names the *folder*, never the platform's
+file manager: "Mostra nel Finder" is false on Linux, and a user who has never
+opened a Terminal does not need to learn a second product name to find their
+music. The two neighbouring actions stay distinguishable — *Mostra nella
+cartella* reveals a file that exists, *Apri la cartella* opens the folder of one
+that does not. "Finder" is still the right word in the macOS install and usage
+guides, which talk about the actual application.
+
 ## 4. Action hierarchy
 
 Never present a row of equal buttons. Each row exposes **one primary action**,
@@ -87,8 +102,8 @@ flowchart TD
   R["a history row"] --> S{"succeeded?"}
   S -->|no| RD["primary: Riscarica<br/>overflow: vedi errore · copia link"]
   S -->|yes| P{"file still on disk?"}
-  P -->|yes| OP["primary: Apri<br/>overflow: mostra nel Finder · riscarica · copia link"]
-  P -->|no| RD2["primary: Riscarica<br/>overflow: copia link · mostra la cartella"]
+  P -->|yes| OP["primary: Apri<br/>overflow: mostra nella cartella · riscarica · copia link"]
+  P -->|no| RD2["primary: Riscarica<br/>overflow: copia link · apri la cartella"]
 ```
 
 An action that cannot work in the current context is shown **disabled with a

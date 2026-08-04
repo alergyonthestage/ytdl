@@ -136,6 +136,40 @@ stateDiagram-v2
 Settles G19, G20; forces G21 (bigger records make the unbounded-file scan real)
 and pairs with G22.
 
+### 3. The reveal label names the folder, not the file manager
+
+*(ruled 2026-08-04)* "Mostra nel Finder" becomes **"Mostra nella cartella"** in
+§3, on every platform. It was false on Linux, and naming a product teaches a
+non-developer a word they do not need in order to find their music. Its
+neighbour — the action offered when the file is gone but its folder is not —
+becomes **"Apri la cartella"**, so two adjacent menu items stay one glance apart
+instead of differing by a preposition.
+
+"Finder" remains correct in `guida-installazione.md` and `guida-uso.md`, which
+describe the actual macOS application, and in code comments about macOS
+behaviour. Only the user-facing action labels change: `internal/webui/assets/app.js`
+(and the assertion in `spa_test.go`), `internal/cli/messages.go`,
+`internal/cli/help.go`.
+
+Settles G9.
+
+### 4. Riprova's GUI surface is deferred, and the asymmetry is recorded
+
+*(ruled 2026-08-04)* §3 lists **Riprova** as a GUI label, but the GUI queue
+renders running and pending jobs only — `queueDTO` carries no failed list — so a
+job that failed in the spool has no row to carry the verb, and the vocabulary
+table has been promising a control that does not exist.
+
+Per §7 the choice is "land it in both channels, or record the asymmetry and its
+reason". It is **recorded**, not landed: the closing session takes only fixes
+that need no new decision, while showing failed spool jobs means deciding what
+that row is (it is neither a queue entry the user still waits on nor a history
+record — the same job also appears in the history, where the offered verb is
+Riscarica, so two rows would show one job with two different verbs). Cycle 6
+reworks that view for the scope model and settles it there.
+
+Settles G11.
+
 ## Consequences
 
 - `ux-principles.md` gains a scope section and two vocabulary rows, and its marks

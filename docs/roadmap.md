@@ -566,12 +566,15 @@ at the merge and the long-deferred release.
   G7 (`audio_quality` accepts yt-dlp's real 0-10 domain, help and docs follow) ·
   G8 (failures carry an actionable hint, derived at render time from the stored
   line — no schema change, retroactive on existing records, and only remedies
-  that exist today) · G10 (the `beforeunload` wording stops implying that closing
+  that exist today) · G9 (the reveal labels name the folder, not the Finder, in
+  both channels) · G10 (the `beforeunload` wording stops implying that closing
   the tab cancels the queue).
-- **Needs the maintainer's word first (two label rulings):** G9 — "Mostra nel
-  Finder" on Linux, which means amending `ux-principles.md` §3 (proposed: "Mostra
-  nella cartella"); G11 — "Riprova" is normative vocabulary with no GUI surface,
-  so either the failed-spool row lands or the asymmetry is recorded per §7.
+- **Rulings taken (2026-08-04, [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md)
+  §3–§4), so nothing here waits on a decision:** G9 is **in** — `ux-principles.md`
+  §3 is already amended, the strings follow in `app.js` (+ the `spa_test.go`
+  assertion), `cli/messages.go` and `cli/help.go`, while "Finder" stays in the
+  macOS guides. G11 is **out** — the missing "Riprova" surface is recorded as an
+  asymmetry per §7 and lands in Cycle 6.
 - **Deliberately out:** everything requiring a decision or a data-model change.
   G3 and G4 ship their *truthfulness* half here; the full scope model (visible
   effective destination, explicit promotion, the same rule for the format
@@ -616,7 +619,10 @@ same controls.
   G15 (named audio-quality steps; hidden or disabled with a reason for lossless
   formats) · G16 (the session override is validated before it is accepted) · G17
   (the GUI confirms a completion in the view the user is on, and offers "Apri" on
-  what just finished) · G18 (filters and search survive a reload).
+  what just finished) · G18 (filters and search survive a reload) · G11 (the
+  failed-spool row, deferred here from the closing session: the design must first
+  settle what that row *is*, since the same job also appears in the history under
+  a different verb).
 - **Analysis must settle:** whether destination presets (Cycle 8) **retire** the
   session scope altogether. If they do, Cycle 6 builds the promotion affordance
   differently and Cycle 8 inherits it — so this is answered before either is
