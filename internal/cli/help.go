@@ -213,7 +213,7 @@ const topicSettings = `IMPOSTAZIONI
 CHIAVI
   output_dir             cartella di destinazione
   format                 mp3|flac|m4a|opus|wav
-  audio_quality          0-9 (0 = massima)
+  audio_quality          0-10 (0 = massima, 10 = minima)
   playlist_default       true|false — scaricare sempre l'intera playlist
   concurrency            quanti download in parallelo (o "unlimited")
   open_folder_on_done    true|false — a fine download mostra il file nella cartella

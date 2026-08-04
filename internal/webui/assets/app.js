@@ -2,6 +2,10 @@
 const $ = (id) => document.getElementById(id);
 const FORMATS = ["mp3", "flac", "m4a", "opus", "wav"];
 const NOTIFY_ON = { both: "sempre", success: "solo successo", failure: "solo errore" };
+// Mirrors config.MaxAudioQuality: yt-dlp's VBR scale is 0 (best) to 10 (worst).
+// The list stopped at 9 while the server accepted 10, so a config file set to 10
+// lost its value the first time the settings form was saved (G7).
+const AUDIO_QUALITIES = Array.from({ length: 11 }, (_, i) => String(i));
 // Mirrors config.DefaultConcurrency: the fallback when the field is left blank.
 const DEFAULT_CONCURRENCY = 3;
 // How many rows the Download view's "ultimi download" shows. The server sends
@@ -667,7 +671,7 @@ function fillSettings(s) {
   $("s_concurrency").value = s.concurrency === 0 ? "" : s.concurrency;
   $("s_concurrency").disabled = s.concurrency === 0;
   fillSelect($("s_format"), FORMATS, s.format);
-  fillSelect($("s_audioQuality"), ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"], s.audioQuality);
+  fillSelect($("s_audioQuality"), AUDIO_QUALITIES, s.audioQuality);
   fillSelect($("s_notifyOn"), Object.keys(NOTIFY_ON), s.notifyOn, NOTIFY_ON);
   for (const k of SETTING_IDS) {
     const e = $("s_" + k);

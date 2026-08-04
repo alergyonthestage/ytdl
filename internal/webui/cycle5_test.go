@@ -819,6 +819,45 @@ func TestSettingsRoundTripsTheNewKeys(t *testing.T) {
 	}
 }
 
+// TestSettingsAcceptsTheWholeAudioQualityScale: 10 is a value yt-dlp documents,
+// and the API's hand-rolled copy of the domain check rejected it (G7).
+func TestSettingsAcceptsTheWholeAudioQualityScale(t *testing.T) {
+	srv, _, cfgPath := newTestServer(t)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dto settingsDTO
+	json.NewDecoder(resp.Body).Decode(&dto)
+	resp.Body.Close()
+
+	dto.AudioQuality = "10"
+	buf, _ := json.Marshal(dto)
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/settings", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	putResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer putResp.Body.Close()
+	if putResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(putResp.Body)
+		t.Fatalf("PUT status = %d: %s", putResp.StatusCode, body)
+	}
+
+	fp, _, err := config.LoadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, _ := config.Resolve(config.Partial{}, config.Partial{}, fp, config.Env{})
+	if reloaded.AudioQuality != "10" {
+		t.Errorf("audio_quality = %q, want \"10\" (it did not survive the round trip)", reloaded.AudioQuality)
+	}
+}
+
 func TestSettingsRejectsNegativeJobTimeout(t *testing.T) {
 	srv, _, _ := newTestServer(t)
 	ts := httptest.NewServer(srv.Handler())

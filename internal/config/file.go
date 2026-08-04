@@ -118,8 +118,8 @@ func assign(p *Partial, key, value string, line int) *Warning {
 		v := value
 		p.Format = &v
 	case "audio_quality":
-		if !validAudioQuality(value) {
-			return &Warning{Line: line, Msg: fmt.Sprintf("invalid audio_quality %q (want 0-9); ignoring", value)}
+		if !ValidAudioQuality(value) {
+			return &Warning{Line: line, Msg: fmt.Sprintf("invalid audio_quality %q (want %s); ignoring", value, AudioQualityList)}
 		}
 		v := value
 		p.AudioQuality = &v

@@ -899,8 +899,10 @@ func validateSettings(s config.Settings) error {
 	if !config.ValidNotifyOn(s.NotifyOn) {
 		return fmt.Errorf("notify_on non valido: %s (ammessi %s)", s.NotifyOn, config.NotifyOnList)
 	}
-	if len(s.AudioQuality) != 1 || s.AudioQuality[0] < '0' || s.AudioQuality[0] > '9' {
-		return fmt.Errorf("audio_quality non valido: %s (0-9)", s.AudioQuality)
+	// The domain lives in config, not here: this check used to be a hand-rolled
+	// copy, and it was the copy that still said 0-9 (G7).
+	if !config.ValidAudioQuality(s.AudioQuality) {
+		return fmt.Errorf("audio_quality non valido: %s (%s)", s.AudioQuality, config.AudioQualityList)
 	}
 	if s.LogRetentionDays < 0 {
 		return fmt.Errorf("log_retention_days non può essere negativo")

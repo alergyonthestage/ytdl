@@ -105,8 +105,8 @@ func validateForSave(s Settings) error {
 	if !ValidFormat(s.Format) {
 		return fmt.Errorf("config: invalid format %q (want %s)", s.Format, FormatList)
 	}
-	if !validAudioQuality(s.AudioQuality) {
-		return fmt.Errorf("config: invalid audio_quality %q (want 0-9)", s.AudioQuality)
+	if !ValidAudioQuality(s.AudioQuality) {
+		return fmt.Errorf("config: invalid audio_quality %q (want %s)", s.AudioQuality, AudioQualityList)
 	}
 	if !ValidNotifyOn(s.NotifyOn) {
 		return fmt.Errorf("config: invalid notify_on %q (want %s)", s.NotifyOn, NotifyOnList)

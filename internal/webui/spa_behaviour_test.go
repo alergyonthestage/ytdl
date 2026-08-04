@@ -2,8 +2,11 @@ package webui
 
 import (
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/alergyonthestage/ytdl/internal/config"
 )
 
 // The other SPA tests grep the JavaScript source. That catches a deleted
@@ -94,6 +97,25 @@ console.log("numeric-string:" + settingsDirty());
 	}
 	if !strings.Contains(out, "numeric-string:false") {
 		t.Errorf("a number round-tripped through a form field reads as a change:\n%s", out)
+	}
+}
+
+// TestAudioQualitySelectOffersTheWholeScale executes the shipped declaration
+// rather than grepping it: the form must offer every value the server accepts.
+// While the list stopped at 9 and the server took 0-10, a config file set to 10
+// lost its value the first time the settings form was saved — the select had no
+// matching option, so it fell back to the first one (G7).
+func TestAudioQualitySelectOffersTheWholeScale(t *testing.T) {
+	out := runNode(t, harness+`
+const list = eval(extract(/const AUDIO_QUALITIES = [^;]+;/).replace(/^const AUDIO_QUALITIES = /, "").replace(/;$/, ""));
+console.log(list.join(","));
+`)
+	var want []string
+	for i := 0; i <= config.MaxAudioQuality; i++ {
+		want = append(want, strconv.Itoa(i))
+	}
+	if got := strings.TrimSpace(out); got != strings.Join(want, ",") {
+		t.Errorf("the quality select offers %q, want %q", got, strings.Join(want, ","))
 	}
 }
 

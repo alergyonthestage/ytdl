@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -57,6 +58,12 @@ type Settings struct {
 const (
 	DefaultFormat       = "mp3"
 	DefaultAudioQuality = "0"
+
+	// MaxAudioQuality is the worst end of yt-dlp's VBR scale: "a value between 0
+	// (best) and 10 (worst)". AudioQualityList spells the whole domain out for
+	// the surfaces that offer it as a choice.
+	MaxAudioQuality  = 10
+	AudioQualityList = "0-10"
 
 	// DefaultLogRetentionDays is the central log store's age cap; 0 keeps forever.
 	DefaultLogRetentionDays = 30
@@ -306,8 +313,8 @@ func validate(s Settings) []Warning {
 	if !ValidFormat(s.Format) {
 		w = append(w, Warning{Msg: fmt.Sprintf("resolved format %q is not one of %s", s.Format, FormatList)})
 	}
-	if !validAudioQuality(s.AudioQuality) {
-		w = append(w, Warning{Msg: fmt.Sprintf("resolved audio_quality %q is not 0-9", s.AudioQuality)})
+	if !ValidAudioQuality(s.AudioQuality) {
+		w = append(w, Warning{Msg: fmt.Sprintf("resolved audio_quality %q is not %s", s.AudioQuality, AudioQualityList)})
 	}
 	if !ValidNotifyOn(s.NotifyOn) {
 		w = append(w, Warning{Msg: fmt.Sprintf("resolved notify_on %q is not one of %s", s.NotifyOn, NotifyOnList)})
@@ -332,6 +339,15 @@ func validate(s Settings) []Warning {
 	return w
 }
 
-func validAudioQuality(q string) bool {
-	return len(q) == 1 && q[0] >= '0' && q[0] <= '9'
+// ValidAudioQuality reports whether q is one of yt-dlp's VBR steps: an integer
+// from 0 (best) to MaxAudioQuality (worst). The old check tested a SINGLE
+// character, which silently put 10 — a real yt-dlp value — outside the domain
+// (G7). yt-dlp also accepts a literal bitrate ("128K"); ytdl deliberately does
+// not expose that, so the domain is the scale and nothing else.
+//
+// The canonical spelling is the only accepted one: strconv would take "+5",
+// "-0" and "05", and the value is written back to the config file verbatim.
+func ValidAudioQuality(q string) bool {
+	n, err := strconv.Atoi(q)
+	return err == nil && n >= 0 && n <= MaxAudioQuality && q == strconv.Itoa(n)
 }
