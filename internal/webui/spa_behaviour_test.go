@@ -119,6 +119,42 @@ console.log(list.join(","));
 	}
 }
 
+// TestOpeningTheLogPanelBringsItIntoView: the panel sits above the list, so
+// "Vedi errore" on a row far down un-hid it off-screen — a control that appears
+// to do nothing (G6). It must be scrolled to, and focused, before the fetch, so
+// the panel is on screen WHILE it loads.
+func TestOpeningTheLogPanelBringsItIntoView(t *testing.T) {
+	out := runNode(t, harness+`
+const revealFn = extract(/function revealPanel\(panel\) \{[\s\S]*?\n\}/);
+const showFn = extract(/async function showLog\(h\) \{[\s\S]*?\n\}/);
+
+const events = [];
+const panel = {
+  hidden: true,
+  scrollIntoView: (o) => events.push("scroll:" + o.block),
+  focus: () => events.push("focus"),
+};
+const nodes = { logPanel: panel, logTitle: {}, logBody: {} };
+const $ = (id) => nodes[id];
+global.window = { matchMedia: () => ({ matches: false }) };
+global.fetch = async () => { events.push("fetch"); return { ok: true, text: async () => "log" }; };
+
+eval(revealFn);
+eval(showFn);
+showLog({ id: "abc", title: "t" }).then(() => {
+  console.log("hidden:" + panel.hidden);
+  console.log("events:" + events.join(","));
+});
+`)
+
+	if !strings.Contains(out, "hidden:false") {
+		t.Errorf("the panel was not shown:\n%s", out)
+	}
+	if !strings.Contains(out, "events:scroll:start,focus,fetch") {
+		t.Errorf("the panel is not scrolled to and focused before the fetch:\n%s", out)
+	}
+}
+
 // TestOlderHistoryResponseCannotOverwriteANewerOne is the regression test for the
 // review's request-ordering finding: type a search, click a filter within the
 // 200 ms debounce, and the older (unfiltered) response landed last. The chip

@@ -77,7 +77,10 @@
       </div>
       <div class="msg" id="historyMsg"></div>
 
-      <div class="panel" id="logPanel" hidden>
+      <!-- tabindex="-1" makes the panel focusable by script only: opening it
+           moves focus here (see revealPanel), so it is never revealed silently
+           somewhere off-screen. -->
+      <div class="panel" id="logPanel" tabindex="-1" hidden>
         <div class="panel-head">
           <strong id="logTitle">Dettaglio errore</strong>
           <button type="button" class="secondary small" id="logClose">Chiudi</button>

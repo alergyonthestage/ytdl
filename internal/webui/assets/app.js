@@ -355,6 +355,16 @@ async function copyLink(ev, h) {
   }
 }
 
+// revealPanel brings a panel that has just been shown into view. The log panel
+// sits ABOVE the list, so opening it from a row far down revealed it
+// off-screen and "Vedi errore" appeared to do nothing (G6). Focus follows, or
+// the same thing happens to a keyboard user with the scrolling fixed.
+function revealPanel(panel) {
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  panel.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  panel.focus({ preventScroll: true });
+}
+
 // showLog fetches the per-job .log and shows it in the panel. The response is
 // plain text served with nosniff, and it lands in a <pre> via textContent, so a
 // log full of markup is displayed, never interpreted.
@@ -363,6 +373,8 @@ async function showLog(h) {
   $("logTitle").textContent = "Dettaglio: " + (h.title || h.url);
   $("logBody").textContent = "Carico…";
   panel.hidden = false;
+  // Before the fetch: the panel must be on screen while it loads, not after.
+  revealPanel(panel);
   try {
     const r = await fetch("/api/history/log?id=" + encodeURIComponent(h.id));
     const text = await r.text();
