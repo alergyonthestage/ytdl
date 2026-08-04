@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alergyonthestage/ytdl/internal/config"
 	"github.com/alergyonthestage/ytdl/internal/queue"
 	"github.com/alergyonthestage/ytdl/internal/term"
 )
@@ -53,11 +54,17 @@ func TestRenderQueueWatchClipsToWidth(t *testing.T) {
 		strings.Repeat("😀", 60),        // emoji (2 columns)
 	}
 	const width = 40
+	// A long destination is one of the lines now, so it is clipped like the rest
+	// (G1): an unclipped one would desync the redraw exactly as a long title did.
+	longDir := "/home/tester/Music/" + strings.Repeat("sottocartella/", 12)
 	for _, title := range titles {
 		snap := queue.Snapshot{Running: []queue.Entry{
-			{ID: "r", State: queue.Running, Job: queue.Job{URL: longURL, Title: title}},
+			{ID: "r", State: queue.Running, Job: queue.Job{
+				URL: longURL, Title: title,
+				Settings: config.Settings{OutputDir: longDir},
+			}},
 		}}
-		got := RenderQueue(snap, QueueView{Width: width})
+		got := RenderQueue(snap, QueueView{Width: width, Home: "/home/tester"})
 		for _, line := range strings.Split(strings.TrimRight(got, "\n"), "\n") {
 			if w := term.DisplayWidth(line); w > width {
 				t.Errorf("line exceeds %d display columns (would wrap): %q (%d cols)", width, line, w)

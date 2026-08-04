@@ -429,6 +429,42 @@ console.log("running-without:" + shape(runningRow({ id: "4", url: "u", format: "
 	}
 }
 
+// TestAFailedHistoryRowRendersReasonThenHint executes the row builder instead of
+// grepping for "h.hint": the GUI half of G8 was the one fix whose only test was a
+// string search, which cannot tell a rendered hint from a mentioned one. The
+// order matters as much as the presence — what went wrong, then what to do.
+func TestAFailedHistoryRowRendersReasonThenHint(t *testing.T) {
+	out := runNode(t, harness+`
+const rowFn = extract(/function historyRow\(h, withOverflow\) \{[\s\S]*?\n\}/);
+
+const el = (tag, cls, text) => ({ tag, cls, textContent: text == null ? "" : text });
+const itemRow = (title, meta) => ({ title, meta });
+const whenText = () => "04/08 12:00";
+const primaryAction = () => ({ tag: "button" });
+const overflowMenu = () => ({ tag: "menu" });
+
+eval(rowFn);
+
+const shape = (row) => row.meta.map((m) => m.cls + "=" + m.textContent).join("|");
+console.log("failed:" + shape(historyRow(
+  { success: false, url: "u", format: "mp3", error: "ERROR: boom", hint: "Fai questo." }, false)));
+console.log("no-remedy:" + shape(historyRow(
+  { success: false, url: "u", format: "mp3", error: "ERROR: boom" }, false)));
+console.log("ok:" + shape(historyRow(
+  { success: true, url: "u", format: "mp3", location: "~/Music", hint: "Fai questo." }, false)));
+`)
+
+	if !strings.Contains(out, "failed:meta=04/08 12:00 · .mp3|reason=ERROR: boom|hint=Fai questo.") {
+		t.Errorf("a failed row does not render the reason and then the next step:\n%s", out)
+	}
+	if !strings.Contains(out, "no-remedy:meta=04/08 12:00 · .mp3|reason=ERROR: boom\n") {
+		t.Errorf("a failure with no remedy rendered an empty hint line:\n%s", out)
+	}
+	if strings.Contains(out, "ok:") && strings.Contains(out, "ok:meta=04/08 12:00 · .mp3|hint") {
+		t.Errorf("a successful row rendered a failure hint:\n%s", out)
+	}
+}
+
 // TestAnOlderLogResponseCannotOverwriteANewerOne: open one failure's log, then
 // another before the first has arrived, and the slow first response used to
 // land last — putting download A's log under download B's title, and since G8

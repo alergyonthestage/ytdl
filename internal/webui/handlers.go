@@ -357,10 +357,14 @@ func (s *Server) toHistoryDTO(e logstore.Entry, canOpen bool) historyDTO {
 		ID: e.ID(), Time: e.Time.Format(time.RFC3339), URL: e.URL, Title: e.Title,
 		Mode: e.Mode, Format: e.Format, RC: e.RC, Success: e.Success,
 		Count: e.Count, Playlist: e.Playlist, Error: e.Error,
-		// Derived, never stored: a record written before the catalogue existed
-		// gets its hint too (G8).
-		Hint:     jobs.FailureHint(e.Error),
 		Location: s.displayLocation(e),
+	}
+	// Derived, never stored: a record written before the catalogue existed gets
+	// its hint too (G8). Scoped to failures on THIS side as well as in the
+	// renderer, so the two channels keep agreeing once ADR-0014's partial
+	// outcome makes a successful record able to carry a reason.
+	if !e.Success {
+		d.Hint = jobs.FailureHint(e.Error)
 	}
 	// Only advertise what this platform can actually do, so a capability flag
 	// never promises a button that would 501.
