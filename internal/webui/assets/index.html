@@ -140,7 +140,11 @@
           <div class="checks field">
             <label><input type="checkbox" id="s_openFolderOnDone"> A fine download da terminale mostra il file nella cartella</label>
           </div>
+          <!-- Two elements rather than one whose text is rewritten: the reason
+               is swapped by toggling `hidden`, so the markup here (the <code>
+               sample command) survives. -->
           <div class="hint" id="openFolderHint">Vale solo per i download lanciati da terminale con <code>ytdl &lt;link&gt;</code>: quelli avviati da qui vanno sempre in coda, e a fine download arriva una notifica.</div>
+          <div class="hint" id="openFolderUnavailable" hidden>Non disponibile: su questo sistema ytdl non sa aprire una cartella.</div>
         </details>
       </section>
 

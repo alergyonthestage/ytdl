@@ -147,7 +147,6 @@ function destinationLine(job) {
 }
 
 function runningRow(job) {
-  const p = progress.get(job.id);
   const meta = [];
   const bar = el("div", "bar");
   const fill = el("i");
@@ -155,7 +154,8 @@ function runningRow(job) {
   meta.push(bar);
   const metaLine = el("div", "meta", "");
   meta.push(metaLine);
-  meta.push(destinationLine(job));
+  const dest = destinationLine(job);
+  if (dest) meta.push(dest);
 
   const titleEl = document.createTextNode("");
   const row = itemRow("", meta, [cancelButton(job)]);
@@ -186,7 +186,10 @@ function pendingRow(job) {
   const meta = [];
   if (job.title) meta.push(el("div", "meta", job.url));
   meta.push(el("div", "meta", detail));
-  meta.push(destinationLine(job));
+  // Pushed only when there is one: a row must not depend on itemRow filtering
+  // nulls out for it.
+  const dest = destinationLine(job);
+  if (dest) meta.push(dest);
   return itemRow(job.title || job.url, meta, [cancelButton(job)]);
 }
 
@@ -581,22 +584,19 @@ function retentionLabel() {
   return "ultimi " + retentionDays + " giorni";
 }
 
-// The hint's normal text lives in the markup; keep a copy so the unavailable
-// reason can be swapped in and back out.
-const OPEN_FOLDER_HINT = $("openFolderHint").textContent;
-
 // setOpenFolderAvailability applies ux-principles.md §4 to the one setting that
 // depends on a desktop launcher: where ytdl has none, open_folder_on_done can do
 // nothing on ANY channel, so the control is disabled with the reason rather than
 // left live to fail. (Its other limit — never firing for a download started in
 // the GUI, because those are all queued — is stated by the label and by the
 // disclosure it sits in; the CLI still honours it, so the control stays.)
+// The two hints are swapped by `hidden`, never by rewriting text: writing
+// textContent over the normal hint flattened the <code>ytdl &lt;link&gt;</code>
+// sample into prose on the first state frame, which is every time.
 function setOpenFolderAvailability(canOpen) {
-  const box = $("s_openFolderOnDone");
-  box.disabled = !canOpen;
-  $("openFolderHint").textContent = canOpen
-    ? OPEN_FOLDER_HINT
-    : "Non disponibile: su questo sistema ytdl non sa aprire una cartella.";
+  $("s_openFolderOnDone").disabled = !canOpen;
+  $("openFolderHint").hidden = !canOpen;
+  $("openFolderUnavailable").hidden = canOpen;
 }
 
 // sessionTrusted says whether this state frame may speak for the session

@@ -354,21 +354,27 @@ global.fetch = () => new Promise((res) => {
 func TestOpenFolderControlFollowsThePlatformCapability(t *testing.T) {
 	out := runNode(t, harness+`
 const fn = extract(/function setOpenFolderAvailability\(canOpen\) \{[\s\S]*?\n\}/);
-const nodes = { s_openFolderOnDone: { disabled: false }, openFolderHint: { textContent: "" } };
+const nodes = {
+  s_openFolderOnDone: { disabled: false },
+  openFolderHint: { hidden: false },
+  openFolderUnavailable: { hidden: true },
+};
 const $ = (id) => nodes[id];
-const OPEN_FOLDER_HINT = "IL-TESTO-NORMALE";
+const state = () => nodes.s_openFolderOnDone.disabled +
+  ":normale=" + !nodes.openFolderHint.hidden +
+  ":motivo=" + !nodes.openFolderUnavailable.hidden;
 
 eval(fn);
 setOpenFolderAvailability(false);
-console.log("off:" + nodes.s_openFolderOnDone.disabled + ":" + nodes.openFolderHint.textContent);
+console.log("off:" + state());
 setOpenFolderAvailability(true);
-console.log("on:" + nodes.s_openFolderOnDone.disabled + ":" + nodes.openFolderHint.textContent);
+console.log("on:" + state());
 `)
 
-	if !strings.Contains(out, "off:true:Non disponibile") {
+	if !strings.Contains(out, "off:true:normale=false:motivo=true") {
 		t.Errorf("with no launcher the control is left live, or gives no reason:\n%s", out)
 	}
-	if !strings.Contains(out, "on:false:IL-TESTO-NORMALE") {
+	if !strings.Contains(out, "on:false:normale=true:motivo=false") {
 		t.Errorf("the control does not come back when the platform can open a folder:\n%s", out)
 	}
 }
@@ -380,26 +386,46 @@ func TestQueueRowsShowWhereTheJobWillLand(t *testing.T) {
 	out := runNode(t, harness+`
 const destFn = extract(/function destinationLine\(job\) \{[\s\S]*?\n\}/);
 const pendFn = extract(/function pendingRow\(job\) \{[\s\S]*?\n\}/);
+const runFn = extract(/function runningRow\(job\) \{[\s\S]*?\n\}/);
+const paintFn = extract(/function paintProgress\(id\) \{[\s\S]*?\n\}/);
+const lineFn = extract(/function progressLine\(p\) \{[\s\S]*?\n\}/);
 
-const texts = [];
-const el = (tag, cls, text) => { const n = { tag, cls, text, kids: [] }; if (text != null) texts.push(text); return n; };
-const itemRow = (title, metaNodes) => ({ title, meta: metaNodes.filter(Boolean) });
+// itemRow does NOT filter here: a row that pushes a null would show up as an
+// empty label, which is exactly what the assertions below must be able to see.
+// textContent, not a private field: paintProgress writes through it too, so the
+// running row's live line is observed exactly as the browser would see it.
+const el = (tag, cls, text) => ({ tag, cls, textContent: text == null ? "" : text, kids: [], style: {}, appendChild(n) { this.kids.push(n); } });
+const itemRow = (title, metaNodes, actions) => ({ title, meta: metaNodes, querySelector: () => ({ textContent: "", appendChild() {} }) });
 const cancelButton = () => ({ tag: "button" });
+const progress = new Map();
+const liveRows = new Map();
+const document = { createTextNode: (t) => ({ textContent: t }) };
 
 eval(destFn);
+eval(lineFn);
+eval(paintFn);
 eval(pendFn);
+eval(runFn);
 
-const withDir = pendingRow({ id: "1", url: "u", format: "mp3", location: "~/Music/ytdl" });
-const without = pendingRow({ id: "2", url: "u", format: "mp3" });
-console.log("with:" + withDir.meta.map((m) => m.text).join("|"));
-console.log("without:" + without.meta.map((m) => m.text).join("|"));
+const shape = (row) => row.meta.map((m) => (m === null ? "NULL" : m.textContent)).join("|");
+console.log("pending-with:" + shape(pendingRow({ id: "1", url: "u", format: "mp3", location: "~/Music/ytdl" })));
+console.log("pending-without:" + shape(pendingRow({ id: "2", url: "u", format: "mp3" })));
+console.log("running-with:" + shape(runningRow({ id: "3", url: "u", format: "mp3", location: "/srv/musica" })));
+console.log("running-without:" + shape(runningRow({ id: "4", url: "u", format: "mp3" })));
 `)
 
-	if !strings.Contains(out, "with:.mp3|cartella: ~/Music/ytdl") {
-		t.Errorf("a queued row does not say where the file will land:\n%s", out)
+	for _, want := range []string{
+		"pending-with:.mp3|cartella: ~/Music/ytdl",
+		"running-with:|avvio… · .mp3|cartella: /srv/musica",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("a queued row does not say where the file will land (want %q):\n%s", want, out)
+		}
 	}
-	if !strings.Contains(out, "without:.mp3\n") {
-		t.Errorf("a job with no known destination rendered an empty label:\n%s", out)
+	// A job with no known destination renders no label at all — not an empty one,
+	// and not a null the row builder leaves for someone else to filter.
+	if !strings.Contains(out, "pending-without:.mp3\n") || !strings.Contains(out, "running-without:|avvio… · .mp3\n") {
+		t.Errorf("a job with no known destination rendered an empty or null label:\n%s", out)
 	}
 }
 
