@@ -381,6 +381,13 @@ function revealPanel(panel) {
   panel.focus({ preventScroll: true });
 }
 
+// logSeq orders concurrent log loads, exactly as historySeq orders history
+// loads. Without it an older response lands last and the panel shows one
+// download's log under another download's title — and therefore, since G8, next
+// to the wrong hint. `log_dir` is configurable and may sit on a slow or network
+// volume, so "the loopback is fast" is not the guarantee it looks like.
+let logSeq = 0;
+
 // showLog fetches the per-job .log and shows it in the panel. The response is
 // plain text served with nosniff, and it lands in a <pre> via textContent, so a
 // log full of markup is displayed, never interpreted.
@@ -391,12 +398,15 @@ async function showLog(h) {
   panel.hidden = false;
   // Before the fetch: the panel must be on screen while it loads, not after.
   revealPanel(panel);
+  const seq = ++logSeq;
   try {
     const r = await fetch("/api/history/log?id=" + encodeURIComponent(h.id));
     const text = await r.text();
+    if (seq !== logSeq) return; // a newer log already won the panel
     if (!r.ok) throw new Error(text || "errore " + r.status);
     $("logBody").textContent = text;
   } catch (err) {
+    if (seq !== logSeq) return;
     $("logBody").textContent = "Log non disponibile: " + err.message;
   }
 }

@@ -403,6 +403,48 @@ console.log("without:" + without.meta.map((m) => m.text).join("|"));
 	}
 }
 
+// TestAnOlderLogResponseCannotOverwriteANewerOne: open one failure's log, then
+// another before the first has arrived, and the slow first response used to
+// land last — putting download A's log under download B's title, and since G8
+// next to B's hint. Same race, and same guard, as loadHistory.
+func TestAnOlderLogResponseCannotOverwriteANewerOne(t *testing.T) {
+	out := runNode(t, harness+`
+const revealFn = extract(/function revealPanel\(panel\) \{[\s\S]*?\n\}/);
+const showFn = extract(/async function showLog\(h\) \{[\s\S]*?\n\}/);
+// Declared here rather than eval'd: eval("let x") creates x in its OWN scope,
+// where the eval'd function cannot see it.
+let logSeq = 0;
+
+const panel = { hidden: true, scrollIntoView: () => {}, focus: () => {} };
+const nodes = { logPanel: panel, logTitle: { textContent: "" }, logBody: { textContent: "" } };
+const $ = (id) => nodes[id];
+global.window = { matchMedia: () => ({ matches: false }) };
+// A's log is big and slow; B's is small and fast.
+const bodies = { A: { delay: 40, text: "LOG-DI-A" }, B: { delay: 5, text: "LOG-DI-B" } };
+global.fetch = (url) => new Promise((res) => {
+  const b = bodies[url.endsWith("A") ? "A" : "B"];
+  setTimeout(() => res({ ok: true, text: async () => b.text }), b.delay);
+});
+
+eval(revealFn);
+eval(showFn);
+
+(async () => {
+  const first = showLog({ id: "A", title: "Titolo A" });
+  const second = showLog({ id: "B", title: "Titolo B" });
+  await Promise.all([first, second]);
+  console.log("title:" + nodes.logTitle.textContent);
+  console.log("body:" + nodes.logBody.textContent);
+})();
+`)
+	if !strings.Contains(out, "title:Dettaglio: Titolo B") {
+		t.Fatalf("the panel does not name the log the user asked for last:\n%s", out)
+	}
+	if !strings.Contains(out, "body:LOG-DI-B") {
+		t.Errorf("an older log response overwrote a newer one — the panel shows one download's log under another's title:\n%s", out)
+	}
+}
+
 // TestOpeningTheLogPanelBringsItIntoView: the panel sits above the list, so
 // "Vedi errore" on a row far down un-hid it off-screen — a control that appears
 // to do nothing (G6). It must be scrolled to, and focused, before the fetch, so
@@ -420,6 +462,7 @@ const panel = {
 };
 const nodes = { logPanel: panel, logTitle: {}, logBody: {} };
 const $ = (id) => nodes[id];
+let logSeq = 0;
 global.window = { matchMedia: () => ({ matches: false }) };
 global.fetch = async () => { events.push("fetch"); return { ok: true, text: async () => "log" }; };
 
