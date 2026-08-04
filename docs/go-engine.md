@@ -92,8 +92,20 @@ go test ./internal/core -update   # regenerate goldens from the Bash ytdl
 bash tests/test-installer.sh      # installer logic (pure bash, runs in CI too)
 ```
 
-Requires a **Go 1.22+ toolchain** (not always present in a fresh dev container —
-provision it if `go version` fails; stdlib-only, no modules to download).
+Requires a **Go 1.22+ toolchain** (`go.mod`) and nothing else — the engine is
+stdlib-only, so there are no modules to fetch and a cold, offline machine still
+builds and tests.
+
+**In the cco dev container** the toolchain is baked into a per-project image
+(`.cco/Dockerfile`, selected by `docker.image` in `.cco/project.yml`): Go under
+`/usr/local/go`, plus `yt-dlp` fetched into `~/.local/bin` at every session start
+by `.cco/setup.sh` — deliberately not baked, since it is the dependency that
+breaks when YouTube changes. Measured 2026-08-04 on Go 1.26.5 / yt-dlp 2026.07.04:
+`go vet`, `gofmt` and the **whole suite under `-race` green in ~12 s from a cold
+cache**. **ffmpeg is deliberately absent** (commented out in the Dockerfile), so
+real conversions and end-to-end downloads are still verified on macOS, not here.
+If `go version` fails, the image was not rebuilt after a `cco build` of the base —
+the build command is in the header of `.cco/Dockerfile`.
 
 Release (`.github/workflows/release.yml`, on a `v*` tag): cross-compiles from Linux,
 `CGO_ENABLED=0 GOOS=darwin GOARCH={arm64,amd64}`, `-trimpath`,

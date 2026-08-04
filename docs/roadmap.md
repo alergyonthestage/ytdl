@@ -582,9 +582,16 @@ at the merge and the long-deferred release.
 - **Done when:** no GUI surface asserts something untrue; suite green under
   `-race`; goldens byte-unchanged; branch merged `--no-ff` into `main`; **the
   release since v2.0.0 is tagged and verified on hardware**.
+- **Baseline, measured 2026-08-04** (the session that opens this work starts from
+  it): `go vet` clean, `gofmt` clean, **whole suite green under `-race` in ~12 s**
+  from a cold cache, `git diff main -- internal/core/ internal/daemon/` empty. The
+  toolchain is now baked into the project container image, so a session no longer
+  spends its opening minutes provisioning Go (see
+  [go-engine.md](go-engine.md#build-test-release)).
 - **Known, not blocking:** `TestRunQueuedCancelKillsProcessGroup` flaked once
   under container load on a cold-cache `-race` run (it waits `killGrace+2s` for a
-  process-group signal). Pre-existing timing fragility → Phase-5 hardening cycle.
+  process-group signal); it passed in the 2026-08-04 baseline. Pre-existing timing
+  fragility → Phase-5 hardening cycle.
 
 ### Post-gate-C cycles — `R → M → F → S`
 

@@ -20,7 +20,7 @@ golden parity reference.
 | [architecture.md](architecture.md) | As-built design of the original Bash script (now the golden reference): execution modes, metadata pipeline, dependencies |
 | [ux-principles.md](ux-principles.md) | **Normative UX reference for both channels** (Cycle 5): the task model, the information hierarchy, the shared GUI/CLI vocabulary, action ranking, message conventions |
 | [cli-reference.md](cli-reference.md) | **CLI surface reference** (Cycle 2C): design principles, command→action map, output conventions, spool-vs-log-store state model, and how to extend the CLI |
-| [improvements.md](improvements.md) | Findings from the initial analysis, plus the requested evolutions |
+| [improvements.md](improvements.md) | Two findings registers: the initial analysis (`C`/`U`/`M`/`E`) and the **Cycle 5 gate-C findings** (`G1`–`G26`, classified `R`/`M`/`F`/`S`, mapped onto cycles) |
 | [distribution.md](distribution.md) | Constraints and design for shipping to non-developer macOS users |
 | [roadmap.md](roadmap.md) | Operational plan, phased, with status |
 | [decisions/](decisions/) | Architecture Decision Records |
@@ -39,6 +39,7 @@ golden parity reference.
 | Document | What it covers |
 |---|---|
 | [design-cycle5-ux.md](design-cycle5-ux.md) | **Approved design** (Gate B, 2026-07-27): user task model, GUI information architecture, extended history record, new API routes and their security model, CLI help restructuring, package seams, test plan, implementation order |
+| [improvements.md § Gate-C findings](improvements.md#gate-c) | What the maintainer's hands-on verification returned (2026-08-03), and the cycles that answer it |
 
 ## Decisions
 
@@ -57,6 +58,7 @@ golden parity reference.
 | [0011](decisions/0011-cycle2b-plus-cancel-retry-hardening.md) | Cycle 2B-plus: cancel/retry, job timeout, no-residue downloads | accepted |
 | [0012](decisions/0012-cycle4-cli-ux-title-disambiguation.md) | Cycle 4: command/URL disambiguation and job titles in queue views | accepted |
 | [0013](decisions/0013-cycle5-unified-ux.md) | Cycle 5: one task model for GUI and CLI, actionable history, safe open primitive | accepted |
+| [0014](decisions/0014-ux-scope-model-and-partial-outcome.md) | Scope of a per-download choice; partial outcome as a first-class state | accepted |
 
 ## Reading order
 
