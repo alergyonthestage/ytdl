@@ -111,7 +111,11 @@ repos:
 
 # ── Docker options ───────────────────────────────────────────────────
 docker:
-  # image: claude-orchestrator:latest  # Custom Docker image for this project
+  # Custom image for this project: the cco base plus the Go toolchain, so a
+  # session opens ready to build and test. Built from .cco/Dockerfile — see the
+  # build command in that file's header, and rebuild it after every `cco build`
+  # of the base image.
+  image: claude-orchestrator-ytdl:latest
   mount_socket: false       # Set true to enable Docker-from-Docker (socket mount)
   ports:
     - "3019:3000"
