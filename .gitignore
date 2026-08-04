@@ -3,3 +3,7 @@
 
 # compiled binary (built locally; releases ship it as a CI artifact)
 /ytdl
+
+# Scratchpad
+tmp
+tmp/
