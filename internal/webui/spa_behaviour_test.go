@@ -119,6 +119,63 @@ console.log(list.join(","));
 	}
 }
 
+// submitHarness evaluates the REAL download-form handler with stand-ins for the
+// DOM and the API, so the reset rules are tested on the code that ships rather
+// than on a description of it.
+const submitHarness = harness + `
+const nodes = {
+  url: { value: "", focus: () => {} },
+  outDir: { value: "" },
+  outDirBox: { open: true },
+  format: { value: "mp3" },
+  playlist: { checked: false },
+  go: { disabled: false },
+};
+const $ = (id) => nodes[id];
+const setMsg = () => {};
+const applyQueue = () => {};
+let savedSettings = null;
+
+eval(extract(/function resetPerDownloadControls\(\) \{[\s\S]*?\n\}/));
+// Anchored on the form's own id: the settings form's handler opens with the
+// same two lines, and an unanchored match would silently test that one.
+const handlerSrc = extract(/\$\("dl"\)\.addEventListener\("submit", async \(ev\) => \{[\s\S]*?\n\}\);/)
+  .replace(/^\$\("dl"\)\.addEventListener\("submit", /, "").replace(/\);$/, "");
+const handler = eval("(" + handlerSrc + ")");
+const state = () => "url=" + nodes.url.value + " dir=" + nodes.outDir.value +
+  " open=" + nodes.outDirBox.open + " playlist=" + nodes.playlist.checked;
+`
+
+// TestASuccessfulSubmitClearsThePerDownloadFolder: the field promises "vale solo
+// per questo download" and used to keep its value, with the disclosure still
+// open, so the NEXT download silently went to the same override (G3,
+// ux-principles.md §8.1).
+func TestASuccessfulSubmitClearsThePerDownloadFolder(t *testing.T) {
+	out := runNode(t, submitHarness+`
+global.api = async () => ({ queue: null });
+nodes.url.value = "https://youtu.be/A";
+nodes.outDir.value = "/tmp/una-tantum";
+handler({ preventDefault: () => {} }).then(() => console.log(state()));
+`)
+	if !strings.Contains(out, `url= dir= open=false`) {
+		t.Errorf("a one-shot folder survived its own download:\n%s", out)
+	}
+}
+
+// A FAILED submit keeps everything: the user has to be able to fix the link and
+// press again without retyping the folder they had chosen.
+func TestAFailedSubmitKeepsWhatTheUserTyped(t *testing.T) {
+	out := runNode(t, submitHarness+`
+global.api = async () => { throw new Error("boom"); };
+nodes.url.value = "https://youtu.be/A";
+nodes.outDir.value = "/tmp/una-tantum";
+handler({ preventDefault: () => {} }).then(() => console.log(state()));
+`)
+	if !strings.Contains(out, `url=https://youtu.be/A dir=/tmp/una-tantum`) {
+		t.Errorf("a failed submit threw away what the user typed:\n%s", out)
+	}
+}
+
 // TestOpenFolderControlFollowsThePlatformCapability: where ytdl has no desktop
 // launcher the setting can do nothing on any channel, so the control is disabled
 // WITH the reason — and the reason goes away again when it can work, rather than

@@ -655,6 +655,17 @@ function scheduleReconnect() {
 
 // ---- new download --------------------------------------------------------
 
+// resetPerDownloadControls returns the one-shot controls to their resolved
+// default after a SUCCESSFUL submit (ux-principles.md §8.1). The folder field
+// promises "vale solo per questo download" and used to stay set, with its
+// disclosure still open, so the next download silently went to the same
+// override: the label said one-shot and the surface delivered sticky (G3).
+function resetPerDownloadControls() {
+  $("url").value = "";
+  $("outDir").value = "";
+  $("outDirBox").open = false;
+}
+
 $("dl").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const body = {
@@ -669,7 +680,7 @@ $("dl").addEventListener("submit", async (ev) => {
   try {
     const data = await api("/api/downloads", body);
     setMsg("msg", "ok", "Accodato.");
-    $("url").value = "";
+    resetPerDownloadControls();
     $("url").focus();
     if (data.queue) applyQueue(data.queue);
   } catch (err) {
