@@ -197,10 +197,28 @@ func TestOverflowMenuHoldsTheSecondaryActions(t *testing.T) {
 // Linux, and it teaches a non-developer a product name they do not need in
 // order to find their music.
 func TestRevealLabelNamesTheFolderNotTheFileManager(t *testing.T) {
-	js := assetText(t, "assets/app.js")
+	// Comments are stripped first: ADR-0014 §3 keeps "Finder" correct "in code
+	// comments about macOS behaviour", so a test that banned the word outright
+	// would be stricter than the rule it pins.
+	js := stripLineComments(assetText(t, "assets/app.js"))
 	if strings.Contains(js, "Finder") {
 		t.Error("a user-facing label still names the Finder; ADR-0014 §3 names the folder instead")
 	}
+}
+
+// stripLineComments removes // comments, keeping the code. It is deliberately
+// simple — app.js has no string literal containing "//" other than in URLs,
+// which carry no user-facing labels.
+func stripLineComments(js string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(js, "\n") {
+		if i := strings.Index(line, "//"); i >= 0 && !strings.Contains(line[:i], "\"") {
+			line = line[:i]
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // TestOverflowMenuIsDismissibleAndReachable: a menu that only closes by

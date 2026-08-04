@@ -129,7 +129,11 @@ func downloadRows(v ConfigView) []configRow {
 		{"qualità audio", s.AudioQuality, sourceOf(v.File.AudioQuality != nil)},
 		{"playlist intera", yesNo(s.PlaylistDefault), sourceOf(v.File.PlaylistDefault != nil)},
 		{"download paralleli", concurrencyText(s.Concurrency), sourceOf(v.File.Concurrency != nil)},
-		{"apri al termine", yesNo(s.OpenFolderOnDone), sourceOf(v.File.OpenFolderOnDone != nil)},
+		// "Apri" is the verb for opening the audio file (ux-principles.md §3);
+		// this key reveals it in its folder, which §3 calls "mostra nella
+		// cartella". `ytdl config` was the one surface still using the other
+		// concept's word for it (G9).
+		{"mostra nella cartella", yesNo(s.OpenFolderOnDone), sourceOf(v.File.OpenFolderOnDone != nil)},
 	}
 }
 

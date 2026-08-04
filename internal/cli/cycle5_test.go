@@ -344,7 +344,7 @@ func TestRenderConfigCoversEverySettingsGroup(t *testing.T) {
 			t.Errorf("group %q missing:\n%s", group, got)
 		}
 	}
-	for _, key := range []string{"cartella", "formato", "download paralleli", "apri al termine", "timeout per job", "conservazione"} {
+	for _, key := range []string{"cartella", "formato", "download paralleli", "mostra nella cartella", "timeout per job", "conservazione"} {
 		if !strings.Contains(got, key) {
 			t.Errorf("setting %q missing:\n%s", key, got)
 		}

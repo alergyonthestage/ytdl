@@ -694,6 +694,9 @@ function scheduleReconnect() {
 // touched again (G4). Left ticked, the next link that carries "&list=" turns one
 // track into the whole playlist — which is why it goes back to the DEFAULT here,
 // not simply to unticked.
+// The format select is deliberately NOT reset here, though §8.1 names it: the
+// rule reaches it in Cycle 6, together with the visible effective value and
+// explicit promotion (roadmap, "Cycle 5 closing" § deliberately out).
 function resetPerDownloadControls() {
   $("url").value = "";
   $("outDir").value = "";

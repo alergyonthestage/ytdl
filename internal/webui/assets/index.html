@@ -143,7 +143,10 @@
           <!-- Two elements rather than one whose text is rewritten: the reason
                is swapped by toggling `hidden`, so the markup here (the <code>
                sample command) survives. -->
-          <div class="hint" id="openFolderHint">Vale solo per i download lanciati da terminale con <code>ytdl &lt;link&gt;</code>: quelli avviati da qui vanno sempre in coda, e a fine download arriva una notifica.</div>
+          <!-- "se attiva": the notification depends on the Notifiche group two
+               sections below in this same form, so promising one unconditionally
+               would be a surface asserting something the user has just turned off. -->
+          <div class="hint" id="openFolderHint">Vale solo per i download lanciati da terminale con <code>ytdl &lt;link&gt;</code>: quelli avviati da qui vanno sempre in coda, e a fine download lo segnala la notifica di sistema, se attiva.</div>
           <div class="hint" id="openFolderUnavailable" hidden>Non disponibile: su questo sistema ytdl non sa aprire una cartella.</div>
         </details>
       </section>
