@@ -351,6 +351,25 @@ func TestNewSettingsHaveControls(t *testing.T) {
 	}
 }
 
+// TestCloseWarningDoesNotImplyCancellation: closing the tab does NOT stop the
+// queue — the daemon keeps draining until it empties (ADR-0008). The warning
+// exists because the draining is then unattended, so it must say that, not the
+// opposite (G10).
+func TestCloseWarningDoesNotImplyCancellation(t *testing.T) {
+	js := assetText(t, "assets/app.js")
+	i := strings.Index(js, `window.addEventListener("beforeunload"`)
+	if i < 0 {
+		t.Fatal("no beforeunload warning; the GUI closes silently on a queue with work")
+	}
+	handler := js[i:]
+	if j := strings.Index(handler, "\n});"); j >= 0 {
+		handler = handler[:j]
+	}
+	if !strings.Contains(handler, "proseguono anche se chiudi") {
+		t.Error("the close warning does not say the downloads continue; it reads as a threat to cancel them")
+	}
+}
+
 // TestSPAUsesTheSharedVocabulary keeps the two channels from inventing synonyms
 // (ux-principles.md §3).
 func TestSPAUsesTheSharedVocabulary(t *testing.T) {

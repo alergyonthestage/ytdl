@@ -44,7 +44,10 @@ the **GUI is closed AND the queue is drained**. Concretely:
 - **GUI open** — the daemon stays up to serve the UI, regardless of queue state.
 - **GUI closed with work still queued** — the daemon **persists** (keeps draining)
   until the queue empties, then exits. The GUI **warns on close** when work remains
-  queued: *"Vuoi uscire? Hai download in coda."*
+  queued — and the warning says that the downloads *continue* unattended, not that
+  closing stops them: *"I download proseguono anche se chiudi: qui smetteresti solo
+  di vederli."* (The original wording here, *"Vuoi uscire? Hai download in coda."*,
+  implied the opposite and was corrected at Cycle 5's gate C, finding G10.)
 
 This is a clean generalization of 2B-core's idle-exit ("queue empty for ~20 s") —
 it adds an **"AND no GUI client connected"** clause to the exit test. The daemon

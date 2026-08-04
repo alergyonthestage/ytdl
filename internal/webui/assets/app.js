@@ -795,12 +795,14 @@ $("settings").addEventListener("submit", async (ev) => {
   }
 });
 
-// ADR-0008: closing the GUI while the queue still has work would leave the
-// daemon draining unattended — warn, as the ADR prescribes.
+// ADR-0008: closing the GUI while the queue still has work leaves the daemon
+// draining UNATTENDED — it keeps going until the queue empties. That is what the
+// warning is about, so it must not imply the opposite: the old wording ("Vuoi
+// uscire? Hai download in coda.") read as a threat to cancel the queue (G10).
 window.addEventListener("beforeunload", (e) => {
   if (counts.pending + counts.running > 0) {
     e.preventDefault();
-    e.returnValue = "Vuoi uscire? Hai download in coda.";
+    e.returnValue = "I download proseguono anche se chiudi: qui smetteresti solo di vederli.";
     return e.returnValue;
   }
 });
