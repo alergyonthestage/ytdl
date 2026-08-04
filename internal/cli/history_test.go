@@ -40,6 +40,54 @@ func TestRenderHistoryRows(t *testing.T) {
 	}
 }
 
+// TestRenderHistoryFailureCarriesTheNextStep: a row that only states what went
+// wrong is incomplete (ux-principles.md §5). The hint is derived from the stored
+// reason, so it also appears on records written before the catalogue existed
+// (G8), and it goes on its own line — appended to the row it would be the first
+// thing the width clip removed.
+func TestRenderHistoryFailureCarriesTheNextStep(t *testing.T) {
+	at := time.Date(2026, 7, 23, 20, 47, 0, 0, time.Local)
+	entries := []logstore.Entry{
+		{Time: at, URL: "https://youtu.be/A", Success: false,
+			Error: "ERROR: [youtube] A: Unable to extract player response; please report this issue"},
+		{Time: at.Add(-time.Hour), Title: "Un successo", Success: true},
+	}
+	got := RenderHistory(entries, HistoryView{IndexUsable: true})
+
+	if !strings.Contains(got, "ytdl --update") {
+		t.Errorf("the failed row says what went wrong but not what to do:\n%s", got)
+	}
+	// One line for the row, one for the hint — and nothing under the success.
+	lines := strings.Split(got, "\n")
+	var hintLines int
+	for _, ln := range lines {
+		if strings.Contains(ln, "ytdl --update") {
+			hintLines++
+			if strings.Contains(ln, "✗") {
+				t.Errorf("the hint was appended to the row instead of its own line:\n%s", ln)
+			}
+		}
+	}
+	if hintLines != 1 {
+		t.Errorf("expected exactly one hint line, got %d:\n%s", hintLines, got)
+	}
+}
+
+// A failure ytdl has no honest remedy for prints no hint line at all.
+func TestRenderHistoryPrintsNoHintWithoutARemedy(t *testing.T) {
+	at := time.Date(2026, 7, 23, 20, 47, 0, 0, time.Local)
+	entries := []logstore.Entry{
+		{Time: at, URL: "https://youtu.be/A", Success: false,
+			Error: "ERROR: [youtube] A: Sign in to confirm you're not a bot"},
+	}
+	got := RenderHistory(entries, HistoryView{IndexUsable: true})
+	for _, ln := range strings.Split(got, "\n") {
+		if strings.HasPrefix(ln, hintIndent) && strings.TrimSpace(ln) != "" {
+			t.Errorf("a hint was invented where no remedy exists:\n%s", ln)
+		}
+	}
+}
+
 func TestShortenURL(t *testing.T) {
 	if got := shortenURL("https://www.youtube.com/watch?v=abc"); got != "youtube.com/watch?v=abc" {
 		t.Errorf("shortenURL trim = %q", got)

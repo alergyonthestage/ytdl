@@ -273,6 +273,41 @@ func TestHistoryDTOCarriesTheRowState(t *testing.T) {
 	}
 }
 
+// TestHistoryDTOCarriesTheFailureHint: the reason is yt-dlp's English stderr
+// line; ux-principles.md §5 wants the next step too. It is derived from the
+// stored line at render time, so a record written before the catalogue existed
+// gets one as well (G8) — the seeded records here have no hint field at all.
+func TestHistoryDTOCarriesTheFailureHint(t *testing.T) {
+	ts, _, _, logDir := apiServer(t)
+	now := time.Now().Add(-time.Hour)
+	seedHistory(t, logDir,
+		failedJob("https://youtu.be/A", now,
+			"ERROR: Unable to download webpage: HTTP Error 429: Too Many Requests"),
+		failedJob("https://youtu.be/B", now.Add(time.Minute),
+			"ERROR: [youtube] B: Sign in to confirm you're not a bot"),
+		savedJob(t, "https://youtu.be/C", "Andata bene", now.Add(2*time.Minute)),
+	)
+
+	_, body := getPath(t, ts, "/api/history")
+	var page historyPageDTO
+	json.Unmarshal(body, &page)
+	byURL := map[string]historyDTO{}
+	for _, it := range page.Items {
+		byURL[it.URL] = it
+	}
+
+	if got := byURL["https://youtu.be/A"].Hint; !strings.Contains(got, "aspetta qualche minuto") {
+		t.Errorf("a rate-limited failure carries no next step: %q", got)
+	}
+	// No remedy exists for a bot check until Cycle 9, and none is invented.
+	if got := byURL["https://youtu.be/B"].Hint; got != "" {
+		t.Errorf("a hint was invented where no remedy exists: %q", got)
+	}
+	if got := byURL["https://youtu.be/C"].Hint; got != "" {
+		t.Errorf("a successful download carries a failure hint: %q", got)
+	}
+}
+
 // TestHistoryDTOSendsNoAbsolutePath: every action is addressed by record id, and
 // the location is a display string. Shipping the path would invite a future
 // change to send it back.

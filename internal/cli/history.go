@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/alergyonthestage/ytdl/internal/jobs"
 	"github.com/alergyonthestage/ytdl/internal/logstore"
 	"github.com/alergyonthestage/ytdl/internal/term"
 )
@@ -40,6 +41,11 @@ type HistoryView struct {
 	// `ytdl history --ids` for scripts.
 	ShowIDs bool
 }
+
+// hintIndent aligns a failure's "what to do next" line under its row, far
+// enough in that it reads as belonging to the row above rather than as another
+// record.
+const hintIndent = "        "
 
 // idCols is how much of the 16-hex record id is shown. Eight characters is
 // already far past the point of ambiguity for one user's history, and Find
@@ -93,6 +99,12 @@ func RenderHistory(entries []logstore.Entry, v HistoryView) string {
 		fmt.Fprintf(&b, "  [%*d] %s%s %s  %s  %-5s  %s\n",
 			idxCols, v.Offset+i+1, id, mark, e.Time.Format(historyTimeFormat),
 			term.Pad(labels[i], labelCols), formatCell(e), detailCell(e, v.Home))
+		// The next step goes on its own line: the row above is already a full
+		// terminal width of columns, and a hint appended to it would be the
+		// first thing clipped away (G8, ux-principles.md §5).
+		if hint := jobs.FailureHint(e.Error); hint != "" && !e.Success {
+			fmt.Fprintf(&b, "%s%s\n", hintIndent, hint)
+		}
 	}
 	b.WriteString(historyFooter(v))
 	return clipTo(b.String(), v.Width)

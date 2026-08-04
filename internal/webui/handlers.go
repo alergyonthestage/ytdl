@@ -95,6 +95,7 @@ type historyDTO struct {
 	Count    int    `json:"count,omitempty"`
 	Playlist bool   `json:"playlist,omitempty"`
 	Error    string `json:"error,omitempty"`    // one-line failure reason, shown inline
+	Hint     string `json:"hint,omitempty"`     // what to do about it, derived from Error at render time
 	Location string `json:"location,omitempty"` // where it landed, ~-contracted, display only
 
 	CanOpenFile   bool `json:"canOpenFile"`   // the audio file is there and openable
@@ -356,6 +357,9 @@ func (s *Server) toHistoryDTO(e logstore.Entry, canOpen bool) historyDTO {
 		ID: e.ID(), Time: e.Time.Format(time.RFC3339), URL: e.URL, Title: e.Title,
 		Mode: e.Mode, Format: e.Format, RC: e.RC, Success: e.Success,
 		Count: e.Count, Playlist: e.Playlist, Error: e.Error,
+		// Derived, never stored: a record written before the catalogue existed
+		// gets its hint too (G8).
+		Hint:     jobs.FailureHint(e.Error),
 		Location: s.displayLocation(e),
 	}
 	// Only advertise what this platform can actually do, so a capability flag

@@ -164,6 +164,19 @@ func TestHistoryRowsRankTheirActions(t *testing.T) {
 	}
 }
 
+// TestFailedRowsShowTheNextStep: "why it failed" was already inline; what to do
+// about it was nowhere (G8, ux-principles.md §5). The hint comes from the server,
+// derived from the same stored reason, so both channels say the same thing.
+func TestFailedRowsShowTheNextStep(t *testing.T) {
+	js := assetText(t, "assets/app.js")
+	if !strings.Contains(js, "h.hint") {
+		t.Error("the history row never renders the failure hint")
+	}
+	if !strings.Contains(js, `!h.success && h.hint`) {
+		t.Error("the hint is not scoped to failures")
+	}
+}
+
 // TestOverflowMenuHoldsTheSecondaryActions: the maintainer's instruction was a
 // visual hierarchy, not a row of equal buttons — one primary control, the rest
 // behind ···.

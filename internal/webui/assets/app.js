@@ -350,6 +350,10 @@ function historyRow(h, withOverflow) {
   meta.push(el("div", "meta", bits.filter(Boolean).join(" · ")));
   // Why it failed, inline: "why" must need no click. The full .log is one.
   if (!h.success && h.error) meta.push(el("div", "reason", h.error));
+  // And what to do about it: a message that only states what went wrong is
+  // incomplete (ux-principles.md §5). The server derives it from the same
+  // stored line, so both channels say the same thing (G8).
+  if (!h.success && h.hint) meta.push(el("div", "hint", h.hint));
 
   const mark = h.success ? "✓ " : "✗ ";
   const actions = [primaryAction(h)];
