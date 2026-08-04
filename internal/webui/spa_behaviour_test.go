@@ -211,16 +211,24 @@ const nodes = {
   sessionOut: { value: "" },
   sessionPending: { hidden: true },
   historyWindow: { textContent: "" },
+  saveSession: { disabled: false, addEventListener: () => {} },
 };
 const $ = (id) => nodes[id];
 const applyQueue = () => {}, renderRecent = () => {}, setDaemon = () => {};
 const setOpenFolderAvailability = () => {}, retentionLabel = () => "da sempre";
+const setMsg = () => {};
 let retentionDays = 0;
 let appliedSessionOut = "";
+let sessionEpoch = 0;
 
 eval(extract(/function sessionDirty\(\) \{[\s\S]*?\n\}/));
 eval(extract(/function refreshSessionPending\(\) \{[\s\S]*?\n\}/));
-eval(extract(/function applyState\(s\) \{[\s\S]*?\n\}/));
+eval(extract(/function applyState\(s, sessionTrusted\) \{[\s\S]*?\n\}/));
+eval(extract(/async function loadState\(\) \{[\s\S]*?\n\}/));
+// The click handler, anchored on its own control's id.
+const saveSrc = extract(/\$\("saveSession"\)\.addEventListener\("click", async \(\) => \{[\s\S]*?\n\}\);/)
+  .replace(/^\$\("saveSession"\)\.addEventListener\("click", /, "").replace(/\);$/, "");
+const saveSession = eval("(" + saveSrc + ")");
 const state = () => "field=" + nodes.sessionOut.value + " pending=" + !nodes.sessionPending.hidden;
 `
 
@@ -280,6 +288,62 @@ console.log("clean:" + state());
 	}
 	if !strings.Contains(out, "clean:field=/srv/musica pending=false") {
 		t.Errorf("an untouched field did not follow the server:\n%s", out)
+	}
+}
+
+// TestAStaleStateFrameCannotUndoAJustAppliedSessionFolder is the race the review
+// pass found in the G2 fix: /api/state is fetched on every reconnect, and a
+// frame requested BEFORE the user pressed "Applica alla sessione" carries the
+// old override. Adopting it blanks the field while the daemon keeps downloading
+// into the folder they set — G2 in the opposite direction, and with no marker.
+func TestAStaleStateFrameCannotUndoAJustAppliedSessionFolder(t *testing.T) {
+	out := runNode(t, sessionHarness+`
+// The state frame is requested first and resolves LAST, carrying no override.
+global.fetch = (url) => new Promise((res) => {
+  if (url === "/api/state") {
+    setTimeout(() => res({ ok: true, json: async () => ({ queue: {}, history: [], sessionOutputDir: "" }) }), 30);
+  } else {
+    setTimeout(() => res({ ok: true, json: async () => ({ sessionOutputDir: "/tmp/A" }) }), 5);
+  }
+});
+
+(async () => {
+  const inFlight = loadState();               // a reconnect, already on the wire
+  nodes.sessionOut.value = "/tmp/A";          // the user types and applies
+  await saveSession();
+  console.log("applied:" + state());
+  await inFlight;                             // the stale frame lands afterwards
+  console.log("after stale frame:" + state());
+})();
+`)
+	if !strings.Contains(out, "applied:field=/tmp/A pending=false") {
+		t.Fatalf("the PUT did not take effect:\n%s", out)
+	}
+	if !strings.Contains(out, "after stale frame:field=/tmp/A pending=false") {
+		t.Errorf("a stale state frame silently undid the applied session folder:\n%s", out)
+	}
+}
+
+// TestApplyingDoesNotDiscardWhatTheUserKeptTyping: the success branch used to
+// overwrite the field unconditionally, so anything typed while the PUT was in
+// flight vanished — and the pending marker was hidden at the same time, leaving
+// the loss with no trace at all.
+func TestApplyingDoesNotDiscardWhatTheUserKeptTyping(t *testing.T) {
+	out := runNode(t, sessionHarness+`
+global.fetch = () => new Promise((res) => {
+  setTimeout(() => res({ ok: true, json: async () => ({ sessionOutputDir: "/tmp/A" }) }), 10);
+});
+
+(async () => {
+  nodes.sessionOut.value = "/tmp/A";
+  const put = saveSession();
+  nodes.sessionOut.value = "/tmp/AB";   // the user keeps typing while it is in flight
+  await put;
+  console.log("after:" + state());
+})();
+`)
+	if !strings.Contains(out, "after:field=/tmp/AB pending=true") {
+		t.Errorf("the in-flight PUT discarded what the user was typing, or hid the marker:\n%s", out)
 	}
 }
 

@@ -589,13 +589,20 @@ function setOpenFolderAvailability(canOpen) {
     : "Non disponibile: su questo sistema ytdl non sa aprire una cartella.";
 }
 
-function applyState(s) {
+// sessionTrusted says whether this state frame may speak for the session
+// override. It may not when a PUT was issued after the frame was requested: the
+// frame is then OLDER than a value the user has just applied, and adopting it
+// would blank the field while the daemon keeps using the folder they set — G2
+// again, in the opposite direction and with no marker to show it. Same shape as
+// historySeq, and the same reason.
+function applyState(s, sessionTrusted) {
   applyQueue(s.queue);
   renderRecent(s.history);
   setDaemon(s.daemonRunning);
   setOpenFolderAvailability(s.canOpen !== false);
   retentionDays = Number(s.retentionDays) || 0;
   $("historyWindow").textContent = "— " + retentionLabel();
+  if (sessionTrusted === false) return;
   // Adopt the server's value only while the field agrees with what WAS in force:
   // a state refresh (a reconnect, say) must never overwrite an edit in progress,
   // and must never silently make a pending edit look applied.
@@ -606,12 +613,15 @@ function applyState(s) {
 }
 
 async function loadState() {
+  // Read the epoch BEFORE the request goes out, so a PUT that lands while it is
+  // in flight invalidates this frame's view of the session folder.
+  const epoch = sessionEpoch;
   const r = await fetch("/api/state");
   if (!r.ok) {
     const data = await r.json().catch(() => ({}));
     throw new Error(data.error || "errore " + r.status);
   }
-  applyState(await r.json());
+  applyState(await r.json(), epoch === sessionEpoch);
 }
 
 function connect() {
@@ -721,6 +731,9 @@ $("dl").addEventListener("submit", async (ev) => {
 // changed but not yet applied must say so.
 
 let appliedSessionOut = ""; // the override the server says is in force
+// Bumped by every PUT. A /api/state frame requested before the bump cannot speak
+// for the session folder any more (see applyState).
+let sessionEpoch = 0;
 
 // Both sides are trimmed. Comparing a trimmed field against an untrimmed stored
 // value pins the marker open for ever on a value the GUI never typed (the API
@@ -738,6 +751,9 @@ $("sessionOut").addEventListener("input", refreshSessionPending);
 
 $("saveSession").addEventListener("click", async () => {
   const dir = $("sessionOut").value.trim();
+  const btn = $("saveSession");
+  btn.disabled = true; // every other mutating control in this file does this
+  sessionEpoch++;
   try {
     // fetch rejects only on a NETWORK error, so without an r.ok check a 400 or a
     // 401 landed in the success branch: the GUI answered "✓ aggiornata" and the
@@ -752,11 +768,16 @@ $("saveSession").addEventListener("click", async () => {
     // What is in force comes from the SERVER's echo, not from the field: only
     // then does "no pending change" mean the two actually agree.
     appliedSessionOut = typeof data.sessionOutputDir === "string" ? data.sessionOutputDir : dir;
-    $("sessionOut").value = appliedSessionOut;
+    // Only OUR value is ours to normalise: if the user kept typing while the PUT
+    // was in flight, overwriting the field would discard what they wrote AND
+    // hide the pending marker, so the loss would leave no trace.
+    if ($("sessionOut").value.trim() === dir) $("sessionOut").value = appliedSessionOut;
     refreshSessionPending();
     setMsg("sessionMsg", "ok", "Cartella di sessione aggiornata.");
   } catch (err) {
     setMsg("sessionMsg", "bad", err.message);
+  } finally {
+    btn.disabled = false;
   }
 });
 
