@@ -137,6 +137,7 @@ const applyQueue = () => {};
 let savedSettings = null;
 
 eval(extract(/function resetPerDownloadControls\(\) \{[\s\S]*?\n\}/));
+eval(extract(/function playlistDefault\(\) \{[\s\S]*?\n\}/));
 // Anchored on the form's own id: the settings form's handler opens with the
 // same two lines, and an unanchored match would silently test that one.
 const handlerSrc = extract(/\$\("dl"\)\.addEventListener\("submit", async \(ev\) => \{[\s\S]*?\n\}\);/)
@@ -159,6 +160,33 @@ handler({ preventDefault: () => {} }).then(() => console.log(state()));
 `)
 	if !strings.Contains(out, `url= dir= open=false`) {
 		t.Errorf("a one-shot folder survived its own download:\n%s", out)
+	}
+}
+
+// TestASuccessfulSubmitReturnsThePlaylistBoxToItsDefault: left ticked, the next
+// link carrying "&list=" turns one track into the whole playlist (G4). It goes
+// back to the DEFAULT, not to unticked — the server's own playlist_default.
+func TestASuccessfulSubmitReturnsThePlaylistBoxToItsDefault(t *testing.T) {
+	off := runNode(t, submitHarness+`
+global.api = async () => ({ queue: null });
+savedSettings = { playlistDefault: false };
+nodes.url.value = "https://youtu.be/A";
+nodes.playlist.checked = true;                       // ticked for this one download
+handler({ preventDefault: () => {} }).then(() => console.log(state()));
+`)
+	if !strings.Contains(off, "playlist=false") {
+		t.Errorf("a one-shot playlist tick survived its own download:\n%s", off)
+	}
+
+	on := runNode(t, submitHarness+`
+global.api = async () => ({ queue: null });
+savedSettings = { playlistDefault: true };
+nodes.url.value = "https://youtu.be/A";
+nodes.playlist.checked = false;                      // unticked against the default
+handler({ preventDefault: () => {} }).then(() => console.log(state()));
+`)
+	if !strings.Contains(on, "playlist=true") {
+		t.Errorf("the box did not return to a configured default of true:\n%s", on)
 	}
 }
 

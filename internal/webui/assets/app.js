@@ -660,10 +660,21 @@ function scheduleReconnect() {
 // promises "vale solo per questo download" and used to stay set, with its
 // disclosure still open, so the next download silently went to the same
 // override: the label said one-shot and the surface delivered sticky (G3).
+// The playlist checkbox was initialised from playlist_default and then never
+// touched again (G4). Left ticked, the next link that carries "&list=" turns one
+// track into the whole playlist — which is why it goes back to the DEFAULT here,
+// not simply to unticked.
 function resetPerDownloadControls() {
   $("url").value = "";
   $("outDir").value = "";
   $("outDirBox").open = false;
+  $("playlist").checked = playlistDefault();
+}
+
+// playlistDefault is the resolved default as the SERVER last stated it, so the
+// control returns to what is actually configured rather than to a guess.
+function playlistDefault() {
+  return !!(savedSettings && savedSettings.playlistDefault);
 }
 
 $("dl").addEventListener("submit", async (ev) => {
@@ -827,7 +838,7 @@ async function loadSettings() {
   const s = await r.json();
   applySettings(s);
   fillSelect($("format"), FORMATS, s.format);
-  $("playlist").checked = !!s.playlistDefault;
+  $("playlist").checked = playlistDefault();
 }
 
 $("settings").addEventListener("submit", async (ev) => {
@@ -844,7 +855,11 @@ $("settings").addEventListener("submit", async (ev) => {
     // sent (a trailing slash trimmed, say) — so the saved snapshot comes from
     // the server, not from the form.
     applySettings(data);
+    // The Download view's one-shot controls follow the new defaults, exactly as
+    // the format select already did: a default the user has just changed must
+    // not leave the other view showing the old one.
     fillSelect($("format"), FORMATS, data.format);
+    $("playlist").checked = playlistDefault();
     setMsg("settingsMsg", "ok", "Impostazioni salvate.");
   } catch (err) {
     setMsg("settingsMsg", "bad", err.message);
