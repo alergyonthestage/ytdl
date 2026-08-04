@@ -45,10 +45,6 @@ var failurePatterns = []failurePattern{
 		hint: "Il video non è più disponibile su YouTube: controlla il link o cerca un'altra versione.",
 	},
 	{
-		needles: []string{"ffmpeg", "ffprobe", "postprocessing"},
-		hint:    "Manca ffmpeg o è incompleto: reinstalla le dipendenze con  ytdl --update.",
-	},
-	{
 		needles: []string{"no space left", "disk quota exceeded"},
 		hint:    "Spazio esaurito sul disco: libera spazio e riprova.",
 	},
@@ -57,8 +53,32 @@ var failurePatterns = []failurePattern{
 		hint:    "Cartella di destinazione non scrivibile: scegline un'altra nelle impostazioni.",
 	},
 	{
+		// BELOW disk and permissions, and matched on the "not found" wording
+		// rather than on a bare "postprocessing": yt-dlp reports a full disk and
+		// an unwritable folder as postprocessing errors too, and sending someone
+		// with a full disk to reinstall dependencies onto that same disk is a
+		// dead end. CheckDeps also refuses to start without ffmpeg, so a
+		// postprocessing failure that reaches a record is rarely a missing one.
+		needles: []string{"ffmpeg not found", "ffprobe and ffmpeg", "ffmpeg-location"},
+		hint:    "Manca ffmpeg o è incompleto: reinstalla le dipendenze con  ytdl --update.",
+	},
+	{
 		needles: []string{"unsupported url", "is not a valid url"},
 		hint:    "Link non riconosciuto: controlla di aver incollato l'indirizzo di un video o di una playlist.",
+	},
+	{
+		// Before the network entry, which owns "unable to download webpage": a
+		// 404 says that too, and sending someone to check their Wi-Fi over a
+		// link that will stay dead for ever is the same dead end as a 429 would
+		// have been.
+		needles: []string{"http error 404", "http error 410"},
+		hint:    "Il link non porta a niente: controlla di averlo copiato per intero.",
+	},
+	{
+		// A 403 on YouTube is almost always a signature yt-dlp can no longer
+		// produce, which is the same remedy as the extractor failures below.
+		needles: []string{"http error 403"},
+		hint:    "Quasi sempre è yt-dlp non aggiornato: lancia  ytdl --update  e riprova.",
 	},
 	{
 		needles: []string{

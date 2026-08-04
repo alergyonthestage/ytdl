@@ -85,12 +85,62 @@ func TestFailureHintStaysSilentWhereNoRemedyExists(t *testing.T) {
 	}
 }
 
-// TestFailureHintPrefersTheSpecificCause: a 429 also says "Unable to download
-// webpage", and the answer to it is not "check your network". The table is
-// ordered for exactly this reason.
+// TestFailureHintPrefersTheSpecificCause: several distinct causes share the
+// same generic yt-dlp wording, and the ordering of the table is the only thing
+// that keeps each one pointed at its own remedy. Every case here was a WRONG
+// hint before the review pass — a wrong next step is worse than none, because
+// the user follows it.
 func TestFailureHintPrefersTheSpecificCause(t *testing.T) {
-	got := FailureHint("ERROR: Unable to download webpage: HTTP Error 429: Too Many Requests")
-	if strings.Contains(got, "Connessione") {
-		t.Errorf("a rate limit was reported as a network problem: %q", got)
+	cases := []struct {
+		name       string
+		reason     string
+		want       string // substring the hint must contain
+		mustNotSay string // the wrong remedy this case used to get
+	}{
+		{
+			"a full disk during postprocessing is not a missing ffmpeg",
+			"ERROR: Postprocessing: Error opening output file /Users/a/Music/x.mp3: No space left on device",
+			"Spazio esaurito", "ytdl --update",
+		},
+		{
+			"an unwritable folder during postprocessing is not a missing ffmpeg",
+			"ERROR: Postprocessing: Error opening output files: Permission denied",
+			"non scrivibile", "ytdl --update",
+		},
+		{
+			"a rate limit is not a network problem",
+			"ERROR: Unable to download webpage: HTTP Error 429: Too Many Requests",
+			"aspetta qualche minuto", "Connessione",
+		},
+		{
+			"a dead link is not a network problem",
+			"ERROR: Unable to download webpage: HTTP Error 404: Not Found",
+			"copiato per intero", "Connessione",
+		},
+		{
+			"a 403 is a stale yt-dlp, not a network problem",
+			"ERROR: Unable to download webpage: HTTP Error 403: Forbidden",
+			"ytdl --update", "Connessione",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := FailureHint(c.reason)
+			if !strings.Contains(got, c.want) {
+				t.Errorf("hint = %q, want it to contain %q", got, c.want)
+			}
+			if strings.Contains(got, c.mustNotSay) {
+				t.Errorf("hint = %q — it still sends the user down the %q dead end", got, c.mustNotSay)
+			}
+		})
+	}
+}
+
+// A missing ffmpeg still gets its own remedy: narrowing the needles must not
+// cost the case they exist for.
+func TestFailureHintStillCatchesAMissingFFmpeg(t *testing.T) {
+	got := FailureHint("ERROR: Postprocessing: ffprobe and ffmpeg not found. Please install or provide the path using --ffmpeg-location")
+	if !strings.Contains(got, "ytdl --update") {
+		t.Errorf("a genuinely missing ffmpeg lost its hint: %q", got)
 	}
 }
