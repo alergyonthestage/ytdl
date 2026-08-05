@@ -1,0 +1,149 @@
+:root {
+  --bg: #fbfbfd; --panel: #fff; --fg: #1d1d1f; --muted: #6e6e73;
+  --line: #e3e3e8; --accent: #0a7d32; --accent-fg: #fff; --err: #c0392b;
+  --bar: #d8d8de; --hover: #f2f2f6;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16161a; --panel: #1f1f24; --fg: #ececf1; --muted: #9a9aa2;
+    --line: #33333b; --accent: #2ea55a; --accent-fg: #08130c; --err: #ff6b5e;
+    --bar: #3a3a44; --hover: #2a2a31;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 0 1rem 3rem; background: var(--bg); color: var(--fg);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+main { max-width: 1100px; margin: 0 auto; }
+
+/* ---- nav: the three views, always reachable, current one marked ---- */
+.topbar {
+  position: sticky; top: 0; z-index: 5; background: var(--bg);
+  border-bottom: 1px solid var(--line); margin-bottom: 1.25rem;
+}
+.topbar-inner {
+  max-width: 1100px; margin: 0 auto; display: flex; align-items: center;
+  gap: 1rem; padding: .7rem 0; flex-wrap: wrap;
+}
+.brand { font-size: 1.05rem; font-weight: 700; letter-spacing: -.01em; }
+nav { display: flex; gap: .15rem; flex: 1 1 auto; }
+nav a {
+  color: var(--muted); text-decoration: none; font-size: .9rem; font-weight: 500;
+  padding: .35rem .7rem; border-radius: 7px;
+}
+nav a:hover { background: var(--hover); color: var(--fg); }
+nav a[aria-current="page"] { background: var(--hover); color: var(--fg); font-weight: 600; }
+.engine { display: flex; align-items: center; gap: .4rem; font-size: .8rem; color: var(--muted); }
+
+h2 { font-size: .95rem; margin: 0 0 .75rem; font-weight: 600; }
+h3 { font-size: .85rem; margin: 1.1rem 0 .5rem; font-weight: 600; color: var(--muted); }
+section {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 1rem; margin-bottom: 1rem;
+}
+.view[hidden] { display: none; }
+
+/* Above ~900px the new-download form and the queue sit side by side; below,
+   they stack, form first — the thing you came to do stays at the top. */
+.split { display: grid; gap: 1rem; grid-template-columns: 1fr; align-items: start; }
+@media (min-width: 900px) { .split { grid-template-columns: 1fr 1fr; } }
+.split > section { margin-bottom: 0; }
+
+label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: .25rem; }
+input, select, button, textarea {
+  font: inherit; color: inherit; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 7px; padding: .45rem .6rem;
+}
+input[type=checkbox] { width: auto; vertical-align: middle; }
+input, select { width: 100%; }
+input#url { font-size: 1rem; padding: .6rem .7rem; }
+button {
+  background: var(--accent); color: var(--accent-fg); border-color: transparent;
+  font-weight: 600; cursor: pointer; width: auto; padding: .5rem 1.1rem;
+}
+button:disabled { opacity: .55; cursor: default; }
+button.secondary { background: transparent; color: var(--fg); border-color: var(--line); font-weight: 400; }
+button.small { padding: .25rem .6rem; font-size: .8rem; font-weight: 500; }
+button.link {
+  background: none; border: 0; color: var(--accent); padding: 0; font-size: .82rem;
+  font-weight: 500; cursor: pointer;
+}
+.row { display: flex; gap: .75rem; flex-wrap: wrap; }
+.row > * { flex: 1 1 10rem; }
+.field { margin-bottom: .75rem; }
+.checks { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; }
+.checks label { display: flex; align-items: center; gap: .4rem; color: var(--fg); font-size: .9rem; }
+
+/* ---- one row component, used by the queue, "ultimi download" and history ---- */
+.item {
+  display: flex; align-items: flex-start; gap: .75rem;
+  padding: .6rem 0; border-top: 1px solid var(--line); font-size: .9rem;
+}
+.item:first-child { border-top: 0; }
+.item-main { flex: 1 1 auto; min-width: 0; }
+.item-title { overflow-wrap: anywhere; }
+.item-actions { flex: 0 0 auto; display: flex; align-items: center; gap: .3rem; }
+.meta { color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
+.reason { color: var(--err); font-size: .8rem; overflow-wrap: anywhere; }
+.bar { height: 6px; background: var(--bar); border-radius: 3px; overflow: hidden; margin-top: .4rem; }
+.bar > i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s linear; }
+.empty { color: var(--muted); font-size: .88rem; }
+.ok { color: var(--accent); } .bad { color: var(--err); }
+.dot { width: .55rem; height: .55rem; border-radius: 50%; background: var(--muted); display: inline-block; }
+.dot.on { background: var(--accent); }
+.msg { margin-top: .6rem; font-size: .88rem; min-height: 1.2em; }
+details > summary { cursor: pointer; font-size: .85rem; color: var(--muted); }
+details[open] > summary { margin-bottom: .6rem; }
+.hint { font-size: .78rem; color: var(--muted); margin-top: .2rem; }
+.foot { margin-top: .8rem; font-size: .82rem; }
+
+/* ---- history toolbar: filters + search ---- */
+.toolbar { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; margin-bottom: .9rem; }
+.filters { display: flex; gap: .25rem; }
+.chip {
+  background: transparent; color: var(--muted); border: 1px solid var(--line);
+  border-radius: 999px; padding: .25rem .8rem; font-size: .82rem; font-weight: 500;
+}
+.chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
+#search { flex: 1 1 14rem; }
+
+/* ---- overflow menu: one primary button, everything else behind ··· ---- */
+.overflow { position: relative; }
+.overflow-btn { padding: .25rem .55rem; letter-spacing: .06em; }
+.menu {
+  position: absolute; right: 0; top: calc(100% + .25rem); z-index: 10;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .14); padding: .25rem; min-width: 12rem;
+}
+.menu[hidden] { display: none; }
+.menu button {
+  display: block; width: 100%; text-align: left; background: none; border: 0;
+  color: var(--fg); font-weight: 400; font-size: .85rem; padding: .4rem .6rem;
+  border-radius: 6px;
+}
+.menu button:hover:not(:disabled), .menu button:focus-visible { background: var(--hover); }
+.menu button:disabled { color: var(--muted); }
+
+/* ---- the failure-log panel ---- */
+.panel { border: 1px solid var(--line); border-radius: 8px; padding: .7rem; margin-bottom: .9rem; background: var(--bg); }
+.panel[hidden] { display: none; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-bottom: .5rem; }
+.panel pre {
+  margin: 0; max-height: 22rem; overflow: auto; font-size: .78rem; line-height: 1.45;
+  white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted);
+}
+
+/* A control changed but not yet applied says so (ux-principles.md §8.4).
+   Deliberately not muted like a hint: being noticed is the whole job. */
+.pending-note { font-size: .8rem; font-weight: 600; margin-top: .35rem; }
+
+/* ---- sticky unsaved-changes bar ---- */
+.savebar {
+  position: sticky; bottom: 0; z-index: 4; display: flex; align-items: center; gap: .6rem;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: .7rem 1rem; margin-bottom: 1rem;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, .08);
+}
+.savebar[hidden] { display: none; }
+.savebar-text { flex: 1 1 auto; font-size: .88rem; font-weight: 600; }

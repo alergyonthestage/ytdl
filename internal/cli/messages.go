@@ -1,6 +1,11 @@
 package cli
 
-// Usage is the help text, verbatim from the Bash ytdl (lines 47-95).
+// Usage is the complete reference: the Bash ytdl help text (lines 47-95) as it
+// has always been, kept current with every command the tool has grown. Since
+// Cycle 5 it is no longer what `-h` prints — that is ShortUsage — but the body
+// of `ytdl help tutto`. Nothing was deleted in the restructuring; it moved one
+// step away (design §9.1), and this text is what keeps docs/cli-reference.md
+// honest.
 const Usage = `ytdl — scarica musica da YouTube / YT Music con yt-dlp, naming e tag puliti.
 
 USO
@@ -14,21 +19,33 @@ OPZIONI
   -s, --silent        Nessun output (per lanciarlo in background con &)
   -b, --background    Accoda ed esegui in background sotto il limite di concorrenza
   -v, --verbose       Mostra tutto l'output di yt-dlp (per debug)
-  -h, --help          Questo messaggio
+  -h, --help          La schermata breve
   -V, --version       Mostra la versione di ytdl e yt-dlp
       --update        Aggiorna ytdl e yt-dlp all'ultima versione
 
 CODA
   ytdl queue [--watch]                 Download in attesa e in corso (--watch aggiorna sul posto)
   ytdl status                          Stato del daemon + riepilogo recente
-  ytdl history [--failed] [--limit N]  Storico dei download (anche in primo piano)
   ytdl cancel [<n> | <id> | --all]     Annulla un download in corso o in attesa
   ytdl retry  [<n> | <id> | --all]     Rimette in coda un download fallito
       (senza argomenti: lista numerata. <n> = indice del momento, <id> = prefisso
        dell'id, stabile — preferiscilo negli script)
 
-INTERFACCIA GRAFICA
+STORICO
+  ytdl history [--failed] [--limit N] [--search TESTO] [--ids]
+                                       Storico dei download (anche in primo piano),
+                                       con dove è finito il file e perché è fallito
+  ytdl open  <n | id> [--folder]       Apre l'audio (--folder: lo mostra nella cartella)
+  ytdl again <n | id>                  Riscarica un record dello storico
+
+IMPOSTAZIONI
+  ytdl config [--path]                 Impostazioni in vigore e da dove vengono
   ytdl gui                             Apre l'interfaccia web nel browser
+
+AIUTO
+  ytdl help                            Elenco degli argomenti
+  ytdl help <argomento>                Un argomento (opzioni, coda, storico, …)
+  ytdl <comando> --help                Dettaglio di un singolo comando
 
 AGGIORNAMENTI
   yt-dlp smette di funzionare quando YouTube cambia qualcosa: succede ogni
@@ -74,6 +91,12 @@ const (
 	MsgTooManyArguments = "✗ Troppi argomenti: accetto un solo URL (ho già %q)." // %q = first URL
 	MsgInvalidFormat    = "✗ Formato non valido: %s (ammessi: %s)."              // %s fmt, %s list
 	MsgMissingLimit     = "✗ Manca il numero (argomento di --limit)."
+	MsgMissingSearch    = "✗ Manca il testo da cercare (argomento di --search)."
+	// Cycle 5 help topics. An unknown topic gets the same Levenshtein hint a
+	// mistyped command gets, so `ytdl help stroico` proposes `storico`.
+	MsgUnknownTopic     = "✗ Argomento sconosciuto: %s\n  Vedi gli argomenti disponibili con:  ytdl help" // %s = the topic
+	MsgUnknownTopicNear = "✗ Argomento sconosciuto: %s. Forse intendevi «%s»?"                            // %s topic, %s suggestion
+	MsgTooManyTopics    = "✗ Un solo argomento per volta.\n  Vedi quelli disponibili con:  ytdl help"
 	MsgInvalidLimit     = "✗ Limite non valido: %s (serve un intero non negativo)." // %s = the offending token
 	MsgTooManyTargets   = "✗ Un solo indice per volta (oppure --all)."
 	MsgTargetAndAll     = "✗ Indica un indice OPPURE --all, non entrambi."

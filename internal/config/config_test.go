@@ -156,6 +156,24 @@ func TestValidFormat(t *testing.T) {
 	}
 }
 
+// TestValidAudioQuality pins yt-dlp's real domain, 0 to 10 (G7). The old check
+// tested a single character, so 10 — a value yt-dlp documents — was rejected by
+// every layer while the help text called the scale 0-9.
+func TestValidAudioQuality(t *testing.T) {
+	for _, q := range []string{"0", "1", "5", "9", "10"} {
+		if !ValidAudioQuality(q) {
+			t.Errorf("ValidAudioQuality(%q) = false, want true", q)
+		}
+	}
+	// "05" and "+5" resolve to a number in range, but the value is written back
+	// to the config file verbatim; only the canonical spelling is accepted.
+	for _, q := range []string{"", "11", "-1", "05", "+5", " 5", "5 ", "x", "128K"} {
+		if ValidAudioQuality(q) {
+			t.Errorf("ValidAudioQuality(%q) = true, want false", q)
+		}
+	}
+}
+
 func TestBackendDefaults(t *testing.T) {
 	t.Setenv("HOME", "/pinned-home")
 	t.Setenv("XDG_STATE_HOME", "") // force the $HOME-based default

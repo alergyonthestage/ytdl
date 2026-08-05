@@ -42,8 +42,14 @@ type Deps struct {
 	// exactly cmd/ytdl's resolveWithFlags — so the GUI honours the same
 	// precedence as the CLI.
 	Resolve func(config.Partial) (config.Settings, []config.Warning)
-	// LogDir / RetentionDays locate the durable history the GUI reads. Taken from
-	// the resolved settings at construction so history reads need no re-resolve.
+	// LogDir / RetentionDays locate the durable history the GUI reads. They are
+	// the FALLBACK only: every read re-resolves them through Resolve, because
+	// they are user-editable in the very settings view this server serves.
+	// Snapshotting them at construction meant that after saving a new log dir the
+	// GUI answered "✓ salvate", wrote new records to the new dir, and went on
+	// reading the old one for the daemon's whole life — so the user's new
+	// downloads simply never appeared, while the CLI (which re-resolves per
+	// invocation) showed them.
 	LogDir        string
 	RetentionDays int
 	// DaemonRunning reports queue-daemon liveness for the status panel
@@ -101,6 +107,14 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("/api/events", s.handleEvents)
 	api.HandleFunc("/api/settings", s.handleSettings)
 	api.HandleFunc("/api/session", s.handleSession)
+	// Cycle 5. Every one of these is addressed by ID — a record id or a spool
+	// id — and never by path or URL; see handleHistoryOpen for why that is the
+	// load-bearing property rather than a style choice.
+	api.HandleFunc("/api/history", s.handleHistory)
+	api.HandleFunc("/api/history/again", s.handleHistoryAgain)
+	api.HandleFunc("/api/history/open", s.handleHistoryOpen)
+	api.HandleFunc("/api/history/log", s.handleHistoryLog)
+	api.HandleFunc("/api/queue/cancel", s.handleQueueCancel)
 	mux.Handle("/api/", s.guardAPI(api))
 	return s.securityHeaders(s.guardLocalHost(mux))
 }
@@ -182,11 +196,19 @@ const MarkerHeader = "X-Ytdl-Gui"
 // securityHeaders locks the page down: it is entirely self-contained, so a CSP
 // that forbids every external origin costs nothing and blocks a whole class of
 // injection consequences.
+//
+// Cycle 5 moved the script out of the document, which lets script-src drop
+// 'unsafe-inline' for 'self'. That is the difference between "an injected
+// <script> would run" and "it would not": the page renders user-controlled
+// strings (titles, URLs, failure reasons) and this is the backstop for a missed
+// escape. style-src keeps 'unsafe-inline' because the markup still uses a couple
+// of style attributes; 'self' is added for the now-external stylesheet.
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(MarkerHeader, "1")
 		w.Header().Set("Content-Security-Policy",
-			"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'")
+			"default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; "+
+				"connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		next.ServeHTTP(w, r)

@@ -186,7 +186,9 @@ func TestParseErrors(t *testing.T) {
 		usage bool
 	}{
 		{"no url", []string{"-s"}, MsgNoURL, true},
-		{"empty args", nil, MsgNoURL, true},
+		// NOTE: bare `ytdl` (nil args) is NOT here. Since Cycle 5 it prints the
+		// short usage and exits 0 — see TestBareInvocationShowsShortUsage. Flags
+		// without a URL, like the -s case above, are still an error.
 		{"missing -o arg", []string{"-o"}, MsgMissingOutputDir, false},
 		{"missing -f arg", []string{"-f"}, MsgMissingFormat, false},
 		{"empty -o arg (${2:?} fires on null)", []string{"-o", "", "u"}, MsgMissingOutputDir, false},

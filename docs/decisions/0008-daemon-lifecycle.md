@@ -8,6 +8,10 @@
   explicitly deferred to Cycle 3), [roadmap.md](../roadmap.md) Phase 6 (GUI)
 - **Refines:** [ADR-0007](0007-cycle2b-queue-daemon.md) — resolves its deferred
   "always-on daemon? revisit in Cycle 3" question.
+- **Amended:** 2026-08-04, Cycle 5's closing (gate-C finding
+  [G10](../improvements.md#gate-c)) — the close warning this ADR prescribes is
+  reworded below. The decision is unchanged; the old wording implied that closing
+  the GUI cancelled the queue, which is the opposite of what this ADR decides.
 
 ## Context
 
@@ -44,7 +48,10 @@ the **GUI is closed AND the queue is drained**. Concretely:
 - **GUI open** — the daemon stays up to serve the UI, regardless of queue state.
 - **GUI closed with work still queued** — the daemon **persists** (keeps draining)
   until the queue empties, then exits. The GUI **warns on close** when work remains
-  queued: *"Vuoi uscire? Hai download in coda."*
+  queued — and the warning says that the downloads *continue* unattended, not that
+  closing stops them: *"I download proseguono anche se chiudi: qui smetteresti solo
+  di vederli."* (Amended 2026-08-04, see the header: the original wording here,
+  *"Vuoi uscire? Hai download in coda."*, implied the opposite.)
 
 This is a clean generalization of 2B-core's idle-exit ("queue empty for ~20 s") —
 it adds an **"AND no GUI client connected"** clause to the exit test. The daemon

@@ -19,7 +19,14 @@ import (
 
 // testResolve mimics cmd/ytdl's resolveWithFlags: config file (at cfgPath) under
 // the flag layer, no env. It is what the GUI honours for precedence.
-func testResolve(cfgPath string) func(config.Partial) (config.Settings, []config.Warning) {
+//
+// logDir is forced to the test's own store, because in production Deps.LogDir
+// and the resolved settings agree by construction (cmd/ytdl builds the first
+// from the second). A harness where they disagree is not a harness for anything
+// real — and since the server now re-resolves per request rather than trusting
+// its construction-time snapshot, that disagreement would silently point every
+// read somewhere else.
+func testResolve(cfgPath, logDir string) func(config.Partial) (config.Settings, []config.Warning) {
 	return func(flags config.Partial) (config.Settings, []config.Warning) {
 		var file config.Partial
 		var warns []config.Warning
@@ -27,6 +34,7 @@ func testResolve(cfgPath string) func(config.Partial) (config.Settings, []config
 			file, warns = fp, fw
 		}
 		s, rw := config.Resolve(flags, config.Partial{}, file, config.Env{})
+		s.LogDir = logDir
 		return s, append(warns, rw...)
 	}
 }
@@ -39,11 +47,12 @@ func newTestServer(t *testing.T) (*Server, *queue.Spool, string) {
 		t.Fatal(err)
 	}
 	cfgPath := filepath.Join(dir, "config")
+	logDir := filepath.Join(dir, "logs")
 	srv := New(Deps{
 		Spool:         sp,
 		ConfigPath:    cfgPath,
-		Resolve:       testResolve(cfgPath),
-		LogDir:        filepath.Join(dir, "logs"),
+		Resolve:       testResolve(cfgPath, logDir),
+		LogDir:        logDir,
 		RetentionDays: 30,
 		DaemonRunning: func() bool { return true },
 	})
@@ -83,9 +92,31 @@ func TestIndexIsSelfContained(t *testing.T) {
 	if !strings.Contains(body, "<title>ytdl</title>") {
 		t.Error("index does not look like the GUI page")
 	}
-	for _, bad := range []string{`src="http`, `href="http`, `src='http`, `@import`, `<script src=`, `<link rel="stylesheet"`} {
+	// Since Cycle 5 the CSS and JS are separate files, but they are still served
+	// BY THIS BINARY from the same origin. What must never appear is a reference
+	// off the machine: a CDN, a protocol-relative URL, an @import.
+	for _, bad := range []string{`src="http`, `href="http`, `src='http`, `@import`, `src="//`, `href="//`} {
 		if strings.Contains(body, bad) {
 			t.Errorf("index references an external resource (%q)", bad)
+		}
+	}
+	// Every asset the page references must actually be served, or the GUI is a
+	// blank document.
+	for _, path := range []string{"/app.css", "/app.js"} {
+		if !strings.Contains(body, path) {
+			t.Errorf("index does not reference %s", path)
+		}
+		r, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		asset, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		if r.StatusCode != http.StatusOK {
+			t.Errorf("GET %s: status = %d, want 200", path, r.StatusCode)
+		}
+		if len(asset) == 0 {
+			t.Errorf("GET %s served an empty body", path)
 		}
 	}
 }
@@ -223,8 +254,11 @@ func TestSettingsRoundTrip(t *testing.T) {
 	}
 }
 
-// job_timeout has no GUI control this cycle, but the editor rewrites the whole
-// config file. A save must NOT reset a CLI-set job_timeout to 0.
+// The editor rewrites the whole config file, so a save must not reset a
+// CLI-set job_timeout to 0. Until Cycle 5 this was guaranteed by an explicit
+// carry-through in handleSettings, because the DTO had no such field; now the
+// DTO round-trips it like every other setting and the workaround is gone. The
+// user-visible contract is identical, which is why this test did not change.
 func TestSettingsSavePreservesJobTimeout(t *testing.T) {
 	srv, _, cfgPath := newTestServer(t)
 	if err := os.WriteFile(cfgPath, []byte("job_timeout = 300\n"), 0o644); err != nil {
@@ -233,7 +267,8 @@ func TestSettingsSavePreservesJobTimeout(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	// GET then PUT — the DTO carries no job_timeout, exactly as the SPA form doesn't.
+	// GET then PUT, exactly as the settings view does: it always sends back the
+	// whole document it was given.
 	resp, err := http.Get(ts.URL + "/api/settings")
 	if err != nil {
 		t.Fatal(err)

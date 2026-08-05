@@ -62,6 +62,16 @@ type Job struct {
 	Success bool
 	Time    time.Time // completion time; drives both the filename and retention
 	Stderr  []byte    // captured yt-dlp stderr, written only on failure
+
+	// Cycle 5: what the job produced and where, so both channels can answer
+	// "where did the file go?" and "why did it fail?" without re-running
+	// anything. Append copies these onto the Entry; Record ignores them (the
+	// .log already carries the full stderr).
+	Path     string // absolute path of the first saved file ("" if none)
+	Dir      string // the job's resolved output directory
+	Count    int    // how many files the job saved
+	Playlist bool   // whether the job was run as a whole playlist
+	Error    string // one-line failure reason; capped and sanitised by Append
 }
 
 // Record writes j as one file in dir (created if needed). A dir of "" disables
@@ -75,12 +85,7 @@ func Record(dir string, j Job) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	outcome := "fail"
-	if j.Success {
-		outcome = "ok"
-	}
-	name := fmt.Sprintf("%s-%s-%s.log", j.Time.Format("20060102T150405.000000000"), Hash(NormalizeURL(j.URL)), outcome)
-	path := filepath.Join(dir, name)
+	path := filepath.Join(dir, logName(j.Time, j.URL, j.Success))
 
 	var b strings.Builder
 	if j.Success {
@@ -98,6 +103,22 @@ func Record(dir string, j Job) error {
 		b.Write(j.Stderr)
 	}
 	return os.WriteFile(path, []byte(b.String()), 0o644)
+}
+
+// logNameTimeFormat stamps the per-job .log name. Nanosecond precision keeps
+// concurrent jobs from colliding and lets Prune sort/expire by name.
+const logNameTimeFormat = "20060102T150405.000000000"
+
+// logName composes the per-job .log file name from the same three facts a Job
+// and its history Entry both carry. It is the single definition of that name:
+// Record writes it, Entry.LogName reads it back, so a history record can point
+// at its own failure log without storing a path (design §5.3).
+func logName(t time.Time, rawURL string, success bool) string {
+	outcome := "fail"
+	if success {
+		outcome = "ok"
+	}
+	return fmt.Sprintf("%s-%s-%s.log", t.Format(logNameTimeFormat), Hash(NormalizeURL(rawURL)), outcome)
 }
 
 // Prune removes central-store *.log files older than retentionDays (by mtime).

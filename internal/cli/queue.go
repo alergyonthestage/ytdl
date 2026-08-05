@@ -11,6 +11,19 @@ import (
 // enqueuedTimeFormat is the compact local-time stamp shown next to each job.
 const enqueuedTimeFormat = "02/01 15:04"
 
+// QueueView is everything RenderQueue needs besides the snapshot, so the
+// renderer stays pure — no $HOME lookup and no terminal probing inside the
+// formatting code. Same shape, and same reason, as HistoryView.
+type QueueView struct {
+	// Full prints whole URLs: the one-shot view, where a wrapped line is
+	// harmless. When false every line is capped to Width for the in-place
+	// --watch redraw, whose region math counts logical newlines and would
+	// desync if a line wrapped.
+	Full  bool
+	Width int    // terminal columns; <= 0 means do not clip
+	Home  string // for ~-contraction of the destination; "" prints it absolute
+}
+
 // RenderQueue formats a spool Snapshot for `ytdl queue`: only the LIVE work —
 // running then pending (oldest first) — and a live-only footer. Lifetime
 // completed/failed counts are deliberately absent: they belong to history
@@ -18,11 +31,10 @@ const enqueuedTimeFormat = "02/01 15:04"
 // It is pure — the caller reads the spool and handles the --watch redraw loop.
 //
 // Each job is shown title-first (the resolved "Artist - Track", once known) with
-// its full URL on the line below, so the user can tell which video a job is (Cycle
-// 4). full=true prints the whole URL (the one-shot view, where a wrapped line is
-// harmless); full=false caps each line to width for the in-place --watch redraw,
-// whose region math counts logical newlines and would desync if a line wrapped.
-func RenderQueue(snap queue.Snapshot, full bool, width int) string {
+// its full URL on the line below, so the user can tell which video a job is
+// (Cycle 4), and its destination under that: the queue was the one list that
+// never said where a file was going (G1).
+func RenderQueue(snap queue.Snapshot, v QueueView) string {
 	var b strings.Builder
 	b.WriteString("CODA ytdl\n")
 
@@ -33,12 +45,14 @@ func RenderQueue(snap queue.Snapshot, full bool, width int) string {
 			fmt.Fprintf(&b, "  in corso (%d):\n", len(snap.Running))
 			for _, e := range snap.Running {
 				writeJobEntry(&b, "    ▸ ", e)
+				writeJobDest(&b, e, v.Home)
 			}
 		}
 		if len(snap.Pending) > 0 {
 			fmt.Fprintf(&b, "  in attesa (%d):\n", len(snap.Pending))
 			for _, e := range snap.Pending {
 				writeJobEntry(&b, "    • ", e)
+				writeJobDest(&b, e, v.Home)
 			}
 		}
 		p, r, _, _ := snap.Counts()
@@ -46,11 +60,11 @@ func RenderQueue(snap queue.Snapshot, full bool, width int) string {
 	}
 
 	out := b.String()
-	// In --watch (full=false), clip EVERY line — job lines and the fixed header/
+	// In --watch (Full=false), clip EVERY line — job lines and the fixed header/
 	// section/footer alike — to the terminal width, so nothing wraps onto a second
 	// physical row and desyncs the region redraw's logical-line accounting.
-	if !full && width > 0 {
-		out = clipLines(out, width)
+	if !v.Full && v.Width > 0 {
+		out = clipLines(out, v.Width)
 	}
 	return out
 }
@@ -189,6 +203,19 @@ func jobURLCell(e queue.Entry) string {
 		return url
 	}
 	return fmt.Sprintf("%s  (accodato %s)", url, e.Job.EnqueuedAt.Format(enqueuedTimeFormat))
+}
+
+// writeJobDest writes a queued job's destination under its URL line. The dir is
+// the one RESOLVED AT ENQUEUE and frozen in the job's settings snapshot, so the
+// line states where THIS job will land — not where the configuration would send
+// it now, which is a different question once the settings have been edited.
+// An unreadable spec (no settings) writes nothing rather than an empty label.
+func writeJobDest(b *strings.Builder, e queue.Entry, home string) {
+	dir := e.Job.Settings.OutputDir
+	if dir == "" {
+		return
+	}
+	fmt.Fprintf(b, "%scartella: %s\n", contIndent, contractHome(dir, home))
 }
 
 // writeJobEntry writes one job under prefix: a title line plus an indented URL line

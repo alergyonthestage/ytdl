@@ -30,6 +30,9 @@ const (
 	ActionGUI     // `ytdl gui` — open the local web interface (Cycle 3)
 	ActionCancel  // `ytdl cancel [<n>|<id>|--all]` — stop live work (Cycle 2B-plus)
 	ActionRetry   // `ytdl retry [<n>|<id>|--all]` — re-queue a failed job (Cycle 2B-plus)
+	ActionOpen    // `ytdl open [<n>|<id>] [--folder]` — open a downloaded file (Cycle 5)
+	ActionAgain   // `ytdl again [<n>|<id>]` — download a history record again (Cycle 5)
+	ActionConfig  // `ytdl config [--path]` — show the effective settings (Cycle 5)
 )
 
 // Parsed is the result of parsing. When Action == ActionRun, RunMode, URL and
@@ -45,12 +48,24 @@ type Parsed struct {
 	QueueWatch bool    // `queue --watch`: redraw on an interval
 
 	// History fields (valid when Action == ActionHistory).
-	HistoryFailed bool // --failed: only failures
-	HistoryLimit  int  // --limit N: cap the rows (DefaultHistoryLimit if unset)
+	HistoryFailed bool   // --failed: only failures
+	HistoryLimit  int    // --limit N: cap the rows (DefaultHistoryLimit if unset)
+	HistorySearch string // --search Q: match title, link or saved file name
+	HistoryIDs    bool   // --ids: show the stable record id on every row
 
-	// Cancel/retry fields (valid when Action == ActionCancel or ActionRetry).
+	// Cancel/retry/open/again field (valid for those actions).
 	Target string // the <n> index or <id-prefix>; "" with !All means "list them"
-	All    bool   // --all: act on every matching job
+	All    bool   // --all: act on every matching job (cancel/retry only)
+
+	// Cycle 5 fields.
+	OpenFolder     bool // `open --folder`: show it in the file manager instead
+	ConfigPathOnly bool // `config --path`: print only the config file path
+
+	// Help fields (valid when Action == ActionHelp). Three shapes: the short
+	// usage (both false/empty), the topic index (`ytdl help`), and one page
+	// (`ytdl help <argomento>` or `ytdl <comando> --help`).
+	HelpCommand bool   // invoked as `ytdl help …` rather than -h / no arguments
+	HelpTopic   string // the requested page; "" = index (HelpCommand) or short usage
 }
 
 // ParseError is a user-facing parse failure. Usage requests that the help text
@@ -73,11 +88,21 @@ func (e *ParseError) Error() string { return e.Msg }
 // `ytdl -o "" URL` (e.g. an unset shell variable) fails fast with exit 1 rather
 // than silently resolving an empty output dir.
 func Parse(args []string) (*Parsed, error) {
+	// No arguments at all is someone finding out what the tool does, not a
+	// misuse: show the short usage and exit cleanly. Flags WITHOUT a URL
+	// (`ytdl -f mp3`) still fail with MsgNoURL further down — that one is a
+	// genuine mistake and a script needs it to fail.
+	if len(args) == 0 {
+		return &Parsed{Action: ActionHelp}, nil
+	}
+
 	// Subcommand dispatch: a reserved first token routes to the queue front-end
 	// instead of the download parser. A URL never collides with these keywords.
 	// The hidden `__daemon` role is intercepted by main before Parse is reached.
 	if len(args) > 0 {
 		switch args[0] {
+		case "help":
+			return parseHelp(args[1:])
 		case "queue":
 			return parseQueue(args[1:])
 		case "status":
@@ -90,6 +115,12 @@ func Parse(args []string) (*Parsed, error) {
 			return parseTargeted(ActionCancel, args[1:])
 		case "retry":
 			return parseTargeted(ActionRetry, args[1:])
+		case "open":
+			return parseOpen(args[1:])
+		case "again":
+			return parseAgain(args[1:])
+		case "config":
+			return parseConfig(args[1:])
 		}
 	}
 
@@ -199,9 +230,51 @@ func Parse(args []string) (*Parsed, error) {
 	return p, nil
 }
 
+// parseHelp parses `help [argomento]`: with no argument the topic index, with
+// one the page. An unknown topic is an ERROR rather than a silent fallback to
+// the index, so it can suggest the nearest name — the same Levenshtein hint the
+// Cycle 4 command guard gives, applied to help pages.
+func parseHelp(rest []string) (*Parsed, error) {
+	switch len(rest) {
+	case 0:
+		return &Parsed{Action: ActionHelp, HelpCommand: true}, nil
+	case 1:
+		topic := rest[0]
+		if _, ok := LookupTopic(topic); !ok {
+			if near := nearestTopic(topic); near != "" {
+				return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownTopicNear, topic, near)}
+			}
+			return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownTopic, topic)}
+		}
+		return &Parsed{Action: ActionHelp, HelpCommand: true, HelpTopic: strings.ToLower(topic)}, nil
+	default:
+		return nil, &ParseError{Msg: MsgTooManyTopics}
+	}
+}
+
+// wantsHelp reports whether a subcommand's arguments ask for its own help page.
+// Every subcommand accepts -h/--help wherever it appears, so a user who has just
+// been shown "ytdl <comando> --help" can type it without thinking about order.
+func wantsHelp(rest []string) bool {
+	for _, a := range rest {
+		if a == "-h" || a == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
+// helpPage builds the parse result for one command's own help page.
+func helpPage(command string) *Parsed {
+	return &Parsed{Action: ActionHelp, HelpCommand: true, HelpTopic: command}
+}
+
 // parseQueue parses `queue [--watch]`. The only accepted option is --watch/-w;
 // anything else is an unknown-option error (with usage), like the download parser.
 func parseQueue(rest []string) (*Parsed, error) {
+	if wantsHelp(rest) {
+		return helpPage("queue"), nil
+	}
 	p := &Parsed{Action: ActionQueue}
 	for _, a := range rest {
 		switch a {
@@ -218,6 +291,9 @@ func parseQueue(rest []string) (*Parsed, error) {
 // parseGUI accepts `ytdl gui` with no options: the interface itself is where
 // every setting lives, so the command only has to open it.
 func parseGUI(rest []string) (*Parsed, error) {
+	if wantsHelp(rest) {
+		return helpPage("gui"), nil
+	}
 	if len(rest) > 0 {
 		return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, rest[0]), Usage: true}
 	}
@@ -225,21 +301,40 @@ func parseGUI(rest []string) (*Parsed, error) {
 }
 
 func parseStatus(rest []string) (*Parsed, error) {
+	if wantsHelp(rest) {
+		return helpPage("status"), nil
+	}
 	if len(rest) > 0 {
 		return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, rest[0]), Usage: true}
 	}
 	return &Parsed{Action: ActionStatus}, nil
 }
 
-// parseHistory parses `history [--failed] [--limit N]`. --failed filters to
-// failures; --limit caps the rows (a non-negative integer). Unknown options
-// error with usage, like the other subcommands.
+// parseHistory parses `history [--failed] [--limit N] [--search Q]`. --failed
+// filters to failures; --limit caps the rows (a non-negative integer); --search
+// matches a substring of the title, the link or the saved file's name, mirroring
+// the GUI's search box so the two channels find the same records. Unknown
+// options error with usage, like the other subcommands.
 func parseHistory(rest []string) (*Parsed, error) {
+	if wantsHelp(rest) {
+		return helpPage("history"), nil
+	}
 	p := &Parsed{Action: ActionHistory, HistoryLimit: DefaultHistoryLimit}
 	for i := 0; i < len(rest); i++ {
 		switch rest[i] {
 		case "--failed":
 			p.HistoryFailed = true
+		case "--ids":
+			p.HistoryIDs = true
+		case "--search":
+			// An empty query is rejected rather than treated as "no filter": the
+			// user typed --search meaning to narrow, and silently listing
+			// everything would look like the filter failed to work.
+			if i+1 >= len(rest) || rest[i+1] == "" {
+				return nil, &ParseError{Msg: MsgMissingSearch}
+			}
+			p.HistorySearch = rest[i+1]
+			i++
 		case "--limit":
 			if i+1 >= len(rest) || rest[i+1] == "" {
 				return nil, &ParseError{Msg: MsgMissingLimit}
@@ -262,6 +357,12 @@ func parseHistory(rest []string) (*Parsed, error) {
 // command lists what it could act on (the caller decides), so an empty invocation
 // is valid, not an error.
 func parseTargeted(action Action, rest []string) (*Parsed, error) {
+	if wantsHelp(rest) {
+		if action == ActionCancel {
+			return helpPage("cancel"), nil
+		}
+		return helpPage("retry"), nil
+	}
 	p := &Parsed{Action: action}
 	for _, a := range rest {
 		switch {
@@ -277,6 +378,76 @@ func parseTargeted(action Action, rest []string) (*Parsed, error) {
 	}
 	if p.All && p.Target != "" {
 		return nil, &ParseError{Msg: MsgTargetAndAll, Usage: true}
+	}
+	return p, nil
+}
+
+// parseOpen parses `open [<n>|<id>] [--folder]`. The target grammar is the one
+// cancel/retry already use — an index into the list the command prints, or an
+// id-prefix — so the tool has ONE way to name a thing. --folder shows the file
+// in the file manager instead of opening it. With no target the command prints
+// the numbered history to read an index off, exactly as a bare `ytdl cancel`
+// prints the queue.
+//
+// There is deliberately no --all: opening twenty files at once is not a thing
+// anyone means to do, unlike cancelling twenty queued jobs.
+func parseOpen(rest []string) (*Parsed, error) {
+	if wantsHelp(rest) {
+		return helpPage("open"), nil
+	}
+	p := &Parsed{Action: ActionOpen}
+	for _, a := range rest {
+		switch {
+		case a == "--folder":
+			p.OpenFolder = true
+		case strings.HasPrefix(a, "-"):
+			return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, a), Usage: true}
+		case p.Target != "":
+			return nil, &ParseError{Msg: MsgTooManyTargets, Usage: true}
+		default:
+			p.Target = a
+		}
+	}
+	return p, nil
+}
+
+// parseAgain parses `again [<n>|<id>]` — same target grammar, no options. Like
+// open, no --all: "download all of these again" is a way to flood the queue by
+// accident.
+func parseAgain(rest []string) (*Parsed, error) {
+	if wantsHelp(rest) {
+		return helpPage("again"), nil
+	}
+	p := &Parsed{Action: ActionAgain}
+	for _, a := range rest {
+		switch {
+		case strings.HasPrefix(a, "-"):
+			return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, a), Usage: true}
+		case p.Target != "":
+			return nil, &ParseError{Msg: MsgTooManyTargets, Usage: true}
+		default:
+			p.Target = a
+		}
+	}
+	return p, nil
+}
+
+// parseConfig parses `config [--path]`. It is read-only by design (ADR-0013): a
+// CLI write path would duplicate config.Save's validation surface for a task the
+// GUI and a text editor already serve. --path prints only the file path, for
+// scripts that want to open or back it up.
+func parseConfig(rest []string) (*Parsed, error) {
+	if wantsHelp(rest) {
+		return helpPage("config"), nil
+	}
+	p := &Parsed{Action: ActionConfig}
+	for _, a := range rest {
+		switch a {
+		case "--path":
+			p.ConfigPathOnly = true
+		default:
+			return nil, &ParseError{Msg: fmt.Sprintf(MsgUnknownOption, a), Usage: true}
+		}
 	}
 	return p, nil
 }

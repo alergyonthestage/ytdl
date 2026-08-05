@@ -44,6 +44,78 @@ func Clip(s string, maxCols int) string {
 	return b.String()
 }
 
+// Pad right-pads s with spaces to exactly cols terminal COLUMNS, or clips it to
+// cols when it is already wider. It is what keeps a table's columns aligned when
+// a cell holds CJK or emoji: fmt's "%-20s" pads by BYTES, which misaligns a
+// column as soon as a title is not plain ASCII. cols <= 0 yields s unchanged.
+func Pad(s string, cols int) string {
+	if cols <= 0 {
+		return s
+	}
+	w := DisplayWidth(s)
+	if w > cols {
+		// Clip stops BEFORE a rune that would exceed its budget, so a 2-column
+		// CJK or emoji rune at the boundary leaves the cell one column short —
+		// and every column to its right on that row shifts left by one, which is
+		// exactly the misalignment Pad exists to prevent. Re-measure and top up.
+		c := Clip(s, cols)
+		return c + strings.Repeat(" ", cols-DisplayWidth(c))
+	}
+	return s + strings.Repeat(" ", cols-w)
+}
+
+// Wrap breaks s into lines of at most maxCols terminal COLUMNS, splitting on
+// spaces. It is the counterpart to Clip for text that must survive intact: a
+// clipped sentence loses its tail, which is fine for a title in a table and NOT
+// fine for an instruction — "…con  ytdl --updat…" is a command the user cannot
+// run. Callers that redraw a region in place must keep using Clip, since Wrap
+// changes the line count. A word longer than maxCols is clipped rather than
+// broken mid-word, so a pathological path cannot produce a column of fragments.
+// maxCols <= 0 yields s unchanged, as a single line.
+func Wrap(s string, maxCols int) []string {
+	if maxCols <= 0 || DisplayWidth(s) <= maxCols {
+		return []string{s}
+	}
+	var lines []string
+	var cur strings.Builder
+	curWidth := 0
+	for _, word := range strings.Fields(s) {
+		ww := DisplayWidth(word)
+		switch {
+		case curWidth == 0:
+			// A word that cannot fit on a line of its own is clipped: breaking it
+			// would produce fragments no more readable than an ellipsis.
+			if ww > maxCols {
+				lines = append(lines, Clip(word, maxCols))
+				continue
+			}
+			cur.WriteString(word)
+			curWidth = ww
+		case curWidth+1+ww <= maxCols:
+			cur.WriteByte(' ')
+			cur.WriteString(word)
+			curWidth += 1 + ww
+		default:
+			lines = append(lines, cur.String())
+			cur.Reset()
+			curWidth = 0
+			if ww > maxCols {
+				lines = append(lines, Clip(word, maxCols))
+				continue
+			}
+			cur.WriteString(word)
+			curWidth = ww
+		}
+	}
+	if curWidth > 0 {
+		lines = append(lines, cur.String())
+	}
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
 func runeWidth(r rune) int {
 	switch {
 	case isZeroWidth(r):

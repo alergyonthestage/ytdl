@@ -118,8 +118,8 @@ func assign(p *Partial, key, value string, line int) *Warning {
 		v := value
 		p.Format = &v
 	case "audio_quality":
-		if !validAudioQuality(value) {
-			return &Warning{Line: line, Msg: fmt.Sprintf("invalid audio_quality %q (want 0-9); ignoring", value)}
+		if !ValidAudioQuality(value) {
+			return &Warning{Line: line, Msg: fmt.Sprintf("invalid audio_quality %q (want %s); ignoring", value, AudioQualityList)}
 		}
 		v := value
 		p.AudioQuality = &v
@@ -206,6 +206,12 @@ func assign(p *Partial, key, value string, line int) *Warning {
 			return &Warning{Line: line, Msg: fmt.Sprintf("invalid job_timeout %q (want a non-negative integer, seconds; 0 = no limit); ignoring", value)}
 		}
 		p.JobTimeout = &n
+	case "open_folder_on_done":
+		b, ok := parseBool(value)
+		if !ok {
+			return &Warning{Line: line, Msg: fmt.Sprintf("invalid open_folder_on_done %q (want true|false); ignoring", value)}
+		}
+		p.OpenFolderOnDone = &b
 	default:
 		return &Warning{Line: line, Msg: fmt.Sprintf("unknown key %q; ignoring", key)}
 	}
