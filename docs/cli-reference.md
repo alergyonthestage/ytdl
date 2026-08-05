@@ -81,7 +81,12 @@ background > verbose > silent > default). `--` takes the next token as the URL.
 **Job line format (Cycle 4).** `queue`/`retry`/`cancel` render each job **title-first**
 (the resolved `Artist - Track`) with the full URL on the line below; a job with no
 known title yet shows the URL alone, and a playlist shows the URL flagged
-`(playlist)`. The title is written onto the spool job while it runs
+`(playlist)`. Since Cycle 5's closing, `queue` adds a third line — `cartella: <dir>`,
+`~`-contracted — from the output dir **frozen in the job's settings at enqueue**, so
+it answers "where will *this* job land" rather than "where would the settings send
+one now" (gate-C finding G1). A job whose spec cannot be read prints no such line
+rather than an empty label. `cancel`/`retry` do not add it: those lists exist to
+identify a job to act on, not to describe where it goes. The title is written onto the spool job while it runs
 (`queue.Spool.SetTitle`, driven by `run.RunQueued`'s `onTitle` callback — the daemon
 package is untouched); `retry` additionally back-fills a title from the log store
 (`logstore.TitleForURL`, per-job `Settings.LogDir`) for jobs that failed before their
@@ -135,18 +140,34 @@ Example: `status` → `recenti (ultimi 30 giorni): 12 ok · 1 fallito`.
 
 ### 3.4 History listing
 
-Title-first, most-recent-first, one line per job:
+Numbered (the index is what `ytdl open`/`again` take), most-recent-first, one line
+per job, and then the one fact that differs by outcome — **where** it landed for a
+success, **why** it failed for a failure:
 
 ```
 STORICO ytdl — ultimi 30 giorni
-  ✓ 23/07 20:47  Massive Attack - Black Milk
-  ✓ 23/07 20:31  Massive Attack - Dissolved Girl
-  ✗ 23/07 19:12  (fallito) youtu.be/Xk3…
+  [1] ✓ 23/07 20:47  Massive Attack - Black Milk   .mp3   ~/Music/ytdl
+  [2] ✗ 23/07 19:12  youtu.be/Xk3…                 .mp3   ERROR: … HTTP Error 429: Too Ma…
+        YouTube sta limitando le richieste: aspetta qualche minuto e riprova. Se
+        succede spesso, riduci i download in parallelo nelle impostazioni.
+Apri:  ytdl open <n>   ·   riscarica:  ytdl again <n>   ·   solo falliti:  ytdl history --failed
 ```
 
 The title comes from `history.jsonl`; a failure with no resolved title falls back
-to a shortened URL. `--failed` filters to failures; `--limit N` caps the count
-(default a small N).
+to a shortened URL. `--failed` filters to failures, `--limit N` caps the count,
+`--search` matches title, link and saved filename, and `--ids` adds the stable id.
+A **narrowed** listing prints ids and advertises those instead of the index, since
+`open`/`again` resolve `<n>` against the unfiltered history.
+
+The indented line under a failure is the **next step** (gate-C finding G8,
+`ux-principles.md` §5: an error that only states what went wrong is incomplete).
+It is derived at render time by `jobs.FailureHint` from the reason already stored,
+so records written before the catalogue existed get one too, and the GUI shows the
+identical text because it calls the same function. It **wraps** rather than
+clipping — the rest of the row may be cut, an instruction may not, or the user
+reads `ytdl --updat…` and types a command that does not exist. A failure with no
+remedy that exists today (an age- or bot-restricted video, until Cycle 9 ships
+`cookies_from_browser`) prints no hint at all rather than an invented one.
 
 ### 3.5 Error mediation (P5)
 
@@ -155,6 +176,14 @@ captured, and on failure a mediated line is printed. The YouTube anti-bot signat
 (*"Sign in to confirm you're not a bot"*) is recognised and gets a specific hint
 that the real download usually still works. Unknown failures print a generic line
 plus the last stderr line; the full dump is behind `-v`.
+
+This is **live** mediation, in `internal/run`, about the run happening now. It is
+distinct from the **history** hint of §3.4 (`jobs.FailureHint`), which is derived
+from a stored record long after the fact and is shared with the GUI. The two agree
+by intent, not by mechanism: note that the bot signature gets a hint here — "the
+real download usually still works", which is true of a dry run — while the history
+catalogue stays deliberately silent on it, because a *failed* download has no
+remedy for it until Cycle 9.
 
 ### 3.6 Empty states
 
