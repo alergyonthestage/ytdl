@@ -215,7 +215,48 @@ work last.
 | G8 | A failure says what went wrong, never **what to do** | **high** | `Entry.Error` is yt-dlp's last stderr line, in English, capped at 200 runes — the observed record ends mid-URL (`…github.com/yt-dl…`). `ux-principles.md` §5 requires the next step. Fixable with a **render-time** hint derived from the stored raw line: no schema change, and it works on records already written. Ships only with remedies that exist today; the age/bot remedy waits for G25. |
 | G9 | "Mostra nel Finder" is offered on Linux | low | **Ruled 2026-08-04** ([ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md) §3): the label names the folder on every platform — "Mostra nella cartella", with its neighbour becoming "Apri la cartella". §3 is already amended; the strings still have to follow in `app.js` (+ `spa_test.go`), `cli/messages.go`, `cli/help.go`. "Finder" stays in the macOS guides, which mean the application. |
 | G10 | `beforeunload` implies that closing the tab cancels the queue | low | "Vuoi uscire? Hai download in coda." — the daemon keeps draining, by design (ADR-0008). Wording only. |
-| G11 | "Riprova" is normative vocabulary with **no surface** | low | §3 lists it as a GUI label, but `queueDTO` exposes only `pending` and `running`: a job that failed in the spool is invisible in the GUI. **Ruled 2026-08-04** ([ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md) §4): the asymmetry is recorded per §7 and the surface lands in **Cycle 6**, which reworks that view anyway — showing failed spool jobs needs a decision (the same job also sits in the history under a different verb), and the closing session takes no decisions. |
+| G11 | *(deferred to Cycle 6)* "Riprova" is normative vocabulary with **no surface** | low | §3 lists it as a GUI label, but `queueDTO` exposes only `pending` and `running`: a job that failed in the spool is invisible in the GUI. **Ruled 2026-08-04** ([ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md) §4): the asymmetry is recorded per §7 and the surface lands in **Cycle 6**, which reworks that view anyway — showing failed spool jobs needs a decision (the same job also sits in the history under a different verb), and the closing session takes no decisions. |
+
+#### R — delivered (2026-08-04, branch `feat/ux/cycle5-unified-ux`)
+
+Ten of the eleven, one atomic commit each; **G11 is out by ADR-0014 §4** and lands
+in Cycle 6. The register above keeps the *causes* — this is what shipped.
+
+| # | Shipped as |
+|---|---|
+| G1 | `jobDTO.Location` + both GUI queue rows, and a `cartella:` line under each `ytdl queue` row. Both channels say **the same words**, from the dir frozen at enqueue — what *this* job will do, not what the settings would do now. `RenderQueue` took a `QueueView{Full,Width,Home}`, the shape `HistoryView` already had, so `$HOME` stays at the edge |
+| G2 | The unsaved-changes pattern on the session field (`ux-principles.md` §8.4): a pending note whenever it disagrees with what is in force, where "in force" is the **server's echo**. A state refresh neither overwrites an edit in progress nor makes a pending one look applied |
+| G3 | The one-shot controls return to their resolved default after a **successful** submit; a failed one keeps what the user typed |
+| G4 | The playlist box returns to the **configured default**, not to unticked — and follows a default just changed in Impostazioni |
+| G5 | Not disabled: the CLI honours the key and this form is its only editor (`ytdl config set` deferred by ADR-0013). Moved behind the Download group's *Avanzate* disclosure (§2 tier 3), relabelled to name the channel, and genuinely disabled-with-a-reason where the platform has no launcher |
+| G6 | The log panel is scrolled to **and focused** before the fetch, so it is on screen while it loads |
+| G7 | One home for the domain (`config.ValidAudioQuality` + `MaxAudioQuality`), the API's hand-rolled copy deleted. Found on the way: the GUI select stopped at 9 while the server took 10, so a config set to 10 **lost its value** at the first save |
+| G8 | `jobs.FailureHint` — derived at render time from the stored line, so pre-catalogue records get it too; one function, therefore identical text in both channels. Age/bot matches a deliberately **empty** first entry until Cycle 9 |
+| G9 | The two labels of §3 exactly, in `app.js`, `cli/messages.go`, `cli/help.go` — and in `ytdl config`, the surface the first pass missed. "Finder" survives only in the macOS guides and in comments about macOS behaviour |
+| G10 | Wording only; ADR-0008 quoted the replaced string, so it carries the correction |
+
+**Reviewed adversarially (2026-08-04)** — three reviewers (SPA · Go · this
+document), every finding re-verified by the lead before acting, each fix
+confirmed to fail with the fix reverted. Seven further commits. What the ten had
+got wrong:
+
+- **G8's hint was clipped** at terminal width: at 80 columns the ffmpeg one read
+  `ytdl --updat…`, an instruction that cannot be run — the very defect §5 names.
+  Fixed by `term.Wrap`, the counterpart to `Clip`: a title may be cut, an
+  instruction may not. The test that missed it passed `Width: 0`.
+- **Three hints pointed at the wrong remedy.** yt-dlp reports a full disk and an
+  unwritable folder as *postprocessing* errors, and the generic needle sat above
+  both — "reinstall the dependencies" onto the full disk that caused it. A 404
+  also says "unable to download webpage", so a permanently dead link sent the
+  user to check their network.
+- **Three holes in G2 itself**: a stale `/api/state` frame (they arrive on every
+  reconnect) undid a just-applied override *with no marker*; the success branch
+  discarded typing done while the PUT was in flight; the trim comparison pinned
+  the marker on for ever on an untouched field.
+- **`showLog` had no sequence guard**, so one download's log could land under
+  another's title — and, since G8, next to another's remedy.
+- **A new untruth introduced by G5's own hint**: it promised a completion
+  notification unconditionally, while `notify` is editable two sections below.
 
 ### M — the concept is unclear (Cycle 6, analysis first)
 

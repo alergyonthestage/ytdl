@@ -551,12 +551,12 @@ channels in one pass so they stop diverging. Runtime/CLI/GUI layers only —
   [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md). The cycle does
   **not** merge as-is: it closes on the `R` group below.
 
-### Cycle 5 closing — gate-C fixes (`R`) — **next**
+### Cycle 5 closing — gate-C fixes (`R`) — **built and reviewed; awaiting merge + release**
 
 The eleven findings where a surface contradicts either `ux-principles.md` or its
-own label. None needs a new decision, so this session **starts at
-implementation** — no analysis, no design gate — on the existing branch, and ends
-at the merge and the long-deferred release.
+own label. None needed a new decision, so the session **started at
+implementation** — no analysis, no design gate — on the existing branch. It ends
+at the merge and the long-deferred release, both of which are still open.
 
 - **Scope:** G1 (queue rows state the destination, both channels) · G2 (the
   session-folder field can no longer show a value that is not in force) · G3 (the
@@ -579,15 +579,36 @@ at the merge and the long-deferred release.
   G3 and G4 ship their *truthfulness* half here; the full scope model (visible
   effective destination, explicit promotion, the same rule for the format
   control) is Cycle 6. G8 ships the catalogue; the age/bot remedy needs Cycle 9.
-- **Done when:** no GUI surface asserts something untrue; suite green under
-  `-race`; goldens byte-unchanged; branch merged `--no-ff` into `main`; **the
-  release since v2.0.0 is tagged and verified on hardware**.
-- **Baseline, measured 2026-08-04** (the session that opens this work starts from
-  it): `go vet` clean, `gofmt` clean, **whole suite green under `-race` in ~12 s**
-  from a cold cache, `git diff main -- internal/core/ internal/daemon/` empty. The
-  toolchain is now baked into the project container image, so a session no longer
-  spends its opening minutes provisioning Go (see
+- **Done when:** ~~no GUI surface asserts something untrue~~ · ~~suite green under
+  `-race`~~ · ~~goldens byte-unchanged~~ · branch merged `--no-ff` into `main` ·
+  **the release since v2.0.0 tagged and verified on hardware**. The first three
+  are done; the last two are the maintainer's, and are what this cycle is now
+  waiting on.
+- **Built (2026-08-04):** ten commits, one per finding, in the order G9 · G10 ·
+  G7 · G6 · G1 · G5 · G3 · G4 · G2 · G8 — cheapest and most isolated first, so
+  every commit is green on its own. What each one shipped, and the two judgement
+  calls it took, are in
+  [improvements.md § R — delivered](improvements.md#gate-c).
+- **Reviewed (2026-08-04):** an adversarial pass on three lenses (the SPA, the Go
+  layers, this document's contract), every finding re-verified before acting and
+  every fix confirmed to fail with the fix reverted. **Seven further commits**:
+  the CLI hint was being clipped into `ytdl --updat…`; three hints named the
+  wrong remedy (a full disk sent to reinstall dependencies, a dead link sent to
+  check the network); three holes in G2 itself, including a stale state frame
+  that silently undid a just-applied override; an unguarded `showLog` that could
+  show one download's log next to another's remedy; and one *new* untruth, a hint
+  promising a notification the user may have switched off. Detail in the same
+  register section.
+- **Baseline, measured 2026-08-04** (unchanged after all seventeen commits):
+  `go vet` clean, `gofmt` clean, **whole suite green under `-race`**,
+  `git diff main -- internal/core/ internal/daemon/` empty — the parity gate has
+  now held for four cycles. The toolchain is baked into the project container
+  image, so a session no longer spends its opening minutes provisioning Go (see
   [go-engine.md](go-engine.md#build-test-release)).
+- **Next session picks up at:** the docs are current (this entry and the register
+  were written as part of the closing), so the work left is the `--no-ff` merge
+  into `main`, the tag, and the hardware verification — plus the small queue of
+  documentation debt the review surfaced, listed under "Deferred / planned".
 - **Known, not blocking:** `TestRunQueuedCancelKillsProcessGroup` flaked once
   under container load on a cold-cache `-race` run (it waits `killGrace+2s` for a
   process-group signal); it passed in the 2026-08-04 baseline. Pre-existing timing
@@ -634,6 +655,15 @@ same controls.
   session scope altogether. If they do, Cycle 6 builds the promotion affordance
   differently and Cycle 8 inherits it — so this is answered before either is
   built, not after.
+- **Recorded by the Cycle 5 review, for the views this cycle reworks anyway:**
+  the failure-log panel does not return focus when it closes and does not close
+  on Escape (it became focusable in G6, so this is now worth having); switching
+  views leaves it open over a list that has been reloaded under it; and a
+  **relative** `output_dir` is displayed unresolved by both new destination
+  surfaces. That last one is a trap: it must **not** be "fixed" by making the
+  path absolute in the reader, because it is the daemon's working directory that
+  resolves it — the reader would state something false. It belongs with G16,
+  which is where a session override stops being accepted unvalidated.
 - **Done when:** a user can always see where the next download will land and
   which scope decided it; no per-download control is sticky by accident; the same
   rule is stated once in `ux-principles.md` §8 and holds in both channels.
