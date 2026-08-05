@@ -1,6 +1,7 @@
 # ytdl — Go Engine Architecture (as-built)
 
-Status: **as-built**, Cycle 1 (Session 3, 2026-07-22). Describes the compiled Go
+Status: **as-built**. Written for Cycle 1 (Session 3, 2026-07-22); the package
+layout below is current as of Cycle 5's closing (2026-08-04). Describes the compiled Go
 `ytdl` that supersedes the Bash script at parity. The Bash tool's as-built design
 is in [architecture.md](architecture.md) (still the golden **reference**); the
 exact behaviour this engine reproduces is [go-port-parity-contract.md](go-port-parity-contract.md).
@@ -20,14 +21,16 @@ Module `github.com/alergyonthestage/ytdl`, **Go 1.22+, standard library only,
 
 ## Package layout & dependency direction
 
+Two diagrams: the Cycle-1 spine, then what the later cycles added around it.
+
 ```mermaid
 flowchart TD
     MAIN["cmd/ytdl/main.go<br/>parse → resolve → dep-check → dispatch · owns exit codes"]
-    CLI["internal/cli<br/>hand-written parser (+C1/C3) · Usage & parse messages"]
+    CLI["internal/cli<br/>hand-written parser (+C1/C3) · Usage & parse messages · renderers"]
     RUN["internal/run<br/>Dispatch · 5 modes · temp files · background · deps · version/update · runtime messages"]
     CORE["internal/core<br/>BuildArgs / ReExecArgs (pure, golden-tested)"]
-    CONFIG["internal/config<br/>Settings · Defaults · Resolve (overlay) · LoadFile"]
-    LOGSTORE["internal/logstore<br/>central store · retention · breadcrumb · hash (Cycle 2A)"]
+    CONFIG["internal/config<br/>Settings · Defaults · Resolve (overlay) · LoadFile · Save"]
+    LOGSTORE["internal/logstore<br/>central store · retention · breadcrumb · hash · history record"]
     NOTIFY["internal/notify<br/>Notifier · osascript / no-op (Cycle 2A)"]
     BUILD["internal/buildinfo<br/>Version (ldflags)"]
     MAIN --> CLI
@@ -42,6 +45,49 @@ flowchart TD
     RUN --> BUILD
     CORE --> CONFIG
 ```
+
+The front-ends added since (queue daemon, Cycle 2B; web GUI, Cycle 3; the shared
+actions and the CLI's task-oriented surface, Cycles 4–5) hang off the same core:
+
+```mermaid
+flowchart TD
+    MAIN["cmd/ytdl"]
+    CLI["internal/cli<br/>parser + pure renderers<br/>(QueueView · HistoryView)"]
+    WEBUI["internal/webui<br/>local HTTP API · SSE · the three assets"]
+    DAEMON["internal/daemon<br/>lock · single instance · idle-exit"]
+    JOBS["internal/jobs<br/>cancel · again · open/reveal guards<br/>FailureHint (both channels)"]
+    QUEUE["internal/queue<br/>maildir spool · atomic transitions"]
+    OPEN["internal/open<br/>platform launcher + capability"]
+    TERM["internal/term<br/>display width · Clip · Pad · Wrap · TTY"]
+    LOGSTORE["internal/logstore"]
+    CONFIG["internal/config"]
+    RUN["internal/run"]
+    MAIN --> WEBUI
+    MAIN --> DAEMON
+    MAIN --> JOBS
+    MAIN --> QUEUE
+    CLI --> JOBS
+    CLI --> TERM
+    CLI --> LOGSTORE
+    CLI --> QUEUE
+    WEBUI --> JOBS
+    WEBUI --> QUEUE
+    WEBUI --> LOGSTORE
+    WEBUI --> CONFIG
+    DAEMON --> QUEUE
+    JOBS --> QUEUE
+    JOBS --> LOGSTORE
+    JOBS --> CONFIG
+    JOBS --> OPEN
+    RUN --> QUEUE
+```
+
+`internal/jobs` is the seam that keeps the two channels from drifting: whatever
+both of them do **to a record** lives there once. That is why the failure-hint
+catalogue is in it rather than in either front-end — the GUI and the CLI show the
+same remedy because they call the same function, not because two authors kept two
+tables in step (gate-C finding G8). The `cli → jobs` edge exists for exactly that;
+nothing in `jobs` imports `cli`, so there is no cycle.
 
 - **`internal/config`** (leaf) — the 9-key `Settings`, `Defaults()`, `Resolve()` (the
   per-field overlay: flag > env > session > config file > default), and `LoadFile()`
@@ -63,6 +109,27 @@ flowchart TD
 - **`internal/notify`** (leaf, Cycle 2A) — the completion-notification `Notifier`
   abstraction: an `osascript` backend on macOS, a no-op elsewhere (so CI and the
   Linux container exercise the same path). Best-effort, timeout-bounded.
+- **`internal/queue`** (Cycle 2B) — the filesystem spool under
+  `~/.local/state/ytdl/queue/{pending,running,done,failed}/`, with atomic `mv`
+  state transitions (maildir-style, no locks). The spool *is* the state, so both
+  channels inspect it directly. A job carries its **resolved settings**, frozen at
+  enqueue — which is what lets both queue views state where it will land.
+- **`internal/daemon`** (Cycle 2B) — the on-demand drainer: an exclusive `flock`
+  for single-instance, draining under the concurrency cap, idle-exiting when the
+  queue empties and no GUI is connected (ADR-0008). **Untouched since Cycle 2B**,
+  like `core`.
+- **`internal/jobs`** (Cycle 5) — what both channels do *to a record*: cancel,
+  "riscarica", the open/reveal guards (a record id, never a path), and the
+  render-time failure-hint catalogue. Its existence is the answer to "the GUI and
+  the CLI disagree about what a verb means".
+- **`internal/open`** (Cycle 5) — the only place ytdl invokes the desktop (`open`
+  / `xdg-open`), advertised as a **capability** so no dead control is rendered.
+- **`internal/webui`** (Cycle 3, extended in Cycle 5) — the loopback HTTP API, the
+  SSE stream and the three embedded assets. One document, hash routing, no reload:
+  an open SSE connection is the daemon's "GUI connected" clause.
+- **`internal/term`** — display-width arithmetic for a terminal that must not
+  wrap: `DisplayWidth`, `Clip` (cut a title), `Pad` (align a column) and `Wrap`
+  (never cut an instruction), plus TTY/`NO_COLOR` detection.
 - **`cmd/ytdl`** — wires it together and owns `os.Exit` codes.
 
 Runtime strings live in `run`, parse strings in `cli` — so `run` does not import

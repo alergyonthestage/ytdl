@@ -73,7 +73,7 @@ parity**, so they are excluded here.
 |---|---|---|
 | `output_dir` | `OutputDir` | string; expand a leading `~/` or bare `~` to `$HOME`; **no** `$VAR` expansion |
 | `format` | `Format` | enum `mp3\|flac\|m4a\|opus\|wav` (C1) |
-| `audio_quality` | `AudioQuality` | numeric string `0`–`9` |
+| `audio_quality` | `AudioQuality` | numeric string `0`–`9` *(widened to `0`–`10`, yt-dlp's real scale, by gate-C finding [G7](improvements.md#gate-c); `config.ValidAudioQuality` is the one authority)* |
 | `playlist_default` | `PlaylistDefault` | bool `true\|false` (case-insensitive) |
 | `name_template` | `NameTemplate` | raw string |
 | `strip_brackets` | `StripBrackets` | raw string (regex) |
