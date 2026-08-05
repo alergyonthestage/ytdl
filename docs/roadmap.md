@@ -551,7 +551,7 @@ channels in one pass so they stop diverging. Runtime/CLI/GUI layers only —
   [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md). The cycle does
   **not** merge as-is: it closes on the `R` group below.
 
-### Cycle 5 closing — gate-C fixes (`R`) — **built and reviewed; awaiting merge + release**
+### Cycle 5 closing — gate-C fixes (`R`) — **merged; awaiting the release**
 
 The eleven findings where a surface contradicts either `ux-principles.md` or its
 own label. None needed a new decision, so the session **started at
@@ -580,10 +580,10 @@ at the merge and the long-deferred release, both of which are still open.
   effective destination, explicit promotion, the same rule for the format
   control) is Cycle 6. G8 ships the catalogue; the age/bot remedy needs Cycle 9.
 - **Done when:** ~~no GUI surface asserts something untrue~~ · ~~suite green under
-  `-race`~~ · ~~goldens byte-unchanged~~ · branch merged `--no-ff` into `main` ·
-  **the release since v2.0.0 tagged and verified on hardware**. The first three
-  are done; the last two are the maintainer's, and are what this cycle is now
-  waiting on.
+  `-race`~~ · ~~goldens byte-unchanged~~ · ~~branch merged `--no-ff` into `main`~~
+  (`b36774e`, 2026-08-05) · **the release since v2.0.0 tagged and verified on
+  hardware** — the one thing still open, and the maintainer's, since it needs a
+  Mac and a push.
 - **Built (2026-08-04):** ten commits, one per finding, in the order G9 · G10 ·
   G7 · G6 · G1 · G5 · G3 · G4 · G2 · G8 — cheapest and most isolated first, so
   every commit is green on its own. What each one shipped, and the two judgement
@@ -605,10 +605,12 @@ at the merge and the long-deferred release, both of which are still open.
   now held for four cycles. The toolchain is baked into the project container
   image, so a session no longer spends its opening minutes provisioning Go (see
   [go-engine.md](go-engine.md#build-test-release)).
-- **Next session picks up at:** the docs are current (this entry and the register
-  were written as part of the closing), so the work left is the `--no-ff` merge
-  into `main`, the tag, and the hardware verification — plus the small queue of
-  documentation debt the review surfaced, listed under "Deferred / planned".
+- **Next session picks up at the release, and nothing else.** The docs are
+  current, the code is on `main`, and `main` is **not pushed**: the tag has to
+  reach the default branch for the release workflow to fire at all (the v2.0.0
+  gotcha, see phase 1). So: push `main`, tag, let the workflow build, then verify
+  on the Mac. Everything after that is Cycle 6, which starts with its own
+  analysis phase.
 - **Known, not blocking:** `TestRunQueuedCancelKillsProcessGroup` flaked once
   under container load on a cold-cache `-race` run (it waits `killGrace+2s` for a
   process-group signal); it passed in the 2026-08-04 baseline. Pre-existing timing
