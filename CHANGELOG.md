@@ -3,7 +3,18 @@
 Notable changes to ytdl. The format follows [Keep a Changelog](https://keepachangelog.com/),
 and versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [2.1.0] — 2026-08-06
+
+Everything built on top of the 2.0.0 engine, released in one cut: a download queue
+drained by an on-demand daemon, a local web interface, cancel/retry, and two UX
+passes that brought the CLI and the GUI onto the same words. Additive for valid
+input — a 2.0.0 command line keeps working — with two deliberate behaviour changes:
+`-b` now enqueues instead of re-execing itself into the background, and the failure
+`.log` written next to the audio is replaced by the central log store plus an
+opt-out breadcrumb.
+
+The sections below are grouped by the development cycle that produced them, in the
+order they were built.
 
 Cycle 2A — the first slice of the backend work (logs + notifications). All of it
 lives in the runtime layer and leaves the yt-dlp argument vector (and the golden
@@ -191,6 +202,74 @@ package are all unchanged. See
   scheme-trimmed stub). In `ytdl queue --watch` each line is capped to the terminal
   width — measured in **display columns**, so CJK/emoji titles do not wrap and corrupt
   the in-place redraw.
+
+Cycle 5 — a unified GUI/CLI UX pass, designed from the user's task model rather than
+from the existing commands, so the two front-ends stop diverging. Runtime/CLI/GUI
+layers only; the yt-dlp argument vector, the golden parity tests and the daemon
+package are unchanged. See
+[ADR-0013](docs/decisions/0013-cycle5-unified-ux.md),
+[ADR-0014](docs/decisions/0014-ux-scope-model-and-partial-outcome.md) and the
+normative [ux-principles.md](docs/ux-principles.md).
+
+### Added
+
+- **Three task-scoped GUI views** in the one never-reloading document — *Download*
+  (a new download and the live queue side by side, plus the last downloads),
+  *Cronologia* (filters, search, pagination, ranked row actions) and *Impostazioni*
+  (five groups, advanced keys behind a disclosure, a sticky unsaved-changes bar).
+- **The queue is actionable from the GUI** — a pending or running download can be
+  cancelled from the browser, lifting ADR-0010's read-only decision.
+- **Open and reveal in both channels** — `ytdl open <n>` and the GUI row actions
+  open a finished download or the folder it landed in. The API takes a **history
+  record id, never a path**, and revalidates it before acting.
+- **`ytdl again`** — re-run a past download straight from the history listing.
+- **`ytdl config`** — a read-only view of the settings actually in force, each row
+  annotated with **where its value comes from** (flag, environment, file, default),
+  which is what answers "I changed the folder and nothing happened".
+- **Task-oriented help** — a short `ytdl --help` that fits a screen, `ytdl help
+  <argomento>` for the detail, and per-command `--help`.
+- **A numbered, actionable `ytdl history`** — title first, carrying the index that
+  `open`, `again` and `retry` accept.
+- **Richer history records** — `path`, `dir`, `count`, `playlist` and a capped
+  `error`, so both channels can finally answer *where did the file go* and *why did
+  it fail*. Every field is `omitempty` and both the record id and its `.log` name are
+  derived rather than stored, so records written by earlier versions keep loading
+  unchanged.
+- **`open_folder_on_done` is honoured** — the long-documented key now opens the
+  destination folder when a download finishes.
+- **A failure says what to do next** — a remedy line derived at render time from the
+  stored error, so it appears on records written before it existed, and produced by
+  one function, so the CLI and the GUI use the same words.
+- **Queue rows state their destination** — `ytdl queue` and both GUI queue rows show
+  the folder frozen at enqueue time: what *this* job will do, not what the settings
+  would do now.
+
+### Changed
+
+- **The reveal actions name the folder, not the Finder**, in the GUI, the CLI
+  messages, the help and `ytdl config` — a launcher that is not always the Finder
+  should not be described as one. "Finder" survives only in the macOS guides.
+- **The per-download folder and the playlist checkbox are genuinely per-download** —
+  both return to their configured default after a *successful* submit (a failed one
+  keeps what was typed), and the checkbox follows a default just changed in
+  *Impostazioni*.
+- **The session folder override can no longer look applied when it is not** — the
+  field carries a pending marker whenever it disagrees with the value the server
+  reports as in force.
+- **`open_folder_on_done` moved behind the Download group's advanced disclosure**,
+  relabelled to name the channel it affects, and disabled *with a stated reason*
+  where the platform has no launcher.
+- The close-the-tab warning no longer implies that closing the browser cancels the
+  queue: the daemon keeps draining it either way.
+- The failure-log panel is scrolled into view and focused before its content loads,
+  instead of opening off screen.
+
+### Fixed
+
+- **`audio_quality = 10` is accepted.** The domain is yt-dlp's real `0`–`10` scale,
+  validated in one place shared by the config parser, the API and the GUI select;
+  the previous check tested a single character, so `10` — a valid yt-dlp value — was
+  rejected as malformed and a config carrying it lost the value on the first save.
 
 ## [2.0.0] — 2026-07-23
 
