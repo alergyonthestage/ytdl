@@ -46,7 +46,18 @@ Prefer not to use the Terminal? `ytdl gui` opens a local web interface (on your
 own machine, at `127.0.0.1`) to paste a link, watch live progress, see the queue
 and history, and edit settings — no Terminal needed.
 
-Music is saved to `~/Music/ytdl` by default. Run `ytdl --help` for every option.
+A background download (`-b`) joins a queue that keeps draining after you close the
+Terminal window:
+
+```bash
+ytdl queue                                          # what is downloading and what is waiting
+ytdl cancel                                         # stop a download (no argument: pick from a list)
+ytdl history                                        # what has been downloaded, newest first
+ytdl retry                                          # re-queue a failed download
+```
+
+Music is saved to `~/Music/ytdl` by default. Run `ytdl --help` for the essentials
+and `ytdl help` for the topic index.
 
 To change the default destination permanently, add this to your `~/.zprofile`:
 

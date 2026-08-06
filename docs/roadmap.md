@@ -19,9 +19,11 @@ and merged to `main` (2026-07-24; release pending)**; **Cycle 2B-plus
 (`cancel`/`retry`, per-job timeout, no-residue downloads, daemon diagnostics) is
 done and merged to `main` (2026-07-24; release pending)**; **Cycle 4 (CLI UX pass
 #2 — command/URL disambiguation, job titles) is done and merged to `main`
-(2026-07-24; release pending)**; **Cycle 5 (unified GUI/CLI UX) is in progress —
-implemented and adversarially reviewed, verified by the maintainer at gate C
-(2026-08-03), now closing on its gate-C fixes before the merge**.
+(2026-07-24; release pending)**; **Cycle 5 (unified GUI/CLI UX) is done — verified
+by the maintainer at gate C (2026-08-03), closed on its gate-C fixes and merged to
+`main` (2026-08-05, `b36774e`)**. Everything above is on `origin/main` and is cut
+as **v2.1.0**, whose changelog entry is written and dated; only the tag and the
+hardware verification are still open.
 
 That verification produced twenty-six findings
 ([improvements.md § Gate-C findings](improvements.md#gate-c)) and two
@@ -581,9 +583,9 @@ at the merge and the long-deferred release, both of which are still open.
   control) is Cycle 6. G8 ships the catalogue; the age/bot remedy needs Cycle 9.
 - **Done when:** ~~no GUI surface asserts something untrue~~ · ~~suite green under
   `-race`~~ · ~~goldens byte-unchanged~~ · ~~branch merged `--no-ff` into `main`~~
-  (`b36774e`, 2026-08-05) · **the release since v2.0.0 tagged and verified on
-  hardware** — the one thing still open, and the maintainer's, since it needs a
-  Mac and a push.
+  (`b36774e`, 2026-08-05) · ~~pushed to `origin/main`~~ · ~~the changelog closed
+  at **v2.1.0**~~ (2026-08-06) · **the tag pushed and the build verified on
+  hardware** — the one thing still open, and the maintainer's, since it needs a Mac.
 - **Built (2026-08-04):** ten commits, one per finding, in the order G9 · G10 ·
   G7 · G6 · G1 · G5 · G3 · G4 · G2 · G8 — cheapest and most isolated first, so
   every commit is green on its own. What each one shipped, and the two judgement
@@ -605,11 +607,16 @@ at the merge and the long-deferred release, both of which are still open.
   now held for four cycles. The toolchain is baked into the project container
   image, so a session no longer spends its opening minutes provisioning Go (see
   [go-engine.md](go-engine.md#build-test-release)).
-- **Next session picks up at the release, and nothing else.** The docs are
-  current, the code is on `main`, and `main` is **not pushed**: the tag has to
-  reach the default branch for the release workflow to fire at all (the v2.0.0
-  gotcha, see phase 1). So: push `main`, tag, let the workflow build, then verify
-  on the Mac. Everything after that is Cycle 6, which starts with its own
+- **The release, as it stands (2026-08-06).** `main` is pushed and
+  `origin/main` matches it, so the precondition holds: the tag reaches the default
+  branch, which is what the workflow needs to fire at all (the v2.0.0 gotcha, see
+  phase 1). The changelog's open `[Unreleased]` block — six cycles' worth, Cycle 5
+  included, which the closing had left out — is now closed as **v2.1.0**: a minor,
+  because everything since v2.0.0 is additive for valid input bar two recorded
+  behaviour changes (`-b` enqueues; the failure `.log` became the log store). What
+  is left is the maintainer's: `git tag -a v2.1.0`, push the tag, let the workflow
+  publish the two macOS binaries and `SHA2-256SUMS`, then verify the installed
+  build on the Mac. Everything after that is Cycle 6, which starts with its own
   analysis phase.
 - **Known, not blocking:** `TestRunQueuedCancelKillsProcessGroup` flaked once
   under container load on a cold-cache `-race` run (it waits `killGrace+2s` for a

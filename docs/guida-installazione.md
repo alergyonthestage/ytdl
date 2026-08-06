@@ -68,8 +68,8 @@ Poi scrivi:
 ytdl --version
 ```
 
-Se vedi due righe con `ytdl 2.0.0` e la versione di `yt-dlp`, l'installazione è
-riuscita. Puoi passare alla [guida all'uso](guida-uso.md).
+Se vedi due righe — la versione di `ytdl` (per esempio `ytdl v2.1.0`) e quella di
+`yt-dlp` — l'installazione è riuscita. Puoi passare alla [guida all'uso](guida-uso.md).
 
 ## Se qualcosa non funziona
 
