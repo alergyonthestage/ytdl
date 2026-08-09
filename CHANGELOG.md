@@ -3,7 +3,7 @@
 Notable changes to ytdl. The format follows [Keep a Changelog](https://keepachangelog.com/),
 and versions follow [Semantic Versioning](https://semver.org/).
 
-## [2.1.0] — 2026-08-06
+## [2.1.0] — 2026-08-09
 
 Everything built on top of the 2.0.0 engine, released in one cut: a download queue
 drained by an on-demand daemon, a local web interface, cancel/retry, and two UX

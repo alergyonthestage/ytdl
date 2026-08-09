@@ -10,31 +10,27 @@ out to yt-dlp/ffmpeg; the installer stays Bash and Python is not adopted. See
 [go-engine.md](go-engine.md) for the as-built engine. The confirmed sequence is
 **foundations → backend integrations → robustness → GUI**, with the GUI last.
 **Cycle 1 (foundations, phase 3) is done and shipped as v2.0.0 (2026-07-23)**;
-**Cycle 2A (backend logs + notifications, phase 4) is done and merged to `main`
-(2026-07-23; release pending)**; **Cycle 2B-core (queue + on-demand `ytdld` daemon)
-is done and merged to `main` (2026-07-23; release pending)**; **Cycle 2C (CLI UX
-pass — roles, count/history redesign, in-place `--watch`) is done and merged to
-`main` (2026-07-23; release pending)**; **Cycle 3 (the web GUI, phase 6b) is done
-and merged to `main` (2026-07-24; release pending)**; **Cycle 2B-plus
-(`cancel`/`retry`, per-job timeout, no-residue downloads, daemon diagnostics) is
-done and merged to `main` (2026-07-24; release pending)**; **Cycle 4 (CLI UX pass
-#2 — command/URL disambiguation, job titles) is done and merged to `main`
-(2026-07-24; release pending)**; **Cycle 5 (unified GUI/CLI UX) is done — verified
-by the maintainer at gate C (2026-08-03), closed on its gate-C fixes and merged to
-`main` (2026-08-05, `b36774e`)**. Everything above is on `origin/main` and is cut
-as **v2.1.0**, whose changelog entry is written and dated; only the tag and the
-hardware verification are still open.
+**Cycle 2A (backend logs + notifications, phase 4)** (2026-07-23); **Cycle 2B-core
+(queue + on-demand `ytdld` daemon)** (2026-07-23); **Cycle 2C (CLI UX pass — roles,
+count/history redesign, in-place `--watch`)** (2026-07-23); **Cycle 3 (the web GUI,
+phase 6b)** (2026-07-24); **Cycle 2B-plus (`cancel`/`retry`, per-job timeout,
+no-residue downloads, daemon diagnostics)** (2026-07-24); **Cycle 4 (CLI UX pass #2
+— command/URL disambiguation, job titles)** (2026-07-24); and **Cycle 5 (unified
+GUI/CLI UX)**, verified by the maintainer at gate C (2026-08-03), closed on its
+gate-C fixes and merged (2026-08-05, `b36774e`) — **all done, all merged to `main`,
+and all shipped together in v2.1.0 (2026-08-09), verified on hardware.**
 
 That verification produced twenty-six findings
 ([improvements.md § Gate-C findings](improvements.md#gate-c)) and two
 cross-cutting decisions ([ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md)).
 By maintainer decision (2026-08-03) they are executed **in class order —
-R → M → F → S** — as Cycle 5's closing plus four new cycles, described under
-[Implementation via development cycles](#implementation-via-development-cycles).
-The release of everything accumulated since v2.0.0 is cut **at the Cycle 5
-merge**, no longer at the end of the queue; the dedicated Phase-5 cycle
-(auto-retry/backoff + YouTube rate-limit) and the 6a AppleScript MVP follow the
-new cycles.
+R → M → F → S** — as Cycle 5's closing plus the new cycles described under
+[Implementation via development cycles](#implementation-via-development-cycles);
+the update path (2026-08-09, not a gate-C finding) joins them as the first `F`.
+The release of everything accumulated since v2.0.0 was cut at the Cycle 5 merge
+rather than at the end of that queue, and shipped as **v2.1.0** on 2026-08-09. The
+dedicated Phase-5 cycle (auto-retry/backoff + YouTube rate-limit) and the 6a
+AppleScript MVP follow the new cycles.
 
 ```mermaid
 flowchart LR
@@ -198,10 +194,11 @@ Useful config settings — the full list lives in [improvements.md](improvements
 (output dir, format, name template, background-by-default, concurrency, notify,
 log dir/retention, embed options, …).
 
-## Phase 4 — Backend integrations (Go) — `in progress`
+## Phase 4 — Backend integrations (Go) — `done`
 
 The maintainer's requested backend evolutions, built on the Go core. Split into
-Cycle 2A (logs + notifications, done) and Cycle 2B (queue + daemon, planned).
+Cycle 2A (logs + notifications) and Cycle 2B (queue + daemon, in 2B-core then
+2B-plus) — every item below is done, and all of it shipped in v2.1.0 (2026-08-09).
 
 | # | Item | Status | Ref |
 |---|---|---|---|
@@ -218,7 +215,7 @@ Cycle 2A (logs + notifications, done) and Cycle 2B (queue + daemon, planned).
 `internal/notify` (osascript / no-op), wired through `internal/run`; seven config
 keys added. `core.BuildArgs` and the goldens are byte-unchanged (parity preserved).
 Decisions in [ADR-0006](decisions/0006-cycle2a-logs-breadcrumbs-notifications.md).
-Release pending (no tag yet).
+Shipped in v2.1.0.
 
 **Cycle 2B-core (done, merged to `main` 2026-07-23):** `internal/queue` (lock-free
 maildir spool, atomic `mv` transitions) and `internal/daemon` (on-demand `ytdld`:
@@ -230,7 +227,7 @@ jobs run in silent mode, inheriting the 2A store/breadcrumb/notify. `core.BuildA
 and the goldens are byte-unchanged (parity preserved). Adversarially reviewed (3
 reviewers; the real findings — per-job panic isolation, escaping a persistent-error
 daemon wedge, best-effort recovery, `queue`-resumes-a-stalled-daemon — fixed).
-Decisions in [ADR-0007](decisions/0007-cycle2b-queue-daemon.md). Release pending.
+Decisions in [ADR-0007](decisions/0007-cycle2b-queue-daemon.md). Shipped in v2.1.0.
 
 ## Phase 5 — Robustness & tests (Go) — `in progress`
 
@@ -247,7 +244,7 @@ planned as a dedicated cycle:** automatic retries/backoff (`Attempts`/`NotBefore
 and YouTube rate-limit handling — the riskiest hardening, deliberately separated
 from the manual cancel/retry above.
 
-## Phase 6 — GUI — `in progress` (6b done; 6c in progress; 6a planned)
+## Phase 6 — GUI — `in progress` (6b + 6c done and shipped in v2.1.0; 6d planned; 6a planned)
 
 A GUI for non-developer users. It is a **front-end over the Go engine** (config +
 queue + runner already built), not a reimplementation. Runtime is settled by
@@ -262,10 +259,10 @@ installed by default.
 |---|---|---|---|
 | 6a | AppleScript/Automator MVP: paste/drop URL, pick folder, enqueue | planned | zero-dep, works to Mojave, immediate value for non-devs |
 | 6b | Web UI served by the daemon: live progress, format/settings, per-run/session/global output dir, settings editor, queue + in-progress view | done (Cycle 3) | `net/http` + SSE; single binary; authenticated local API |
-| 6c | Multi-view GUI (Download · Cronologia · Impostazioni), actionable queue and history, open/reveal the downloaded file | in progress (Cycle 5, closing) | designed with the CLI in one pass; [ADR-0013](decisions/0013-cycle5-unified-ux.md) |
+| 6c | Multi-view GUI (Download · Cronologia · Impostazioni), actionable queue and history, open/reveal the downloaded file | done (Cycle 5, shipped in v2.1.0) | designed with the CLI in one pass; [ADR-0013](decisions/0013-cycle5-unified-ux.md) |
 | 6d | GUI/CLI follow-through from the gate-C review: scope model, partial outcomes, destination presets, authentication, visual language | planned (Cycles 6–10) | [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md) · [findings](improvements.md#gate-c) |
 
-**Cycle 3 (6b) — done, merged to `main` (2026-07-24; release pending).** `ytdl gui`
+**Cycle 3 (6b) — done, merged to `main` (2026-07-24), shipped in v2.1.0.** `ytdl gui`
 opens a self-contained embedded web page served by the same binary (a `__daemon
 --gui` role — no separate `cmd/ytdld`, refining ADR-0008 for installation
 simplicity). Live per-job progress streams over SSE, captured from both of yt-dlp's
@@ -388,7 +385,7 @@ hash(URL) / item id with auto-cleanup; toggleable completion notifications
 golden argv path, so parity is preserved. Adversarially reviewed (one real bug —
 breadcrumb cleanup vs. glob metacharacters in the output folder — found and fixed);
 suite green under `-race`. See [ADR-0006](decisions/0006-cycle2a-logs-breadcrumbs-notifications.md).
-Release pending (no tag yet).
+Shipped in v2.1.0.
 
 **Cycle 2B-core — queue + on-demand daemon — done, merged to `main` (2026-07-23).**
 Filesystem spool (`internal/queue`, atomic `mv` transitions) drained by an on-demand
@@ -400,7 +397,7 @@ role (no always-on service — deferred to the GUI cycle). Reuses the 2A primiti
 (the central store as job history; `NormalizeURL`/`Hash` as stable job identity;
 queued jobs run silent, inheriting store/breadcrumb/notify). Parity preserved
 (`core.BuildArgs`/goldens byte-unchanged). Adversarially reviewed (3 reviewers).
-See [ADR-0007](decisions/0007-cycle2b-queue-daemon.md). Release pending.
+See [ADR-0007](decisions/0007-cycle2b-queue-daemon.md). Shipped in v2.1.0.
 
 - **Entry:** Cycle 1 shipped as v2.0.0; Cycle 2A merged to `main`. Based off the
   latest `main`.
@@ -421,7 +418,7 @@ appended off the golden path; verified against real yt-dlp that an absolute `-o`
 ignores `--paths`, hence the relative-`-o` override). Adversarially reviewed (3
 reviewers; the real findings — a stale-marker delete, a raced-success mis-recorded
 as failed, retry/cancel exit codes and error surfacing — all fixed).
-[ADR-0011](decisions/0011-cycle2b-plus-cancel-retry-hardening.md). Release pending.
+[ADR-0011](decisions/0011-cycle2b-plus-cancel-retry-hardening.md). Shipped in v2.1.0.
 
 - **Entry:** Cycle 2B-core merged to `main`. Based off the latest `main`.
 - **Done:** failed jobs can be retried and pending/running jobs cancelled from the
@@ -436,7 +433,7 @@ feedback. Built as `internal/term` + the log-store `history.jsonl`/`Load` read-A
 + `queue.PruneTerminal`, with the `queue`/`status` redesign, the new `history`
 subcommand, and the in-place `--watch`; adversarially reviewed (3 reviewers; 1
 critical + 6 warnings, all real ones fixed). Parity preserved
-([ADR-0009](decisions/0009-cycle2c-cli-ux.md)). Release pending. Scope delivered:
+([ADR-0009](decisions/0009-cycle2c-cli-ux.md)). Shipped in v2.1.0. Scope delivered:
 (1) `queue --watch` redraws its region **in place** instead of clearing the whole
 screen (which wiped the terminal and spammed scrollback); (2) the completion count
 is redesigned — `queue` shows only **live** work (pending/running), `status` shows
@@ -553,7 +550,7 @@ channels in one pass so they stop diverging. Runtime/CLI/GUI layers only —
   [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md). The cycle does
   **not** merge as-is: it closes on the `R` group below.
 
-### Cycle 5 closing — gate-C fixes (`R`) — **merged; awaiting the release**
+### Cycle 5 closing — gate-C fixes (`R`) — **done, merged and released in v2.1.0**
 
 The eleven findings where a surface contradicts either `ux-principles.md` or its
 own label. None needed a new decision, so the session **started at
@@ -584,8 +581,8 @@ at the merge and the long-deferred release, both of which are still open.
 - **Done when:** ~~no GUI surface asserts something untrue~~ · ~~suite green under
   `-race`~~ · ~~goldens byte-unchanged~~ · ~~branch merged `--no-ff` into `main`~~
   (`b36774e`, 2026-08-05) · ~~pushed to `origin/main`~~ · ~~the changelog closed
-  at **v2.1.0**~~ (2026-08-06) · **the tag pushed and the build verified on
-  hardware** — the one thing still open, and the maintainer's, since it needs a Mac.
+  at **v2.1.0**~~ (2026-08-06) · ~~the tag pushed and the build verified on
+  hardware~~ (2026-08-09). **The cycle is closed and released; nothing is open.**
 - **Built (2026-08-04):** ten commits, one per finding, in the order G9 · G10 ·
   G7 · G6 · G1 · G5 · G3 · G4 · G2 · G8 — cheapest and most isolated first, so
   every commit is green on its own. What each one shipped, and the two judgement
@@ -607,17 +604,20 @@ at the merge and the long-deferred release, both of which are still open.
   now held for four cycles. The toolchain is baked into the project container
   image, so a session no longer spends its opening minutes provisioning Go (see
   [go-engine.md](go-engine.md#build-test-release)).
-- **The release, as it stands (2026-08-06).** `main` is pushed and
-  `origin/main` matches it, so the precondition holds: the tag reaches the default
-  branch, which is what the workflow needs to fire at all (the v2.0.0 gotcha, see
-  phase 1). The changelog's open `[Unreleased]` block — six cycles' worth, Cycle 5
-  included, which the closing had left out — is now closed as **v2.1.0**: a minor,
-  because everything since v2.0.0 is additive for valid input bar two recorded
-  behaviour changes (`-b` enqueues; the failure `.log` became the log store). What
-  is left is the maintainer's: `git tag -a v2.1.0`, push the tag, let the workflow
-  publish the two macOS binaries and `SHA2-256SUMS`, then verify the installed
-  build on the Mac. Everything after that is Cycle 6, which starts with its own
-  analysis phase.
+- **The release — done (2026-08-09), as v2.1.0.** The changelog's open
+  `[Unreleased]` block turned out to hold six cycles and to be **missing Cycle 5
+  entirely** (the closing's docs commits had touched roadmap, improvements,
+  cli-reference and go-engine, never the changelog); it was written from
+  [improvements.md § R — delivered](improvements.md#gate-c) and closed as
+  **2.1.0** — a minor, because everything since v2.0.0 is additive for valid input
+  bar two recorded behaviour changes (`-b` enqueues; the failure `.log` became the
+  log store). Then `main` pushed, tag pushed, workflow green, and the published
+  build installed and verified on the Mac. The v2.0.0 trigger gotcha did not
+  recur: `release.yml` has been on the default branch since then.
+- **Found while cutting it, not fixed:** the GitHub release body is generated with
+  `--generate-notes`, i.e. from commit titles, so the changelog entry does not
+  reach it. Switching `release.yml` to `--notes-file` would need the 2.1.0 section
+  extracted at build time — a workflow change, deliberately left to its own commit.
 - **Known, not blocking:** `TestRunQueuedCancelKillsProcessGroup` flaked once
   under container load on a cold-cache `-race` run (it waits `killGrace+2s` for a
   process-group signal); it passed in the 2026-08-04 baseline. Pre-existing timing
@@ -632,7 +632,8 @@ Correlated findings are grouped so each session owns one coherent surface.
 ```mermaid
 flowchart LR
   R["Cycle 5 closing<br/><b>R</b> · fixes<br/>+ merge + release"] --> M["Cycle 6<br/><b>M</b> · scope model"]
-  M --> F1["Cycle 7<br/><b>F</b> · partial outcome<br/>playlists per track"]
+  M --> U["Cycle 6-plus<br/><b>F</b> · update path"]
+  U --> F1["Cycle 7<br/><b>F</b> · partial outcome<br/>playlists per track"]
   F1 --> F2["Cycle 8<br/><b>F</b> · destination presets"]
   F2 --> F3["Cycle 9<br/><b>F</b> · authentication<br/>+ error remedies"]
   F3 --> S["Cycle 10<br/><b>S</b> · visual language"]
@@ -676,6 +677,65 @@ same controls.
 - **Done when:** a user can always see where the next download will land and
   which scope decided it; no per-download control is sticky by accident; the same
   rule is stated once in `ux-principles.md` §8 and holds in both channels.
+
+#### Cycle 6-plus — the update path (`F`) — planned
+
+Not a gate-C finding: raised by the maintainer on 2026-08-09, immediately after
+installing v2.1.0 by hand. It runs between Cycles 6 and 7 and is named `-plus`
+rather than renumbered (the `2B-plus` precedent), because
+[improvements.md](improvements.md#gate-c) pins G19–G23 to Cycle 7, G24 to Cycle 8,
+G25 to Cycle 9 and the `S` group to Cycle 10 — taking a number here would falsify
+every one of those references.
+
+**What already exists, so the cycle does not rebuild it:** `ytdl --update`
+(`internal/run/runner.go`) re-runs `install.sh` through `curl … | bash`, and the
+installer is the single provisioning path — it fetches ytdl, yt-dlp and ffmpeg,
+checksum-verifies each, and already handles replacing a *running* binary (atomic
+`mv`; the live process keeps its inode, `install.sh:253`). Applying an update is
+not the gap. The gap is:
+
+- **Nothing detects one.** There is no version comparison anywhere: the installer
+  always fetches `releases/latest` (re-downloading ffmpeg even when current), and
+  ytdl never asks GitHub anything. The only trigger a user has today is a download
+  that has started failing — they learn of the update from the breakage.
+- **The GUI has no update surface at all**, so the GUI-only user — the audience the
+  GUI exists for — has to open a Terminal. Same class of defect as the gate-C
+  findings: one channel cannot do what the other does, and the person who needs it
+  most has the fewest tools.
+
+- **Scope:** a probe for **both** components (ytdl *and* yt-dlp — the second is the
+  one that actually breaks every few months), a cached verdict, a notice in each
+  channel, and a way to act on it from the GUI. **Semi-automatic by maintainer
+  decision (2026-08-09): detect, then ask.** Never a silent self-replacement —
+  there is no rollback story, and other people depend on this tool.
+- **Analysis must settle:**
+  - **The probe.** `HEAD` on `github.com/<slug>/releases/latest` and read the
+    redirect (no API, no rate limit) versus `api.github.com` (a clean tag, but 60
+    unauthenticated requests per hour per IP).
+  - **When it runs.** Never on a hot path — a download must not wait on the
+    network. A verdict cached under `${XDG_STATE_HOME}/ytdl/` with a TTL, refreshed
+    off the critical path, so the answer surfaces on the *next* invocation.
+  - **Consent.** This is an outbound call on a schedule: it needs its own config
+    key (`update_check`) and plain wording, or it is a phone-home nobody agreed to.
+  - **Where it lives.** The natural home for a periodic check is the daemon — and
+    `internal/daemon` has been untouched for four cycles and is half the parity
+    gate. Either the check lives in the webui/jobs layer, or the constraint is
+    amended in this cycle's ADR. It is not quietly worked around.
+- **Design must settle — applying it from the GUI**, the hard half. The binary to
+  replace is the one serving the page: the daemon holds the flock and the queue,
+  the installer overwrites `~/.local/bin/ytdl` while it runs, and the live process
+  stays on the old inode until it restarts. So the design owes an answer on
+  refusing (or waiting) while downloads are in flight, running the installer
+  detached, restarting the daemon, and getting the browser to reconnect — against
+  [ADR-0008](decisions/0008-daemon-lifecycle.md), where an open SSE connection *is*
+  the liveness clause.
+- **Non-negotiable:** the update stays the installer. No second download-and-verify
+  path in Go (item 1.9,
+  [ADR-0005](decisions/0005-macos-floor-and-single-engine.md)) — that one is what
+  checks the checksums.
+- **Done when:** a user on a stale build is told so in the channel they actually
+  use, without ever having waited on the network to find out; a GUI-only user can
+  update without opening a Terminal; and the check can be turned off.
 
 #### Cycle 7 — partial outcome and playlists per track (`F`) — planned
 
@@ -749,12 +809,9 @@ Implements ADR-0014 decision 2, plus the storage work it forces.
   cycles, and can be pulled forward ahead of Cycle 9, whose rate-limit hint text
   overlaps with it.
 - **6a AppleScript/Automator MVP** — still planned (see Phase 6).
-- **Release of everything since v2.0.0** — `main` has accumulated Cycles 2A, 2B-core,
-  2C, 3, 2B-plus and 4 unreleased. By maintainer decision (2026-07-26) the tag is cut
-  **after** Cycle 5, in one release — i.e. at the merge that closes the gate-C `R`
-  fixes, **not** after the four cycles that follow it. Note the release-trigger
-  gotcha from v2.0.0: the workflow only fires once the tag reaches the default
-  branch.
+- ~~**Release of everything since v2.0.0**~~ — **done: v2.1.0, 2026-08-09.** Cut at
+  the Cycle 5 merge as decided on 2026-07-26, carrying Cycles 2A, 2B-core, 2C, 3,
+  2B-plus, 4 and 5 in one tag.
 - **Writable CLI config editor** (`ytdl config set`) — deferred by ADR-0013: it would
   duplicate `config.Save`'s validation for a task the GUI already serves.
 - **Reordering the pending queue** — considered for Cycle 5 and left out: it needs a
