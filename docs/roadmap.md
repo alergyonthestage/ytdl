@@ -28,9 +28,14 @@ R → M → F → S** — as Cycle 5's closing plus the new cycles described und
 [Implementation via development cycles](#implementation-via-development-cycles);
 the update path (2026-08-09, not a gate-C finding) joins them as the first `F`.
 The release of everything accumulated since v2.0.0 was cut at the Cycle 5 merge
-rather than at the end of that queue, and shipped as **v2.1.0** on 2026-08-09. The
-dedicated Phase-5 cycle (auto-retry/backoff + YouTube rate-limit) and the 6a
-AppleScript MVP follow the new cycles.
+rather than at the end of that queue, and shipped as **v2.1.0** on 2026-08-09.
+**Re-ordered on 2026-08-12**, when ytdl was installed for its first non-maintainer
+user: the **update path** and a new **desktop launcher** cycle run first, so that
+user can receive releases and start the interface without a terminal and without
+the maintainer returning to their machine. Cycle 6's analysis ran that same day
+and its gate A is closed ([ADR-0015](decisions/0015-cycle6-tab-scope-and-faithful-reruns.md));
+it resumes at its design phase. The dedicated Phase-5 cycle (auto-retry/backoff +
+YouTube rate-limit) still follows the new cycles.
 
 ```mermaid
 flowchart LR
@@ -244,7 +249,7 @@ planned as a dedicated cycle:** automatic retries/backoff (`Attempts`/`NotBefore
 and YouTube rate-limit handling — the riskiest hardening, deliberately separated
 from the manual cancel/retry above.
 
-## Phase 6 — GUI — `in progress` (6b + 6c done and shipped in v2.1.0; 6d planned; 6a planned)
+## Phase 6 — GUI — `in progress` (6b + 6c done and shipped in v2.1.0; 6d planned; 6a split — launcher next, paste/drop deferred)
 
 A GUI for non-developer users. It is a **front-end over the Go engine** (config +
 queue + runner already built), not a reimplementation. Runtime is settled by
@@ -257,7 +262,7 @@ installed by default.
 
 | # | Item | Status | Notes |
 |---|---|---|---|
-| 6a | AppleScript/Automator MVP: paste/drop URL, pick folder, enqueue | planned | zero-dep, works to Mojave, immediate value for non-devs |
+| 6a | AppleScript/Automator MVP: paste/drop URL, pick folder, enqueue | split (2026-08-12) | its **entry point** — a double-clickable icon that brings up the GUI — is pulled out as **Cycle 6-launch** and runs next; the paste/drop-and-enqueue app stays planned, and may prove unnecessary once the GUI is one click away |
 | 6b | Web UI served by the daemon: live progress, format/settings, per-run/session/global output dir, settings editor, queue + in-progress view | done (Cycle 3) | `net/http` + SSE; single binary; authenticated local API |
 | 6c | Multi-view GUI (Download · Cronologia · Impostazioni), actionable queue and history, open/reveal the downloaded file | done (Cycle 5, shipped in v2.1.0) | designed with the CLI in one pass; [ADR-0013](decisions/0013-cycle5-unified-ux.md) |
 | 6d | GUI/CLI follow-through from the gate-C review: scope model, partial outcomes, destination presets, authentication, visual language | planned (Cycles 6–10) | [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md) · [findings](improvements.md#gate-c) |
@@ -629,11 +634,22 @@ Class order, decided by the maintainer (2026-08-03): fix what misinforms the use
 first, decide what is ambiguous next, add capability after that, restyle last.
 Correlated findings are grouped so each session owns one coherent surface.
 
+**Order changed on 2026-08-12.** ytdl was installed for its first user who is not
+the maintainer, and two capabilities became urgent for a reason no finding had:
+that user must be able to receive the *next* releases, and to start the GUI,
+without a terminal and without the maintainer touching their machine again. So
+the update path and the desktop launcher are pulled **ahead** of Cycle 6, whose
+gate A is closed and which is ready to start on demand. The cycle *names* keep
+their suffixes — the numbers are pinned by the `G*` references in
+[improvements.md](improvements.md#gate-c), so renumbering would falsify them —
+and the running order is stated here rather than implied by the names.
+
 ```mermaid
 flowchart LR
-  R["Cycle 5 closing<br/><b>R</b> · fixes<br/>+ merge + release"] --> M["Cycle 6<br/><b>M</b> · scope model"]
-  M --> U["Cycle 6-plus<br/><b>F</b> · update path"]
-  U --> F1["Cycle 7<br/><b>F</b> · partial outcome<br/>playlists per track"]
+  R["Cycle 5 closing<br/><b>R</b> · fixes<br/>+ merge + release"] --> U["Cycle 6-plus<br/><b>F</b> · update path"]
+  U --> L["Cycle 6-launch<br/><b>F</b> · desktop launcher"]
+  L --> M["Cycle 6<br/><b>M</b> · scope model<br/><i>gate A closed</i>"]
+  M --> F1["Cycle 7<br/><b>F</b> · partial outcome<br/>playlists per track"]
   F1 --> F2["Cycle 8<br/><b>F</b> · destination presets"]
   F2 --> F3["Cycle 9<br/><b>F</b> · authentication<br/>+ error remedies"]
   F3 --> S["Cycle 10<br/><b>S</b> · visual language"]
@@ -644,11 +660,21 @@ full per-session protocol (analysis → gate A → design → gate B → impleme
 review → gate C → docs). Cycle 5's closing is the only one that skips to
 implementation, because its findings carry no open questions.
 
-#### Cycle 6 — the scope model (`M`) — planned
+#### Cycle 6 — the scope model (`M`) — **analysis done, gate A closed (2026-08-12)**
 
 Implements [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md)
 decision 1 across the Download view, plus the three findings that live on the
 same controls.
+
+**Its analysis ran on 2026-08-12 and its rulings are
+[ADR-0015](decisions/0015-cycle6-tab-scope-and-faithful-reruns.md)** — read that
+first: it answers the question below (presets do *not* retire the middle scope),
+renames that scope to **"in questa scheda"** and moves it into the page, rules
+G11 onto the history row, makes a re-run faithful to the original destination,
+turns the audio-quality control into a stepped 0–10 slider with a word per step,
+and puts every user-supplied value behind one shared validator. It also added
+two findings, **G27** and **G28**, which land in this cycle. What remains is the
+**design phase**: interfaces, DOM, endpoints and tests.
 
 - **Scope:** G12 + G13 (one rule for folder, format and playlist: one-shot by
   default, effective value always visible with its scope, explicit promotion) ·
@@ -661,10 +687,10 @@ same controls.
   failed-spool row, deferred here from the closing session: the design must first
   settle what that row *is*, since the same job also appears in the history under
   a different verb).
-- **Analysis must settle:** whether destination presets (Cycle 8) **retire** the
-  session scope altogether. If they do, Cycle 6 builds the promotion affordance
-  differently and Cycle 8 inherits it — so this is answered before either is
-  built, not after.
+- ~~**Analysis must settle:** whether destination presets (Cycle 8) **retire** the
+  session scope altogether.~~ **Answered** (ADR-0015 §1): they do not. A preset is
+  a *value*, a scope is a *duration*; they compose, so Cycle 6 builds a promotion
+  affordance that Cycle 8 fills with named values and adds no fourth scope.
 - **Recorded by the Cycle 5 review, for the views this cycle reworks anyway:**
   the failure-log panel does not return focus when it closes and does not close
   on Escape (it became focusable in G6, so this is now worth having); switching
@@ -673,15 +699,20 @@ same controls.
   surfaces. That last one is a trap: it must **not** be "fixed" by making the
   path absolute in the reader, because it is the daemon's working directory that
   resolves it — the reader would state something false. It belongs with G16,
-  which is where a session override stops being accepted unvalidated.
+  which is where a session override stops being accepted unvalidated. **Ruled**
+  (ADR-0015 §7): the refusal happens at input and the value is never rewritten;
+  an existing relative `output_dir` is displayed as written, marked as resolved
+  by the engine.
 - **Done when:** a user can always see where the next download will land and
   which scope decided it; no per-download control is sticky by accident; the same
   rule is stated once in `ux-principles.md` §8 and holds in both channels.
 
-#### Cycle 6-plus — the update path (`F`) — planned
+#### Cycle 6-plus — the update path (`F`) — **next**
 
 Not a gate-C finding: raised by the maintainer on 2026-08-09, immediately after
-installing v2.1.0 by hand. It runs between Cycles 6 and 7 and is named `-plus`
+installing v2.1.0 by hand. **Pulled ahead of Cycle 6 on 2026-08-12**, when ytdl
+was installed for a user who is not the maintainer: without it, every future
+release means physically returning to that machine. It keeps the name `-plus`
 rather than renumbered (the `2B-plus` precedent), because
 [improvements.md](improvements.md#gate-c) pins G19–G23 to Cycle 7, G24 to Cycle 8,
 G25 to Cycle 9 and the `S` group to Cycle 10 — taking a number here would falsify
@@ -735,7 +766,44 @@ not the gap. The gap is:
   checks the checksums.
 - **Done when:** a user on a stale build is told so in the channel they actually
   use, without ever having waited on the network to find out; a GUI-only user can
-  update without opening a Terminal; and the check can be turned off.
+  update without opening a Terminal; and the check can be turned off. **Raised on
+  2026-08-12:** the acceptance test is now a person who is not the maintainer —
+  they must be able to go from "there is an update" to "I am on it" from the GUI
+  alone, with nobody at their keyboard.
+
+#### Cycle 6-launch — the desktop launcher (`F`) — **after the update path**
+
+Also not a gate-C finding, and the same trigger: today the only way to start the
+interface is `ytdl gui` in a Terminal, which for the audience the GUI exists for
+is the one thing it was built to avoid. This cycle delivers the **entry point**
+half of the long-planned phase item **6a** — an icon the user double-clicks that
+brings up the interface — and leaves 6a's paste/drop-and-enqueue app to a later
+pass, if it is ever wanted once the GUI itself is one click away.
+
+- **Scope:** a launcher installed by `install.sh` alongside the binary, that
+  starts the daemon and opens the browser when nothing is running, and only
+  opens the browser when something already is. Plus its uninstall path, and the
+  installer telling the user, in Italian, that it is there and where.
+- **Analysis must settle:**
+  - **The artefact.** A double-clickable `.command`, an `osacompile`-built
+    `.app` in `~/Applications`, or an Automator app. The decisive question is
+    **Gatekeeper**: an app generated *on the machine* carries no quarantine
+    attribute and needs no $99 signing, which is what keeps this out of the
+    territory ADR-0001/0002 ruled out — it has to be verified, not assumed.
+  - **Idempotence.** What the icon does when a daemon is already running, when
+    one is running *headless* from `ytdl -b` (it holds the queue lock; `ytdl gui`
+    already handles this by serving the UI and retrying the lock), and when the
+    port is taken by something else.
+  - **What the user sees while it starts.** A Terminal window flashing past is a
+    failure of this cycle's whole purpose; so is a silent double-click that
+    appears to do nothing for two seconds.
+  - **Where the icon comes from.** No external assets and no binary blobs
+    committed for their own sake — either the system's default application icon,
+    or something generated at install time.
+- **Depends on nothing in Cycles 6/7**, and touches neither `internal/core` nor
+  `internal/daemon`: it is installer + one entry-point path.
+- **Done when:** a non-developer starts ytdl from the desktop, twice in a row,
+  without a Terminal ever appearing — and uninstalling removes it.
 
 #### Cycle 7 — partial outcome and playlists per track (`F`) — planned
 
@@ -772,7 +840,11 @@ Implements ADR-0014 decision 2, plus the storage work it forces.
   not a convention), so a list needs a scheme — the leading candidate is a
   `preset_<name>` prefix rule with a validated name charset, which keeps one
   hand-editable, diffable document and lets `ytdl config` list them.
-- **Depends on:** the Cycle 6 ruling on whether presets replace the session scope.
+- **Inherits from Cycle 6** ([ADR-0015](decisions/0015-cycle6-tab-scope-and-faithful-reruns.md) §1):
+  presets do **not** replace a scope. A preset is a *value*, a scope is a
+  *duration*, and they compose — a preset can be used for one download, kept for
+  the tab, or saved as the default. This cycle fills the affordance Cycle 6
+  builds; it does not add a fourth scope.
 
 #### Cycle 9 — authentication and error remedies (`F`) — planned
 
@@ -803,12 +875,19 @@ Implements ADR-0014 decision 2, plus the storage work it forces.
 
 - **Phase-5 hardening cycle** — automatic retries/backoff (`Attempts`/`NotBefore`)
   and YouTube rate-limit handling, plus the flaky
-  `TestRunQueuedCancelKillsProcessGroup` timing. A full design already exists from
+  `TestRunQueuedCancelKillsProcessGroup` timing. **Constrained by
+  [ADR-0015](decisions/0015-cycle6-tab-scope-and-faithful-reruns.md) §5:** manual
+  and automatic retry are one feature with one state, not two features that meet
+  on a row. A job awaiting an automatic attempt waits *in the queue* and says what
+  for; its "Riprova" is disabled with the reason and the wait; pressing it means
+  "now, not later" and cancels the pending attempt rather than adding a second. A full design already exists from
   a mis-scoped design fork during Cycle 4; it is a good starting point. It was
   "next after Cycle 5" until the gate-C review; it now follows the R → M → F → S
   cycles, and can be pulled forward ahead of Cycle 9, whose rate-limit hint text
   overlaps with it.
-- **6a AppleScript/Automator MVP** — still planned (see Phase 6).
+- **6a AppleScript/Automator MVP** — **split (2026-08-12)**: the launcher icon is
+  now Cycle 6-launch and runs next; what stays deferred is the paste/drop-and-
+  enqueue app, which may not be wanted once the GUI opens from the desktop.
 - ~~**Release of everything since v2.0.0**~~ — **done: v2.1.0, 2026-08-09.** Cut at
   the Cycle 5 merge as decided on 2026-07-26, carrying Cycles 2A, 2B-core, 2C, 3,
   2B-plus, 4 and 5 in one tag.
