@@ -13,8 +13,11 @@ display-width clipping).
 
 Amended by [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md)
 (gate-C review of Cycle 5): the scope vocabulary and §8 below, and the partial
-outcome in §3 and §5. Section numbers are stable — amendments append rather than
-renumber, because code comments and design documents cite them.
+outcome in §3 and §5. Amended again by
+[ADR-0015](decisions/0015-cycle6-tab-scope-and-faithful-reruns.md) (gate A of
+Cycle 6): the middle scope is the browser tab, and §3 and §8 say so. Section
+numbers are stable — amendments append rather than renumber, because code
+comments and design documents cite them.
 
 ## 1. The tasks the tool serves
 
@@ -68,20 +71,23 @@ invent synonyms.
 | the durable record | "Cronologia" | `ytdl history` |
 | the settings document | "Impostazioni" | `ytdl config` |
 | the stored default (config file) | "predefinita" | `ytdl config` |
-| in force until the GUI is closed | "di sessione" | — (GUI only, see §8) |
+| in force until this browser tab is closed or reloaded | "in questa scheda" | — (GUI only, see §8) |
 | in force for one enqueue | "solo questo download" | `-o` / `-f` / `-p` on one invocation |
 
 **Riprova vs. Riscarica** are distinct verbs because they act on distinct
-objects: *Riprova* requeues a job the spool still holds, keeping its settings
-snapshot and spool identity; *Riscarica* creates a new job from a history record,
-which outlives the spool entry. Each is offered **only where its object is
-shown** — the queue never offers Riscarica, the history never offers Riprova.
+objects: *Riprova* re-runs a job the spool still holds, keeping its settings
+snapshot and spool identity — so it lands **where the original job was going**;
+*Riscarica* creates a new job from a history record, which outlives the spool
+entry. Each is offered **only where its object exists**: a record offers Riprova
+exactly while its spool job is still there, and Riscarica always
+([ADR-0015](decisions/0015-cycle6-tab-scope-and-faithful-reruns.md) §4). One job
+is one row — the record's, because it is the only one that also carries the
+reason, the hint and the log.
 
-> **Riprova has no GUI surface yet.** The GUI queue shows running and pending
-> jobs only, so a job that failed in the spool is never displayed and its verb
-> never appears. Recorded as a deliberate asymmetry in
-> [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md) §4 and closed
-> in Cycle 6, which reworks that view anyway.
+> **Not built yet.** The GUI queue shows running and pending jobs only, and the
+> history row carries no Riprova, so the verb currently has no GUI surface. It
+> lands in Cycle 6 on the row described above; until then the asymmetry recorded
+> in [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md) §4 stands.
 
 **Naming the file manager.** The label names the *folder*, never the platform's
 file manager: "Mostra nel Finder" is false on Linux, and a user who has never
@@ -100,7 +106,9 @@ GUI, a hint line in the CLI).
 ```mermaid
 flowchart TD
   R["a history row"] --> S{"succeeded?"}
-  S -->|no| RD["primary: Riscarica<br/>overflow: vedi errore · copia link"]
+  S -->|no| Q{"spool job<br/>still there?"}
+  Q -->|yes| RT["primary: Riprova<br/>overflow: riscarica · vedi errore · copia link"]
+  Q -->|no| RD["primary: Riscarica<br/>overflow: vedi errore · copia link"]
   S -->|yes| P{"file still on disk?"}
   P -->|yes| OP["primary: Apri<br/>overflow: mostra nella cartella · riscarica · copia link"]
   P -->|no| RD2["primary: Riscarica<br/>overflow: copia link · apri la cartella"]
@@ -152,14 +160,15 @@ written this rule down.
 
 ## 8. Scope of a choice
 
-Added by [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md). Three
-scopes exist, named in §3, and a surface must always make clear which one is in
-force.
+Added by [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md), the
+middle scope renamed and re-dated by
+[ADR-0015](decisions/0015-cycle6-tab-scope-and-faithful-reruns.md). Three scopes
+exist, named in §3, and a surface must always make clear which one is in force.
 
 ```mermaid
 flowchart LR
   D["predefinita"] -->|resolves| E["the value actually used<br/>— always visible"]
-  S["di sessione"] -->|overrides| E
+  S["in questa scheda"] -->|overrides| E
   O["solo questo download"] -->|overrides| E
   O -.->|"explicit promotion"| S
 ```
@@ -178,8 +187,37 @@ flowchart LR
    marking it as pending. This is the §5 honesty rule applied to input, not only
    to output.
 
-**Channel asymmetry, recorded per §7:** the *session* scope is GUI-only. A CLI
-invocation is a process, so it has no session to hold one; its equivalents are
-the config file (`predefinita`) and per-invocation flags (`solo questo
-download`). A GUI session override is therefore invisible to a terminal running
-beside it, and the GUI label says so.
+5. **A scope's lifetime is stated in words the user can check.** "In questa
+   scheda" means this tab, until it is closed or reloaded — not a "session"
+   whose end nobody can point at. A value the user cannot see expiring must not
+   be able to expire: the middle scope is therefore held *in the page*, so it
+   dies with the surface that shows it and no other tab inherits it.
+6. **A re-run keeps the destination the original job had**, and says which one
+   that is before it runs. "Do it again" that quietly means "somewhere else" is
+   the §5 honesty rule broken on the way out instead of on the way in.
+
+**Channel asymmetry, recorded per §7:** the *tab* scope is GUI-only. A CLI
+invocation is a process, so it has no tab to hold one; its equivalents are the
+config file (`predefinita`) and per-invocation flags (`solo questo download`). A
+GUI tab override is therefore invisible to a terminal running beside it — and to
+the tab next to it, which is the point.
+
+## 9. Input the surface accepts
+
+Added by [ADR-0015](decisions/0015-cycle6-tab-scope-and-faithful-reruns.md) §7.
+§5 governs what a surface *says*; this governs what it *takes*.
+
+1. **One validator per value, shared by every entry point.** The GUI, the CLI and
+   the config file judge the same string identically. A rule enforced in one
+   channel only is a bug in the other.
+2. **A refusal carries its remedy**, in the form its channel can act on: a button
+   where the user has no shell, the exact command where they do.
+3. **The surface never silently repairs a value.** A path that cannot be shown
+   truthfully is refused, not rewritten — a relative folder is resolved by the
+   engine's working directory, so displaying it as absolute would state a
+   destination that is not the one in force.
+4. **Creating something is always a separate, deliberate act**, never a side
+   effect of accepting a value. A folder that does not exist is refused with an
+   offer to create it, so a typo cannot make one.
+5. **Validation happens when the value is applied**, not only when it is finally
+   used, so the user learns while they are still looking at the control.
