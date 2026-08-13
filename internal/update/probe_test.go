@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -92,7 +95,8 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 // validDeps is a well-formed pin with an explicit yt-dlp tag.
 const validDeps = `# What ytdl requires.
 yt_dlp_version              = 2026.07.04
-ffmpeg_build                = 1785863997_9.0
+ffmpeg_build_arm64          = 1785863997_9.0
+ffmpeg_build_amd64          = 1785871427_9.0
 ffmpeg_sha256_arm64_ffmpeg  = aaaa
 ffmpeg_sha256_arm64_ffprobe = bbbb
 ffmpeg_sha256_amd64_ffmpeg  = cccc
@@ -239,13 +243,13 @@ func TestFetchPinRejectsBadFiles(t *testing.T) {
 		name string
 		deps string
 	}{
-		{"missing yt_dlp_version", "ffmpeg_build = 1785863997_9.0\n"},
-		{"missing ffmpeg_build", "yt_dlp_version = 2026.07.04\n"},
+		{"missing yt_dlp_version", "ffmpeg_build_arm64 = 1785863997_9.0\nffmpeg_build_amd64 = 1785871427_9.0\n"},
+		{"missing ffmpeg_build for this arch", "yt_dlp_version = 2026.07.04\n"},
 		{"malformed line", validDeps + "this line has no equals sign\n"},
 		{"empty key", validDeps + "= orphan\n"},
 		{"empty file", "#only a comment\n"},
 		{"garbage version", "yt_dlp_version = ../../etc/passwd\nffmpeg_build = 1785863997_9.0\n"},
-		{"garbage build", "yt_dlp_version = 2026.07.04\nffmpeg_build = a b c\n"},
+		{"garbage build", "yt_dlp_version = 2026.07.04\nffmpeg_build_arm64 = a b c\nffmpeg_build_amd64 = a b c\n"},
 		{"html error page", "<!DOCTYPE html><html><body>404</body></html>\n"},
 	}
 	for _, tc := range cases {
@@ -290,7 +294,7 @@ func TestFetchPinUnreachable(t *testing.T) {
 func TestFetchPinToleratesCommentsAndSpacing(t *testing.T) {
 	h := newHub(t)
 	h.deps = "\n   # a comment\n\n\tyt_dlp_version\t=\t2026.07.04   \n" +
-		"ffmpeg_build=1785863997_9.0\n\n# trailing comment\n"
+		"ffmpeg_build_arm64=1785863997_9.0\nffmpeg_build_amd64=1785871427_9.0\n\n# trailing comment\n"
 
 	pin, err := FetchPin(ctxT(t), nil, "o/r", "main")
 	if err != nil {
@@ -366,5 +370,74 @@ func TestDoNoRedirectDoesNotMutateTheCallersClient(t *testing.T) {
 	}
 	if c.CheckRedirect != nil {
 		t.Error("the caller's client had its CheckRedirect replaced")
+	}
+}
+
+// Upstream builds macOS arm64 and amd64 separately and stamps them with
+// DIFFERENT build ids (verified 2026-08-13: 1785863997_9.0 and 1785871427_9.0
+// for the same ffmpeg 9.0), so the pin carries one per architecture and FetchPin
+// resolves the machine's — the same way it resolves "latest" to a tag. Nothing
+// downstream has to know there were two.
+func TestFetchPinResolvesTheBuildForThisArchitecture(t *testing.T) {
+	h := newHub(t)
+	h.deps = validDeps
+
+	pin, err := FetchPin(ctxT(t), nil, "o/r", "main")
+	if err != nil {
+		t.Fatalf("FetchPin: %v", err)
+	}
+	want := map[string]string{
+		"arm64": "1785863997_9.0",
+		"amd64": "1785871427_9.0",
+	}[runtime.GOARCH]
+	if want == "" {
+		t.Skipf("no fixture build id for GOARCH=%s", runtime.GOARCH)
+	}
+	if pin.FFmpeg != want {
+		t.Errorf("FFmpeg = %q, want %q for GOARCH=%s", pin.FFmpeg, want, runtime.GOARCH)
+	}
+}
+
+// A pin that names every architecture except this one is not a pin this machine
+// can act on. Fail closed rather than install something unattested.
+func TestFetchPinFailsWhenThisArchitectureIsNotPinned(t *testing.T) {
+	h := newHub(t)
+	h.deps = "yt_dlp_version = 2026.07.04\nffmpeg_build_riscv64 = 1_9.0\n"
+
+	if pin, err := FetchPin(ctxT(t), nil, "o/r", "main"); err == nil {
+		t.Fatalf("FetchPin returned %+v, want an error", pin)
+	}
+}
+
+// The pin has TWO readers — install.sh's awk and this package's parser — and they
+// must agree about the file that actually ships. A pin that only one of them can
+// read would either abort every install or blind every verdict, and the
+// disagreement would be invisible until it reached someone's machine.
+//
+// tests/test-installer.sh asserts the bash side against the same file.
+func TestCommittedDepsFileParses(t *testing.T) {
+	f, err := os.Open(filepath.Join("..", "..", DepsFile))
+	if err != nil {
+		t.Fatalf("the committed pin is unreadable: %v", err)
+	}
+	defer f.Close()
+
+	kv, err := parseKeyValue(f, depsKeys, true) // strict, like install.sh
+	if err != nil {
+		t.Fatalf("the committed pin does not parse: %v", err)
+	}
+	if kv[depsYtDlpVersion] == "" {
+		t.Errorf("the committed pin names no %s", depsYtDlpVersion)
+	}
+	for _, arch := range []string{"arm64", "amd64"} {
+		if b := kv[depsFFmpegBuild+"_"+arch]; !validVersion(b) {
+			t.Errorf("ffmpeg_build_%s = %q is not a usable build id", arch, b)
+		}
+		for _, tool := range []string{"ffmpeg", "ffprobe"} {
+			key := "ffmpeg_sha256_" + arch + "_" + tool
+			if sum := kv[key]; len(sum) != 64 || strings.Trim(sum, "0123456789abcdef") != "" {
+				t.Errorf("%s = %q is not a sha256; a placeholder must not ship", key, sum)
+			}
+		}
 	}
 }

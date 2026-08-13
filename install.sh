@@ -14,15 +14,41 @@ set -euo pipefail
 # ──────────────────────────────────────────────────────────────────
 
 REPO_SLUG="${YTDL_REPO:-alergyonthestage/ytdl}"
+BRANCH="${YTDL_BRANCH:-main}"
 INSTALL_DIR="${YTDL_INSTALL_DIR:-$HOME/.local/bin}"
 
-YTDLP_BASE="https://github.com/yt-dlp/yt-dlp/releases/latest/download"
+# deps.conf declares what ytdl requires, and is fetched from the same place this
+# script is (ADR-0016 §2). It is the only thing that decides which yt-dlp and
+# which ffmpeg end up on this machine.
+DEPS_URL="https://raw.githubusercontent.com/$REPO_SLUG/$BRANCH/deps.conf"
+
+# yt-dlp is fetched per TAG now, not from /latest/: the pin is what decides the
+# version, so the URL has to name it.
+YTDLP_RELEASES="https://github.com/yt-dlp/yt-dlp/releases/download"
+FFMPEG_BASE="https://ffmpeg.martin-riedl.de/download/macos"
 # The compiled ytdl binaries are published per release; /latest/ gives the
 # newest without pinning a version (see docs/decisions/0005).
 RELEASE_BASE="https://github.com/$REPO_SLUG/releases/latest/download"
 
-# Populated by detect_platform()
-OS_MAJOR=""; OS_MINOR=""; TIER=""; ARCH=""
+# --force (or YTDL_FORCE=1) reinstalls every component regardless of what is
+# already current: what a retry after a failed update uses, and what the
+# maintainer uses to reproduce an install from scratch.
+#
+# Normalised to exactly 0 or 1 here, so the arithmetic comparisons below cannot
+# be handed a word. An unrecognised value means off — the same direction as not
+# setting it at all.
+case "${YTDL_FORCE:-0}" in
+  1|true|yes) FORCE=1 ;;
+  *)          FORCE=0 ;;
+esac
+
+# Populated by detect_platform(). ARCH_KEY is deps.conf's spelling of ARCH.
+OS_MAJOR=""; OS_MINOR=""; TIER=""; ARCH=""; ARCH_KEY=""
+
+# Populated by load_deps() and resolve_targets(): the concrete versions this run
+# is aiming at. "latest" never survives past resolve_targets, so every comparison
+# below is between two concrete strings.
+DEPS_FILE=""; YTDLP_TARGET=""; FFMPEG_TARGET=""; YTDL_TARGET=""
 
 TMPDIR_YTDL=""
 cleanup() { [ -n "$TMPDIR_YTDL" ] && rm -rf "$TMPDIR_YTDL"; return 0; }
@@ -82,6 +108,10 @@ detect_platform() {
   fi
 
   ARCH="$(uname -m)"
+  case "$ARCH" in
+    arm64) ARCH_KEY="arm64" ;;
+    *)     ARCH_KEY="amd64" ;;
+  esac
 
   if [ "$TIER" = "unsupported" ]; then
     fail "macOS $ver is too old for ytdl." \
@@ -92,6 +122,205 @@ detect_platform() {
   fi
 
   info "macOS $ver ($ARCH) — supported"
+}
+
+# ──────────────────────────────────────────────────────────────────
+#  The pin: deps.conf
+# ──────────────────────────────────────────────────────────────────
+# `key = value`, one per line, # for comments — the same strict format ytdl's own
+# config file uses, and read the same way: parsed with awk, never sourced, every
+# key checked against a whitelist. That discipline is why a pin cannot execute
+# anything, and why it parses on a stock Mac where jq does not exist.
+
+# kv_get KEY FILE — the value for KEY, or empty. Splits on the FIRST '=' so a
+# value containing '=' survives intact, and trims surrounding whitespace only.
+kv_get() {
+  local key="$1" file="$2"
+  [ -f "$file" ] || return 0
+  awk -v k="$key" '
+    /^[[:space:]]*#/ { next }
+    /^[[:space:]]*$/ { next }
+    {
+      eq = index($0, "=")
+      if (eq == 0) next
+      name = substr($0, 1, eq - 1)
+      val  = substr($0, eq + 1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+      if (name == k) { print val; exit }
+    }
+  ' "$file"
+}
+
+deps_get() { kv_get "$1" "$DEPS_FILE"; }
+
+# validate_deps FILE — every line is a comment, blank, or a whitelisted
+# `key = value`. Anything else is refused.
+#
+# The installer is fetched from the same commit as deps.conf, so a key it does not
+# recognise is a typo in the pin, not a version skew — refusing costs nothing and
+# catches the mistake at the only moment it can still be caught. (The Go probe,
+# which is arbitrarily older than the file it reads, is deliberately tolerant of
+# the same thing; see internal/update/probe.go for why the two differ.)
+validate_deps() {
+  local file="$1"
+  awk '
+    BEGIN {
+      split("yt_dlp_version ffmpeg_build_arm64 ffmpeg_build_amd64 " \
+            "ffmpeg_sha256_arm64_ffmpeg ffmpeg_sha256_arm64_ffprobe " \
+            "ffmpeg_sha256_amd64_ffmpeg ffmpeg_sha256_amd64_ffprobe", a, " ")
+      for (i in a) allowed[a[i]] = 1
+      bad = 0
+    }
+    /^[[:space:]]*#/ { next }
+    /^[[:space:]]*$/ { next }
+    {
+      eq = index($0, "=")
+      if (eq == 0) { printf "line %d: not a key = value pair\n", NR > "/dev/stderr"; bad = 1; next }
+      name = substr($0, 1, eq - 1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+      if (name == "") { printf "line %d: empty key\n", NR > "/dev/stderr"; bad = 1; next }
+      if (!(name in allowed)) { printf "line %d: unknown key \"%s\"\n", NR, name > "/dev/stderr"; bad = 1 }
+    }
+    END { exit bad ? 1 : 0 }
+  ' "$file"
+}
+
+# load_deps downloads and validates the pin. It ABORTS on any problem and installs
+# nothing.
+#
+# It never falls back to "latest". A silent fallback would be indistinguishable
+# from the policy currently BEING "latest" — so the day the maintainer pins a
+# rollback to stop a broken yt-dlp reaching people, that equivalence would quietly
+# ignore it and keep installing the broken one. Failing loudly is the only
+# behaviour that keeps the lever real (ADR-0016 §2).
+load_deps() {
+  step "Reading what ytdl requires"
+
+  DEPS_FILE="$TMPDIR_YTDL/deps.conf"
+  curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 -o "$DEPS_FILE" "$DEPS_URL" || fail \
+    "Could not read what ytdl requires — nothing was installed." \
+    "Tried: $DEPS_URL" \
+    "" \
+    "Check your internet connection and run the installer again."
+
+  validate_deps "$DEPS_FILE" || fail \
+    "What ytdl requires could not be read — nothing was installed." \
+    "The problem is listed above, in $DEPS_URL." \
+    "" \
+    "This is a mistake in the ytdl repository, not on your machine." \
+    "Please report it."
+}
+
+# latest_tag SLUG — a repository's newest release tag, read from the redirect
+# github.com answers to releases/latest. The redirect target IS the answer, so
+# this deliberately does not follow it: no API, no token, no rate limit.
+latest_tag() {
+  local slug="$1" loc
+  loc="$(curl -sSI --max-time 20 --retry 2 "https://github.com/$slug/releases/latest" 2>/dev/null \
+         | awk 'tolower($1) == "location:" { print $2 }' | tr -d '\r' | tail -1)" || return 1
+  case "$loc" in
+    */releases/tag/?*) printf '%s\n' "${loc##*/releases/tag/}" ;;
+    *) return 1 ;;
+  esac
+}
+
+# resolve_targets turns the policy into concrete versions, BEFORE anything is
+# fetched. That ordering is the whole basis of idempotence: "latest" cannot be
+# compared against what is installed, a tag can, so resolving first is what makes
+# "do I need to?" a question with an answer (ADR-0016 §11).
+resolve_targets() {
+  YTDLP_TARGET="$(deps_get yt_dlp_version)"
+  [ -n "$YTDLP_TARGET" ] || fail \
+    "What ytdl requires does not name a yt-dlp version — nothing was installed." \
+    "This is a mistake in the ytdl repository. Please report it."
+
+  if [ "$YTDLP_TARGET" = "latest" ]; then
+    YTDLP_TARGET="$(latest_tag yt-dlp/yt-dlp)" || fail \
+      "Could not work out which yt-dlp to install — nothing was installed." \
+      "Check your internet connection and run the installer again."
+  fi
+
+  FFMPEG_TARGET="$(deps_get "ffmpeg_build_$ARCH_KEY")"
+  [ -n "$FFMPEG_TARGET" ] || fail \
+    "What ytdl requires does not name an ffmpeg build for $ARCH_KEY — nothing was installed." \
+    "This is a mistake in the ytdl repository. Please report it."
+
+  # ytdl's own target is best-effort: when the redirect cannot be read we simply
+  # do not skip, and install from /latest/. Not skipping is the safe direction.
+  YTDL_TARGET="$(latest_tag "$REPO_SLUG" 2>/dev/null)" || YTDL_TARGET=""
+
+  info "yt-dlp $YTDLP_TARGET · ffmpeg $FFMPEG_TARGET"
+}
+
+# ──────────────────────────────────────────────────────────────────
+#  What is already here
+# ──────────────────────────────────────────────────────────────────
+marker_dir()  { printf '%s/ytdl\n' "${XDG_STATE_HOME:-$HOME/.local/state}"; }
+marker_path() { printf '%s/installed.conf\n' "$(marker_dir)"; }
+marker_get()  { kv_get "$1" "$(marker_path)"; }
+
+# tool_version BIN — the first line a tool prints for --version, or empty when it
+# is not there or does not answer. yt-dlp prints exactly its tag, which is what
+# makes every comparison here a string equality.
+tool_version() {
+  local bin="$1" out
+  [ -x "$bin" ] || return 0
+  out="$("$bin" --version 2>/dev/null | head -1)" || out=""
+  printf '%s' "$out" | tr -d '\r\n'
+}
+
+# ytdl_version BIN — ytdl prints "ytdl v2.1.0"; the version is the second field.
+ytdl_version() {
+  local bin="$1" out
+  [ -x "$bin" ] || return 0
+  out="$("$bin" --version 2>/dev/null | head -1 | awk '{print $2}')" || out=""
+  printf '%s' "$out" | tr -d '\r\n'
+}
+
+# The three skip decisions, kept separate from the installs so they can be tested
+# without a network. Each returns 0 for "already current, nothing to do".
+#
+# --force answers no to all three: a retry after a failed update must not skip the
+# component that failed just because its version string happens to look right.
+ytdlp_is_current() {
+  [ "$FORCE" -eq 0 ] || return 1
+  [ "$(tool_version "$INSTALL_DIR/yt-dlp")" = "$YTDLP_TARGET" ]
+}
+
+# ffmpeg cannot describe its own build — `ffmpeg -version` says 9.0 while the pin
+# says 1785863997_9.0 — so the marker is the only exact answer. Both binaries must
+# also actually be there: a marker without the files it describes is a record of an
+# install that no longer exists.
+ffmpeg_is_current() {
+  [ "$FORCE" -eq 0 ] || return 1
+  [ -x "$INSTALL_DIR/ffmpeg" ] || return 1
+  [ -x "$INSTALL_DIR/ffprobe" ] || return 1
+  [ "$(marker_get ffmpeg_build)" = "$FFMPEG_TARGET" ]
+}
+
+# An unresolved target means "do not skip": we would be comparing against nothing.
+ytdl_is_current() {
+  [ "$FORCE" -eq 0 ] || return 1
+  [ -n "$YTDL_TARGET" ] || return 1
+  [ "$(ytdl_version "$INSTALL_DIR/ytdl")" = "$YTDL_TARGET" ]
+}
+
+# write_marker records what is on this machine now, so the next run can answer
+# "do I need to?" without asking the network, and so ytdl can SHOW which ffmpeg it
+# has. Written atomically, like everything else in the state dir.
+write_marker() {
+  local dir tmp
+  dir="$(marker_dir)"
+  mkdir -p "$dir" || return 0
+  tmp="$dir/installed.conf.tmp.$$"
+  {
+    printf '# Written by the ytdl installer. Read by ytdl; do not edit.\n'
+    printf 'ytdl_version = %s\n'   "$(ytdl_version "$INSTALL_DIR/ytdl")"
+    printf 'yt_dlp_version = %s\n' "$(tool_version "$INSTALL_DIR/yt-dlp")"
+    printf 'ffmpeg_build = %s\n'   "$FFMPEG_TARGET"
+    printf 'installed_at = %s\n'   "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } > "$tmp" && mv "$tmp" "$dir/installed.conf"
 }
 
 # ──────────────────────────────────────────────────────────────────
@@ -136,6 +365,48 @@ verify_checksum() {
   ok "Checksum verified ($name)"
 }
 
+# sha256_of FILE — the file's sha256, or empty when no tool can compute one.
+sha256_of() {
+  local file="$1"
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$file" | awk '{print $NF}'
+  fi
+}
+
+# verify_pinned_checksum FILE EXPECTED LABEL — verify against a sum declared in
+# deps.conf rather than published by the upstream.
+#
+# Unlike verify_checksum this NEVER warns and continues. That function's
+# tolerance is correct for yt-dlp, whose SHA2-256SUMS we do not control; here the
+# sum is the maintainer's own attestation of a build they fetched and tested, and
+# an ffmpeg installed without checking it is exactly the gap ADR-0016 §12 closes.
+# A missing sum, or no tool to compute one, is a refusal.
+verify_pinned_checksum() {
+  local file="$1" expected="$2" label="$3" actual
+
+  [ -n "$expected" ] || fail \
+    "No checksum is declared for $label — refusing to install it." \
+    "This is a mistake in the ytdl repository. Please report it."
+
+  actual="$(sha256_of "$file")"
+  [ -n "$actual" ] || fail \
+    "No way to check the download for $label — refusing to install it." \
+    "Neither shasum nor openssl is available on this Mac, which is unusual." \
+    "Please report this."
+
+  [ "$actual" = "$expected" ] || fail \
+    "Checksum mismatch for $label — refusing to install." \
+    "expected: $expected" \
+    "actual:   $actual" \
+    "" \
+    "The download was corrupted or tampered with. Try again; if it happens" \
+    "repeatedly, do not use the downloaded file and report the issue."
+
+  ok "Checksum verified ($label)"
+}
+
 # Our own release assets must carry a checksum entry: a name missing from
 # SHA2-256SUMS is a release.yml packaging bug, so hard-fail rather than fall
 # through verify_checksum's tolerant warn-and-skip (which is correct only for the
@@ -171,14 +442,23 @@ extract_binary() {
 install_ytdlp() {
   step "Installing yt-dlp"
 
+  if ytdlp_is_current; then
+    ok "yt-dlp $YTDLP_TARGET is already what ytdl requires"
+    return 0
+  fi
+
+  # Fetched by TAG, so a pin that names an OLDER yt-dlp than the installed one
+  # reinstalls through this same path: the comparison is equality, so a rollback
+  # and an upgrade are the same operation.
+  local base="$YTDLP_RELEASES/$YTDLP_TARGET"
   local sums="$TMPDIR_YTDL/SHA2-256SUMS"
-  download "$YTDLP_BASE/SHA2-256SUMS" "$sums"
+  download "$base/SHA2-256SUMS" "$sums"
 
   # Universal standalone build with Python embedded — needs macOS 10.15+, which
   # is now the floor, so it serves every supported target.
   local tmp="$TMPDIR_YTDL/yt-dlp_macos"
-  info "Downloading the standalone build…"
-  download "$YTDLP_BASE/yt-dlp_macos" "$tmp"
+  info "Downloading yt-dlp $YTDLP_TARGET…"
+  download "$base/yt-dlp_macos" "$tmp"
   verify_checksum "$tmp" "yt-dlp_macos" "$sums"
   mv "$tmp" "$INSTALL_DIR/yt-dlp"
   chmod +x "$INSTALL_DIR/yt-dlp"
@@ -194,24 +474,28 @@ install_ytdlp() {
 # ──────────────────────────────────────────────────────────────────
 # ffmpeg is required, not optional: ytdl extracts audio and embeds cover art.
 # Source depends on the target — see docs/distribution.md.
+# The URL now names an exact, immutable build rather than following a "latest"
+# redirect. That is what makes the checksum in deps.conf mean something: a
+# redirect can point somewhere new tomorrow, a build id cannot (ADR-0016 §12).
+# martin-riedl's amd64 build covers every supported Intel Mac (10.15+).
 ffmpeg_url_for() {
-  local tool="$1"
-  if [ "$ARCH" = "arm64" ]; then
-    echo "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/$tool.zip"
-  else
-    # martin-riedl's amd64 build covers every supported Intel Mac (10.15+).
-    echo "https://ffmpeg.martin-riedl.de/redirect/latest/macos/amd64/release/$tool.zip"
-  fi
+  printf '%s/%s/%s/%s.zip\n' "$FFMPEG_BASE" "$ARCH_KEY" "$FFMPEG_TARGET" "$1"
 }
 
 install_ffmpeg() {
   step "Installing ffmpeg"
 
+  if ffmpeg_is_current; then
+    ok "ffmpeg $FFMPEG_TARGET is already what ytdl requires"
+    return 0
+  fi
+
   local tool zip
   for tool in ffmpeg ffprobe; do
     zip="$TMPDIR_YTDL/$tool.zip"
-    info "Downloading ${tool}…"
+    info "Downloading ${tool} ${FFMPEG_TARGET}…"
     download "$(ffmpeg_url_for "$tool")" "$zip"
+    verify_pinned_checksum "$zip" "$(deps_get "ffmpeg_sha256_${ARCH_KEY}_${tool}")" "$tool.zip"
     extract_binary "$zip" "$tool" "$INSTALL_DIR/$tool"
   done
 
@@ -236,6 +520,11 @@ ytdl_asset_for() {
 
 install_ytdl() {
   step "Installing ytdl"
+
+  if ytdl_is_current; then
+    ok "ytdl $YTDL_TARGET is already the newest"
+    return 0
+  fi
 
   local asset sums tmp
   asset="$(ytdl_asset_for)"
@@ -332,19 +621,35 @@ verify_install() {
 #  Main
 # ──────────────────────────────────────────────────────────────────
 main() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --force) FORCE=1 ;;
+      *) fail "Unknown option: $arg" "The only option is --force." ;;
+    esac
+  done
+
   printf '\n%sytdl installer%s\n' "$B" "$R"
   printf '%sInstalling into %s%s\n' "$DIM" "$INSTALL_DIR" "$R"
+  [ "$FORCE" -eq 1 ] && printf '%sReinstalling everything (--force)%s\n' "$DIM" "$R"
 
   detect_platform
 
   TMPDIR_YTDL="$(mktemp -d)"
   mkdir -p "$INSTALL_DIR"
 
+  # The pin is read and resolved BEFORE anything is fetched, so each component can
+  # be compared against a concrete target and skipped when it already matches
+  # (ADR-0016 §11). An unreadable pin aborts here, having installed nothing.
+  load_deps
+  resolve_targets
+
   install_ytdlp
   install_ffmpeg
   install_ytdl
   setup_path
   verify_install
+  write_marker
 
   printf '\n%s%s✓ Done.%s\n\n' "$B" "$GREEN" "$R"
   printf 'Open a new Terminal window, then try:\n\n'

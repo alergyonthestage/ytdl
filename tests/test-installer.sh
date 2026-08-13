@@ -83,21 +83,36 @@ check "26.1 Tahoe is supported"           "supported"   "$TIER"
 mock_platform "26" "arm64" >/dev/null 2>&1
 check "26 (no minor) is supported"        "supported"   "$TIER"
 
+# detect_platform derives ARCH_KEY — deps.conf's spelling of the architecture —
+# from uname's, which says x86_64 where the pin says amd64.
+mock_platform "15.3.1" "arm64" >/dev/null 2>&1
+check "uname arm64 maps to the arm64 pin"  "arm64" "$ARCH_KEY"
+mock_platform "15.3.1" "x86_64" >/dev/null 2>&1
+check "uname x86_64 maps to the amd64 pin" "amd64" "$ARCH_KEY"
+
 printf '\nffmpeg source selection\n'
 
-ARCH="arm64"
-check "arm64 uses the signed arm64 build" \
-  "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip" \
+# The URL names an EXACT build now, not a "latest" redirect: that is what makes
+# the checksum in deps.conf mean anything, since a redirect can point somewhere
+# new tomorrow and a build id cannot (ADR-0016 §12).
+FFMPEG_TARGET="1785863997_9.0"
+ARCH_KEY="arm64"
+check "arm64 uses the pinned arm64 build" \
+  "https://ffmpeg.martin-riedl.de/download/macos/arm64/1785863997_9.0/ffmpeg.zip" \
   "$(ffmpeg_url_for ffmpeg)"
 
-ARCH="x86_64"
-check "Intel uses the signed amd64 build" \
-  "https://ffmpeg.martin-riedl.de/redirect/latest/macos/amd64/release/ffmpeg.zip" \
+# The two architectures carry DIFFERENT build ids upstream, so the pin declares
+# one each and this must follow whichever was resolved.
+FFMPEG_TARGET="1785871427_9.0"
+ARCH_KEY="amd64"
+check "Intel uses the pinned amd64 build" \
+  "https://ffmpeg.martin-riedl.de/download/macos/amd64/1785871427_9.0/ffmpeg.zip" \
   "$(ffmpeg_url_for ffmpeg)"
 
-ARCH="arm64"
-check "ffprobe uses the same source as ffmpeg" \
-  "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffprobe.zip" \
+FFMPEG_TARGET="1785863997_9.0"
+ARCH_KEY="arm64"
+check "ffprobe uses the same build as ffmpeg" \
+  "https://ffmpeg.martin-riedl.de/download/macos/arm64/1785863997_9.0/ffprobe.zip" \
   "$(ffmpeg_url_for ffprobe)"
 
 printf '\nytdl binary asset selection\n'
@@ -150,6 +165,289 @@ check "present own-asset checksum passes" "0" "$?"
 printf '%s  ytdl_macos_amd64\n' "$real_hash" > "$sums"
 ( require_own_checksum "ytdl_macos_arm64" "$sums" >/dev/null 2>&1 )
 check "missing own-asset checksum hard-fails" "1" "$?"
+
+# ──────────────────────────────────────────────────────────────────
+#  The pin: deps.conf
+# ──────────────────────────────────────────────────────────────────
+# Everything below is pure bash against files on disk — no network, and no
+# machine state outside the temp dirs each block makes for itself.
+printf '\nReading the pin\n'
+
+VALID_DEPS='# What ytdl requires.
+yt_dlp_version              = latest
+ffmpeg_build_arm64          = 1785863997_9.0
+ffmpeg_build_amd64          = 1785871427_9.0
+ffmpeg_sha256_arm64_ffmpeg  = aaaa
+ffmpeg_sha256_arm64_ffprobe = bbbb
+ffmpeg_sha256_amd64_ffmpeg  = cccc
+ffmpeg_sha256_amd64_ffprobe = dddd'
+
+write_deps() { printf '%s\n' "$1" > "$TMPDIR_YTDL/deps.conf"; DEPS_FILE="$TMPDIR_YTDL/deps.conf"; }
+
+write_deps "$VALID_DEPS"
+validate_deps "$DEPS_FILE" 2>/dev/null
+check "a well-formed pin validates"           "0" "$?"
+check "yt_dlp_version is read"                "latest"         "$(deps_get yt_dlp_version)"
+check "the arm64 build id is read"            "1785863997_9.0" "$(deps_get ffmpeg_build_arm64)"
+check "the amd64 build id is read"            "1785871427_9.0" "$(deps_get ffmpeg_build_amd64)"
+check "a checksum is read"                    "aaaa"           "$(deps_get ffmpeg_sha256_arm64_ffmpeg)"
+check "an absent key reads as empty"          ""               "$(deps_get not_a_key)"
+
+# Alignment, tabs and comments are cosmetic; the parser must not care.
+write_deps "$(printf '\n   # comment\n\n\tyt_dlp_version\t=\t2026.07.04   \nffmpeg_build_arm64=1_9.0')"
+validate_deps "$DEPS_FILE" 2>/dev/null
+check "spacing and comments are tolerated"    "0" "$?"
+check "a tab-separated value is trimmed"      "2026.07.04" "$(deps_get yt_dlp_version)"
+
+# An unknown key is refused HERE, though the Go probe tolerates one. The installer
+# arrives from the same commit as deps.conf, so a key it does not know is a typo
+# in the pin, not a version skew — and a typo in the pin is exactly what must not
+# reach anyone's machine.
+write_deps "$VALID_DEPS
+ytdl_version = v9.9.9"
+( validate_deps "$DEPS_FILE" ) 2>/dev/null
+check "an unknown key is refused"             "1" "$?"
+
+write_deps "$VALID_DEPS
+this line has no equals sign"
+( validate_deps "$DEPS_FILE" ) 2>/dev/null
+check "a malformed line is refused"           "1" "$?"
+
+write_deps "$VALID_DEPS
+ = orphan"
+( validate_deps "$DEPS_FILE" ) 2>/dev/null
+check "an empty key is refused"               "1" "$?"
+
+write_deps '<!DOCTYPE html><html><body>404</body></html>'
+( validate_deps "$DEPS_FILE" ) 2>/dev/null
+check "an HTML error page is refused"         "1" "$?"
+
+# The load path aborts when the pin cannot be fetched at all, having installed
+# nothing. It must NEVER fall back to "latest": that would be indistinguishable
+# from the policy currently BEING latest, so the day a rollback is pinned the
+# fallback would quietly ignore it.
+DEPS_URL="file://$TMPDIR_YTDL/there-is-no-such-file"
+( load_deps ) >/dev/null 2>&1
+check "an unfetchable pin aborts"             "1" "$?"
+
+abort_msg="$( ( DEPS_URL="file://$TMPDIR_YTDL/nope"; load_deps ) 2>&1 || true )"
+case "$abort_msg" in
+  *"nothing was installed"*) check "the abort says nothing was installed" "0" "0" ;;
+  *)                         check "the abort says nothing was installed" "0" "1" ;;
+esac
+case "$abort_msg" in
+  *latest*) check "the abort never mentions falling back to latest" "0" "1" ;;
+  *)        check "the abort never mentions falling back to latest" "0" "0" ;;
+esac
+
+# ──────────────────────────────────────────────────────────────────
+#  Resolving the policy
+# ──────────────────────────────────────────────────────────────────
+# The policy is resolved to concrete versions BEFORE anything is fetched. That
+# ordering is the whole basis of idempotence: "latest" cannot be compared against
+# what is installed, a tag can (ADR-0016 §11).
+printf '\nResolving the policy\n'
+
+# Stub the one thing that would otherwise reach the network.
+latest_tag() {
+  case "$1" in
+    yt-dlp/yt-dlp) printf '2026.08.02\n' ;;
+    *)             printf 'v2.2.0\n' ;;
+  esac
+}
+
+ARCH_KEY="arm64"
+write_deps "$VALID_DEPS"
+resolve_targets >/dev/null 2>&1
+check "\"latest\" resolves to a concrete tag" "2026.08.02"     "$YTDLP_TARGET"
+check "the policy placeholder does not survive" "0" "$([ "$YTDLP_TARGET" != "latest" ] && echo 0 || echo 1)"
+check "the ffmpeg build for this arch is picked" "1785863997_9.0" "$FFMPEG_TARGET"
+check "ytdl's own target is resolved too"     "v2.2.0"         "$YTDL_TARGET"
+
+ARCH_KEY="amd64"
+resolve_targets >/dev/null 2>&1
+check "a different arch picks its own build"  "1785871427_9.0" "$FFMPEG_TARGET"
+
+# An explicit tag is used verbatim — no redirect read, nothing to resolve.
+write_deps "$(printf 'yt_dlp_version = 2026.01.01\nffmpeg_build_amd64 = 1_9.0')"
+resolve_targets >/dev/null 2>&1
+check "an explicit tag is taken as-is"        "2026.01.01" "$YTDLP_TARGET"
+
+# A pin that names every architecture except this one cannot be acted on.
+write_deps "$(printf 'yt_dlp_version = latest\nffmpeg_build_arm64 = 1_9.0')"
+ARCH_KEY="amd64"
+( resolve_targets ) >/dev/null 2>&1
+check "no build for this arch aborts"         "1" "$?"
+
+write_deps "$(printf 'ffmpeg_build_amd64 = 1_9.0')"
+( resolve_targets ) >/dev/null 2>&1
+check "no yt-dlp version at all aborts"       "1" "$?"
+
+# When the policy IS "latest" but the redirect cannot be read, there is no pin —
+# and the installer stops rather than guessing.
+write_deps "$VALID_DEPS"
+ARCH_KEY="arm64"
+latest_tag() { return 1; }
+( resolve_targets ) >/dev/null 2>&1
+check "an unresolvable \"latest\" aborts"     "1" "$?"
+
+# ytdl's own target is best-effort, though: not knowing it means not skipping,
+# which is the safe direction.
+write_deps "$(printf 'yt_dlp_version = 2026.01.01\nffmpeg_build_arm64 = 1_9.0')"
+resolve_targets >/dev/null 2>&1
+check "an unreadable ytdl tag is tolerated"   "" "$YTDL_TARGET"
+
+# ──────────────────────────────────────────────────────────────────
+#  Idempotence: skip what is already current
+# ──────────────────────────────────────────────────────────────────
+printf '\nSkipping what is already current\n'
+
+INSTALL_DIR="$TMPDIR_YTDL/bin"
+mkdir -p "$INSTALL_DIR"
+XDG_STATE_HOME="$TMPDIR_YTDL/state"
+export XDG_STATE_HOME
+
+# fake_tool NAME "what --version prints"
+fake_tool() {
+  printf '#!/bin/sh\nprintf "%%s\\n" "%s"\n' "$2" > "$INSTALL_DIR/$1"
+  chmod +x "$INSTALL_DIR/$1"
+}
+
+FORCE=0
+
+fake_tool yt-dlp "2026.07.04"
+YTDLP_TARGET="2026.07.04"
+ytdlp_is_current
+check "yt-dlp at the pinned version is skipped"     "0" "$?"
+
+YTDLP_TARGET="2026.08.02"
+ytdlp_is_current
+check "yt-dlp behind the pin is reinstalled"        "1" "$?"
+
+# The comparison is EQUALITY, never ordering, so a pin naming an OLDER yt-dlp —
+# the rollback lever — reinstalls through the very same path as an upgrade.
+YTDLP_TARGET="2026.06.01"
+ytdlp_is_current
+check "a pinned OLDER yt-dlp reinstalls (downgrade)" "1" "$?"
+
+rm -f "$INSTALL_DIR/yt-dlp"
+YTDLP_TARGET="2026.07.04"
+ytdlp_is_current
+check "an absent yt-dlp is installed"               "1" "$?"
+
+# ffmpeg cannot describe its own build, so the marker is the only exact answer —
+# and the binaries it describes must still be there.
+mkdir -p "$(marker_dir)"
+printf 'ffmpeg_build = 1785863997_9.0\n' > "$(marker_path)"
+fake_tool ffmpeg "9.0"
+fake_tool ffprobe "9.0"
+FFMPEG_TARGET="1785863997_9.0"
+ffmpeg_is_current
+check "ffmpeg matching the marker is skipped"       "0" "$?"
+
+FFMPEG_TARGET="1900000000_9.1"
+ffmpeg_is_current
+check "ffmpeg behind the pin is reinstalled"        "1" "$?"
+
+FFMPEG_TARGET="1785863997_9.0"
+rm -f "$INSTALL_DIR/ffprobe"
+ffmpeg_is_current
+check "a marker without ffprobe is not trusted"     "1" "$?"
+fake_tool ffprobe "9.0"
+
+rm -f "$(marker_path)"
+ffmpeg_is_current
+check "no marker means ffmpeg is reinstalled"       "1" "$?"
+
+# ytdl prints "ytdl v2.1.0"; the version is the second field.
+fake_tool ytdl "ytdl v2.1.0"
+YTDL_TARGET="v2.1.0"
+ytdl_is_current
+check "ytdl at the newest tag is skipped"           "0" "$?"
+
+YTDL_TARGET="v2.2.0"
+ytdl_is_current
+check "ytdl behind the newest tag is reinstalled"   "1" "$?"
+
+# An unresolved target is nothing to compare against, so we must not skip.
+YTDL_TARGET=""
+ytdl_is_current
+check "an unresolved ytdl target never skips"       "1" "$?"
+
+# --force answers no to all three: a retry after a failed update must not skip the
+# component that failed just because its version string happens to look right.
+FORCE=1
+YTDLP_TARGET="2026.07.04"; FFMPEG_TARGET="1785863997_9.0"; YTDL_TARGET="v2.1.0"
+fake_tool yt-dlp "2026.07.04"
+printf 'ffmpeg_build = 1785863997_9.0\n' > "$(marker_path)"
+ytdlp_is_current;  check "--force reinstalls yt-dlp" "1" "$?"
+ffmpeg_is_current; check "--force reinstalls ffmpeg" "1" "$?"
+ytdl_is_current;   check "--force reinstalls ytdl"   "1" "$?"
+FORCE=0
+
+# ──────────────────────────────────────────────────────────────────
+#  The marker
+# ──────────────────────────────────────────────────────────────────
+# What was actually installed has to survive across runs: it is how the next run
+# answers "do I need to?" without asking the network, and how ytdl SHOWS which
+# ffmpeg it has.
+printf '\nThe installed-versions marker\n'
+
+rm -f "$(marker_path)"
+FFMPEG_TARGET="1785863997_9.0"
+write_marker
+check "the marker is written"        "0" "$([ -f "$(marker_path)" ] && echo 0 || echo 1)"
+check "it records the ytdl version"  "v2.1.0"         "$(marker_get ytdl_version)"
+check "it records the yt-dlp version" "2026.07.04"    "$(marker_get yt_dlp_version)"
+check "it records the ffmpeg build"  "1785863997_9.0" "$(marker_get ffmpeg_build)"
+check "an unset marker key is empty" ""               "$(marker_get not_a_key)"
+case "$(marker_get installed_at)" in
+  20[0-9][0-9]-*T*Z) check "it records when" "0" "0" ;;
+  *)                 check "it records when" "0" "1" ;;
+esac
+
+# ──────────────────────────────────────────────────────────────────
+#  The pinned ffmpeg checksum
+# ──────────────────────────────────────────────────────────────────
+# Unlike yt-dlp's published sums, this one is the maintainer's own attestation,
+# so there is no tolerant warn-and-skip: an ffmpeg installed without checking it
+# is precisely the gap ADR-0016 §12 closes.
+printf '\nPinned checksum verification\n'
+
+verify_pinned_checksum "$payload" "$real_hash" "ffmpeg.zip" >/dev/null 2>&1
+check "a matching pinned checksum passes"  "0" "$?"
+
+( verify_pinned_checksum "$payload" "0000000000000000000000000000000000000000000000000000000000000000" "ffmpeg.zip" ) >/dev/null 2>&1
+check "a mismatched pinned checksum aborts" "1" "$?"
+
+( verify_pinned_checksum "$payload" "" "ffmpeg.zip" ) >/dev/null 2>&1
+check "a MISSING pinned checksum aborts"    "1" "$?"
+
+# ──────────────────────────────────────────────────────────────────
+#  The committed pin
+# ──────────────────────────────────────────────────────────────────
+# The file that actually ships must parse under the rules above, and must name a
+# build for every architecture the installer can select.
+printf '\nThe committed deps.conf\n'
+
+DEPS_FILE="$SCRIPT_DIR/../deps.conf"
+check "deps.conf exists" "0" "$([ -f "$DEPS_FILE" ] && echo 0 || echo 1)"
+validate_deps "$DEPS_FILE" 2>/dev/null
+check "the committed pin validates" "0" "$?"
+check "it names a yt-dlp policy"    "0" "$([ -n "$(deps_get yt_dlp_version)" ] && echo 0 || echo 1)"
+for a in arm64 amd64; do
+  check "it names an ffmpeg build for $a" "0" \
+    "$([ -n "$(deps_get "ffmpeg_build_$a")" ] && echo 0 || echo 1)"
+  for t in ffmpeg ffprobe; do
+    # 64 hex characters — a placeholder or a truncated paste must not ship.
+    case "$(deps_get "ffmpeg_sha256_${a}_${t}")" in
+      [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+        check "$a/$t carries a real sha256" "0" "0" ;;
+      *)
+        check "$a/$t carries a real sha256" "0" "1" ;;
+    esac
+  done
+done
 
 printf '\n%d passed, %d failed\n\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

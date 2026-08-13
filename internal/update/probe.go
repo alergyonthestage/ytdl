@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -136,12 +137,17 @@ func FetchPin(ctx context.Context, c *http.Client, slug, branch string) (Pin, er
 		return Pin{}, err
 	}
 
-	pin := Pin{YtDlp: kv[depsYtDlpVersion], FFmpeg: kv[depsFFmpegBuild]}
+	// The pin is resolved FOR THIS MACHINE, the same way "latest" is resolved to a
+	// tag: upstream builds ffmpeg per architecture and gives the two different
+	// build ids, so a single one could not describe both. Selecting here means
+	// nothing downstream ever has to know there were two.
+	buildKey := depsFFmpegBuild + "_" + runtime.GOARCH
+	pin := Pin{YtDlp: kv[depsYtDlpVersion], FFmpeg: kv[buildKey]}
 	if pin.YtDlp == "" {
 		return Pin{}, fmt.Errorf("update: %s declares no %s", DepsFile, depsYtDlpVersion)
 	}
 	if !validVersion(pin.FFmpeg) {
-		return Pin{}, fmt.Errorf("update: %s declares no usable %s", DepsFile, depsFFmpegBuild)
+		return Pin{}, fmt.Errorf("update: %s declares no usable %s", DepsFile, buildKey)
 	}
 
 	if pin.YtDlp == LatestPolicy {
@@ -172,12 +178,17 @@ func FetchPin(ctx context.Context, c *http.Client, slug, branch string) (Pin, er
 // day — so the probe fails only on what it actually needs and cannot get.
 const (
 	depsYtDlpVersion = "yt_dlp_version"
-	depsFFmpegBuild  = "ffmpeg_build"
+	// depsFFmpegBuild is a PREFIX: the real keys carry the architecture, because
+	// upstream builds macOS arm64 and amd64 separately and stamps them with
+	// different build ids (verified 2026-08-13: 1785863997_9.0 and
+	// 1785871427_9.0 for the same ffmpeg 9.0).
+	depsFFmpegBuild = "ffmpeg_build"
 )
 
 var depsKeys = map[string]bool{
 	depsYtDlpVersion:              true,
-	depsFFmpegBuild:               true,
+	"ffmpeg_build_arm64":          true,
+	"ffmpeg_build_amd64":          true,
 	"ffmpeg_sha256_arm64_ffmpeg":  true,
 	"ffmpeg_sha256_arm64_ffprobe": true,
 	"ffmpeg_sha256_amd64_ffmpeg":  true,
