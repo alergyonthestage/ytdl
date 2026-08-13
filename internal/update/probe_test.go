@@ -241,7 +241,6 @@ func TestFetchPinRejectsBadFiles(t *testing.T) {
 	}{
 		{"missing yt_dlp_version", "ffmpeg_build = 1785863997_9.0\n"},
 		{"missing ffmpeg_build", "yt_dlp_version = 2026.07.04\n"},
-		{"unknown key", validDeps + "ytdl_version = v9.9.9\n"},
 		{"malformed line", validDeps + "this line has no equals sign\n"},
 		{"empty key", validDeps + "= orphan\n"},
 		{"empty file", "#only a comment\n"},
@@ -258,6 +257,24 @@ func TestFetchPinRejectsBadFiles(t *testing.T) {
 				t.Fatalf("FetchPin returned %+v, want an error", pin)
 			}
 		})
+	}
+}
+
+// A deployed binary is arbitrarily older than the deps.conf it reads. If a key
+// added later made the pin unreadable, every existing installation would fall to
+// "non verificato" and stop seeing the very update that teaches it that key —
+// the opposite of the property the pin exists for. install.sh, fetched from the
+// same commit as deps.conf, still rejects an unknown key: there it is a typo.
+func TestFetchPinToleratesAKeyItDoesNotKnowYet(t *testing.T) {
+	h := newHub(t)
+	h.deps = validDeps + "some_key_from_a_later_cycle = whatever\n"
+
+	pin, err := FetchPin(ctxT(t), nil, "o/r", "main")
+	if err != nil {
+		t.Fatalf("a future key made the pin unreadable: %v", err)
+	}
+	if pin.YtDlp != "2026.07.04" || pin.FFmpeg != "1785863997_9.0" {
+		t.Errorf("pin = %+v", pin)
 	}
 }
 

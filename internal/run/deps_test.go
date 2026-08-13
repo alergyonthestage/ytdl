@@ -2,6 +2,7 @@ package run
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -113,6 +114,115 @@ func TestOurCopyBeatsThePath(t *testing.T) {
 	}
 	if argv0, _ := readArgv(t, rec); argv0 != filepath.Join(ourDir, "yt-dlp") {
 		t.Errorf("argv[0] = %q", argv0)
+	}
+}
+
+// flagValue returns the value following flag in args, and whether it is there.
+func flagValue(args []string, flag string) (string, bool) {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1], true
+		}
+	}
+	return "", false
+}
+
+// silentOptions is a mode that actually downloads, so it carries the runtime args
+// appended after core.BuildArgs.
+func silentOptions(t *testing.T) core.Options {
+	t.Helper()
+	o := dryRunOptions(t)
+	o.Mode = core.ModeSilent
+	return o
+}
+
+// ytdl never invokes ffmpeg — yt-dlp does, off the $PATH it inherited. Naming our
+// own copy's directory is what makes ADR-0016 §4 true for ffmpeg too, instead of
+// only for yt-dlp.
+func TestFFmpegLocationNamesOurCopy(t *testing.T) {
+	ourDir := t.TempDir()
+	rec := recordingShim(t, ourDir)
+	for _, name := range []string{"ffmpeg", "ffprobe"} {
+		if err := os.WriteFile(filepath.Join(ourDir, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	useShimDir(t, ourDir)
+	t.Setenv("PATH", t.TempDir())
+
+	o := silentOptions(t)
+	if rc := Dispatch(o, io.Discard, io.Discard); rc != 0 {
+		t.Fatalf("rc = %d", rc)
+	}
+	_, args := readArgv(t, rec)
+
+	got, ok := flagValue(args, "--ffmpeg-location")
+	if !ok {
+		t.Fatalf("--ffmpeg-location absent; yt-dlp would fall back to $PATH.\nargv=%q", args)
+	}
+	// The DIRECTORY, because yt-dlp needs ffprobe from beside it.
+	if got != ourDir {
+		t.Errorf("--ffmpeg-location = %q, want our bin dir %q", got, ourDir)
+	}
+	// It is APPENDED, never woven in: core.BuildArgs ends with the URL, so
+	// anything ytdl adds afterwards must sit past it. (The exact-prefix property
+	// is asserted by the dry-run test, whose argv has no runtime args at all —
+	// silent mode's BuildArgs embeds temp-file paths created during the run, so
+	// it cannot be recomputed after the fact.)
+	urlAt, flagAt := indexOf(args, o.URL), indexOf(args, "--ffmpeg-location")
+	if urlAt < 0 || flagAt < urlAt {
+		t.Errorf("--ffmpeg-location at %d is not past the URL at %d:\nargv=%q", flagAt, urlAt, args)
+	}
+}
+
+func indexOf(args []string, want string) int {
+	for i, a := range args {
+		if a == want {
+			return i
+		}
+	}
+	return -1
+}
+
+// A dependency that came from $PATH is one yt-dlp would have found by itself.
+// Pinning its location would claim an ownership ytdl does not have.
+func TestFFmpegLocationIsAbsentForAForeignCopy(t *testing.T) {
+	ourDir, pathDir := t.TempDir(), t.TempDir()
+	rec := recordingShim(t, ourDir) // yt-dlp is ours...
+	useShimDir(t, ourDir)
+	// ...but ffmpeg is somebody else's.
+	if err := os.WriteFile(filepath.Join(pathDir, "ffmpeg"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", pathDir)
+
+	if rc := Dispatch(silentOptions(t), io.Discard, io.Discard); rc != 0 {
+		t.Fatalf("rc = %d", rc)
+	}
+	if _, args := readArgv(t, rec); func() bool { _, ok := flagValue(args, "--ffmpeg-location"); return ok }() {
+		t.Errorf("--ffmpeg-location was passed for a $PATH ffmpeg:\nargv=%q", args)
+	}
+}
+
+// Dry run postprocesses nothing, so its argv stays core.BuildArgs and nothing
+// else — asserted above, and restated here as the reason no ffmpeg flag appears.
+func TestDryRunGetsNoRuntimeArgs(t *testing.T) {
+	ourDir := t.TempDir()
+	rec := recordingShim(t, ourDir)
+	for _, name := range []string{"ffmpeg", "ffprobe"} {
+		if err := os.WriteFile(filepath.Join(ourDir, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	useShimDir(t, ourDir)
+	t.Setenv("PATH", t.TempDir())
+
+	o := dryRunOptions(t)
+	if rc := Dispatch(o, io.Discard, io.Discard); rc != 0 {
+		t.Fatalf("rc = %d", rc)
+	}
+	if _, args := readArgv(t, rec); !reflect.DeepEqual(args, core.BuildArgs(o)) {
+		t.Errorf("dry run gained runtime args:\n got=%q\nwant=%q", args, core.BuildArgs(o))
 	}
 }
 

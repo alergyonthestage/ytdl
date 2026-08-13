@@ -215,7 +215,7 @@ func runVerbose(o core.Options, w io.Writer) int {
 	work, cleanWork := workDir()
 	defer cleanWork()
 	var errbuf capBuffer
-	cmd := exec.Command(ytDlpCmd(), withTempRedirect(core.BuildArgs(o), o, work)...)
+	cmd := exec.Command(ytDlpCmd(), withRuntimeArgs(core.BuildArgs(o), o, work)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = io.MultiWriter(os.Stderr, &errbuf)
 	rc := runCode(cmd)
@@ -248,7 +248,7 @@ func runDefault(o core.Options, w io.Writer) int {
 	defer cleanWork()
 
 	var errbuf capBuffer
-	cmd := exec.Command(ytDlpCmd(), withTempRedirect(core.BuildArgs(o), o, work)...)
+	cmd := exec.Command(ytDlpCmd(), withRuntimeArgs(core.BuildArgs(o), o, work)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = io.MultiWriter(os.Stderr, &errbuf)
 	rc := runCode(cmd)
@@ -345,7 +345,7 @@ func runSilentSink(ctx context.Context, o core.Options, sink ProgressSink, cance
 	// audio) into the scratch dir so a failed/cancelled queued download leaves no
 	// residue in the destination — only the final file on success, or the .log
 	// breadcrumb below (ADR-0011). Appended after BuildArgs, off the golden path.
-	args := withTempRedirect(core.BuildArgs(o), o, work)
+	args := withRuntimeArgs(core.BuildArgs(o), o, work)
 
 	// Per-item playlist tracking (U7): append extra yt-dlp print sinks AFTER
 	// BuildArgs — pure runtime instrumentation, off the golden argv path — only
@@ -725,6 +725,37 @@ func withTempRedirect(args []string, o core.Options, work string) []string {
 		return args
 	}
 	return append(args, core.TempRedirectArgs(o, work)...)
+}
+
+// withRuntimeArgs appends everything ytdl adds AFTER core.BuildArgs for a mode
+// that actually downloads: the intermediate-file redirection and the location of
+// the ffmpeg the installer provisioned. Both are pure runtime instrumentation,
+// appended off the golden argv path exactly as TempRedirectArgs always has been
+// (project rule 1). Dry run deliberately does not use it — it postprocesses
+// nothing, so its argv stays core.BuildArgs and nothing else.
+func withRuntimeArgs(args []string, o core.Options, work string) []string {
+	return withFFmpegLocation(withTempRedirect(args, o, work))
+}
+
+// withFFmpegLocation tells yt-dlp which ffmpeg to use, when it is ours.
+//
+// ADR-0016 §4 rules that ytdl runs its own copies of its dependencies rather than
+// the system's. Resolving yt-dlp by absolute path achieves that for yt-dlp — but
+// ytdl never invokes ffmpeg, yt-dlp does, and yt-dlp looks it up on the $PATH it
+// inherited. So without this the pin would say which ffmpeg is INSTALLED while a
+// Homebrew one, earlier on $PATH, is the one actually converting the audio: the
+// same ordering hole, one process further down.
+//
+// The DIRECTORY is passed rather than the binary, because yt-dlp needs ffprobe
+// from beside it — the installer provisions both. Only our own copy is ever
+// named: a dependency that came from $PATH is one yt-dlp would have found by
+// itself, and pinning its location would claim ownership ytdl does not have.
+func withFFmpegLocation(args []string) []string {
+	path, ours, found := update.Resolve(ffmpeg)
+	if !found || !ours {
+		return args
+	}
+	return append(args, "--ffmpeg-location", filepath.Dir(path))
 }
 
 // tempFile creates an empty temp file and returns its path and a cleanup func,

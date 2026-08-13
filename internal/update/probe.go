@@ -157,9 +157,19 @@ func FetchPin(ctx context.Context, c *http.Client, slug, branch string) (Pin, er
 	return pin, nil
 }
 
-// deps.conf's keys. The Go probe reads only the first two, but it must ACCEPT the
-// checksums install.sh needs — and reject anything else, so a typo in the pin is
-// a loud failure rather than a silent default.
+// deps.conf's keys. The Go probe reads only the first two; the rest are the
+// checksums install.sh needs.
+//
+// The probe is deliberately TOLERANT of a key it does not recognise, while
+// install.sh rejects one. The asymmetry is not an inconsistency — the two read
+// the file under different conditions. install.sh is fetched from the same commit
+// as deps.conf, so a key it does not know is genuinely a typo and aborting costs
+// nothing. A deployed ytdl binary, on the other hand, is arbitrarily older than
+// the deps.conf it reads: if a key added later made the pin unreadable, every
+// existing installation would fall to "non verificato" and stop seeing the very
+// update that would teach it the new key. That is the exact opposite of the
+// property the pin exists for — one commit reaching every installation within a
+// day — so the probe fails only on what it actually needs and cannot get.
 const (
 	depsYtDlpVersion = "yt_dlp_version"
 	depsFFmpegBuild  = "ffmpeg_build"
@@ -191,7 +201,7 @@ func fetchDeps(ctx context.Context, c *http.Client, slug, branch string) (map[st
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("update: fetching %s: %s", DepsFile, resp.Status)
 	}
-	kv, err := parseKeyValue(io.LimitReader(resp.Body, maxDepsBytes), depsKeys, true)
+	kv, err := parseKeyValue(io.LimitReader(resp.Body, maxDepsBytes), depsKeys, false)
 	if err != nil {
 		return nil, fmt.Errorf("update: %s: %w", DepsFile, err)
 	}
