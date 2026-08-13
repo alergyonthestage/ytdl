@@ -618,7 +618,15 @@ function el(tag, className, text) { const n = node(); n.tag = tag; n.className =
 function button(label, className, onClick) { const b = el("button", className, label); b.onClick = onClick; return b; }
 function replaceChildren(n, cs) { n.children = cs || []; }
 const setMsg = () => {}, loadState = async () => {}, api = async () => ({});
-const ROUTES = { settings: "#/impostazioni" };
+// The REAL routing table and the REAL lookup, not a stand-in. A stub here read
+// ROUTES.settings — which is undefined, because the table is keyed by hash — and
+// made a broken banner button look correct. A harness may replace what a function
+// TALKS TO; replacing what it reasons ABOUT is how a test comes to agree with a
+// bug.
+global.ROUTES = eval("(" + extract(/const ROUTES = \{[\s\S]*?\n\};/)
+  .replace(/^const ROUTES = /, "").replace(/;$/, "") + ")");
+eval(extract(/function hashForView\(name\) \{[\s\S]*?\n\}/));
+const location = { hash: "" };
 const whenText = (iso) => "il 12/08/2026";
 let updateInfo = null, updatePollTimer = 0, updateVersionBefore = "", updateDeadline = 0;
 
@@ -628,6 +636,7 @@ eval(extract(/function renderUpdateVersions\(\) \{[\s\S]*?\n\}/));
 eval(extract(/function renderUpdateChanges\(\) \{[\s\S]*?\n\}/));
 eval(extract(/function blockedText\(b\) \{[\s\S]*?\n\}/));
 eval(extract(/function renderUpdateBanner\(\) \{[\s\S]*?\n\}/));
+eval(extract(/function confirmUpdate\(\) \{[\s\S]*?\n\}/));
 eval(extract(/function renderUpdateAction\(\) \{[\s\S]*?\n\}/));
 eval(extract(/function showUpdatePanel\(st\) \{[\s\S]*?\n\}/));
 eval(extract(/function applyUpdate\(u\) \{[\s\S]*?\n\}/));
@@ -814,5 +823,47 @@ console.log("versions:" + labels("updateVersions"));
 	}
 	if !strings.Contains(out, "non installato da ytdl") {
 		t.Errorf("a foreign dependency is not called out:\n%s", out)
+	}
+}
+
+// The banner's action has to land on a hash the router actually knows. It reads
+// like it could not fail — and it did: ROUTES is keyed by HASH, so the obvious
+// ROUTES.settings is undefined, and the button set location.hash to the string
+// "undefined". Nothing in the grep-based suite could see it, and the first
+// version of this harness stubbed ROUTES and agreed with the bug.
+func TestBannerActionNavigatesToARouteThatExists(t *testing.T) {
+	out := runNode(t, updateHarness+`
+applyUpdate(availableUpdate);
+const go = ($("updateBannerActions").children || [])[0];
+if (!go) { console.log("no-action"); } else {
+  go.onClick();
+  console.log("hash:" + location.hash);
+  console.log("known:" + (ROUTES[location.hash] === "settings"));
+}
+`)
+	if strings.Contains(out, "no-action") {
+		t.Fatalf("the banner offers no way to reach the update:\n%s", out)
+	}
+	if strings.Contains(out, "hash:undefined") || !strings.Contains(out, "known:true") {
+		t.Errorf("the banner action does not reach the settings view:\n%s", out)
+	}
+}
+
+// A retry must get its own deadline. One left over from the previous attempt
+// made the panel report "non sono riuscito a riaprire l'interfaccia" the instant
+// the second run finished.
+func TestEachUpdateRunGetsItsOwnRestartDeadline(t *testing.T) {
+	out := runNode(t, updateHarness+`
+eval(extract(/const RESTART_TIMEOUT_MS = [^;]+;/));
+eval(extract(/async function startUpdate\(force\) \{[\s\S]*?\n\}/));
+eval(extract(/function scheduleUpdatePoll\(\) \{[\s\S]*?\n\}/));
+global.setTimeout = () => 0;
+global.clearTimeout = () => {};
+applyUpdate(availableUpdate);
+updateDeadline = 1;                       // left over from an earlier attempt
+startUpdate(true).then(() => console.log("deadline:" + updateDeadline));
+`)
+	if !strings.Contains(out, "deadline:0") {
+		t.Errorf("a retry inherited the previous run's deadline:\n%s", out)
 	}
 }

@@ -85,6 +85,18 @@ function currentView() {
   return ROUTES[window.location.hash] || "download";
 }
 
+// hashForView is currentView backwards: ROUTES is keyed by hash, so a caller that
+// wants to NAVIGATE to a view has to look it up the other way. Writing the hash
+// literally at the call site would be a second source of truth for something
+// ROUTES and index.html already agree on — and `ROUTES.settings`, which reads
+// like it should work, is undefined.
+function hashForView(name) {
+  for (const hash of Object.keys(ROUTES)) {
+    if (ROUTES[hash] === name) return hash;
+  }
+  return "#/";
+}
+
 function showView(name) {
   for (const view of ["download", "history", "settings"]) {
     $("view-" + view).hidden = view !== name;
@@ -1082,7 +1094,7 @@ function renderUpdateBanner() {
   $("updateBannerText").textContent = text;
 
   const go = button("Vedi", "secondary", () => {
-    location.hash = ROUTES.settings;
+    location.hash = hashForView("settings");
     $("updateSection").scrollIntoView({ block: "start" });
     $("checkUpdate").focus();
   });
@@ -1127,6 +1139,10 @@ function confirmUpdate() {
 async function startUpdate(force) {
   setMsg("settingsMsg", "", "");
   updateVersionBefore = (updateInfo && updateInfo.installed && updateInfo.installed.ytdl) || "";
+  // Reset per run: a deadline left over from a previous attempt would make a
+  // retry report "non sono riuscito a riaprire l'interfaccia" the instant it
+  // finished.
+  updateDeadline = 0;
   try {
     const st = await api("/api/update", { force: !!force });
     showUpdatePanel(st);
