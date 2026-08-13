@@ -84,37 +84,92 @@ func executableFile(path string) bool {
 	return fi.Mode().Perm()&0o111 != 0
 }
 
-// ReadInstalled reads what this machine actually has, live and without touching
-// the network. The installed versions are local facts and are always shown, in
-// both channels, whether or not the probe ever succeeds (ADR-0016 §8).
-func ReadInstalled(stateDir string) Installed {
-	in := Installed{Ytdl: buildinfo.Version}
-	in.YtDlp = toolVersion(ComponentYtDlp)
+// Dependency is one tool ytdl drives, as this machine actually has it: which
+// version, where it came from, and whether we put it there.
+//
+// It is the local half of a verdict spelled out for the surfaces that SHOW it,
+// while Installed is the same facts flattened for the ones that COMPARE and cache
+// them. Both are built by the same walk below, so they cannot drift apart.
+type Dependency struct {
+	Name    string // "yt-dlp" | "ffmpeg"
+	Version string // "" = present, but nothing recorded its version
+	Path    string // "" = not found at all
+	Ours    bool   // provisioned by our own installer
+}
 
+// Missing reports a dependency that is not on this machine at all — a different
+// state from one whose version simply was never written down.
+func (d Dependency) Missing() bool { return d.Path == "" }
+
+// Dependencies lists what ytdl drives, in the order the surfaces show them, live
+// and without touching the network.
+//
+// withVersions decides whether each tool is ASKED for its version. It is a real
+// choice, not a convenience: `yt-dlp --version` costs the better part of a second
+// (it is a Python zipapp), measured on the reference container. A probe is never
+// on a path a user is waiting on, and neither is that exec — so the surfaces that
+// interrupt a download pass false and read the versions from the cached verdict
+// instead, while the screens the user deliberately opened pass true.
+func Dependencies(stateDir string, withVersions bool) []Dependency {
 	// ffmpeg does not describe its own BUILD: `ffmpeg -version` reports 9.0 while
 	// the pin names 1785863997_9.0, so the only exact answer is the one the
 	// installer wrote down when it put this copy here (design §5). An install
-	// predating the marker leaves this empty, and an empty side is never compared.
-	if m, ok := LoadMarker(stateDir); ok {
-		in.FFmpeg = m[markerFFmpegBuild]
-	}
+	// predating the marker leaves it empty, and an empty side is never compared.
+	marker, _ := LoadMarker(stateDir)
 
+	deps := make([]Dependency, 0, 2)
 	for _, name := range []string{ComponentYtDlp, ComponentFFmpeg} {
-		if _, ours, found := Resolve(name); found && !ours {
-			in.Foreign = append(in.Foreign, name)
+		path, ours, found := Resolve(name)
+		d := Dependency{Name: name, Ours: ours}
+		if found {
+			d.Path = path
+		}
+		switch {
+		case !found:
+		case name == ComponentFFmpeg:
+			// Free: the marker is a file read, so it is answered on every path.
+			d.Version = marker[markerFFmpegBuild]
+		case withVersions:
+			d.Version = toolVersion(path)
+		}
+		deps = append(deps, d)
+	}
+	return deps
+}
+
+// ReadInstalled reads what this machine actually has, flattened for comparison
+// and for the cache. The installed versions are local facts and are always shown,
+// in both channels, whether or not the probe ever succeeds (ADR-0016 §8).
+func ReadInstalled(stateDir string) Installed {
+	return InstalledFrom(Dependencies(stateDir, true))
+}
+
+// InstalledFrom flattens a dependency list into the shape that is compared and
+// cached. It is separate from Dependencies so a caller that already paid for the
+// walk does not pay twice.
+func InstalledFrom(deps []Dependency) Installed {
+	in := Installed{Ytdl: buildinfo.Version}
+	for _, d := range deps {
+		switch d.Name {
+		case ComponentYtDlp:
+			in.YtDlp = d.Version
+		case ComponentFFmpeg:
+			in.FFmpeg = d.Version
+		}
+		// Missing is not foreign: run.CheckDeps already has a message for a tool
+		// that is not there, and conflating the two would send a user with no
+		// yt-dlp a warning about somebody else's.
+		if !d.Missing() && !d.Ours {
+			in.Foreign = append(in.Foreign, d.Name)
 		}
 	}
 	return in
 }
 
-// toolVersion asks a dependency for its own version, returning "" when it is
-// absent or does not answer. yt-dlp prints exactly its tag, which is what makes
-// the comparison a string equality (ADR-0016 §1).
-func toolVersion(name string) string {
-	path, _, found := Resolve(name)
-	if !found {
-		return ""
-	}
+// toolVersion asks a dependency for its own version, returning "" when it does
+// not answer with something usable. yt-dlp prints exactly its tag, which is what
+// makes the comparison a string equality (ADR-0016 §1).
+func toolVersion(path string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), versionTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, path, "--version").Output()

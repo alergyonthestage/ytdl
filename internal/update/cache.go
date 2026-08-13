@@ -107,3 +107,21 @@ func (v Verdict) Fresh(now time.Time, ttl time.Duration) bool {
 	age := now.Sub(v.CheckedAt)
 	return age >= 0 && age < ttl
 }
+
+// Invalidate discards the cached verdict, so the next surface reads "non
+// verificato" and the next startup probes afresh.
+//
+// It is what a completed `ytdl --update` calls. Without it the cache would keep
+// announcing, for up to a day, an update the user has just applied — a surface
+// telling someone to do a thing they have already done is the honesty rule broken
+// as surely as a wrong version string would break it.
+func Invalidate(stateDir string) error {
+	path := CachePath(stateDir)
+	if path == "" {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}

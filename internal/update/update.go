@@ -26,7 +26,10 @@
 // reports what DIFFERS, never what is newer.
 package update
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // DevVersion is buildinfo.Version for a local build. It is never checked and
 // never reported stale (ADR-0016 §1): a working tree has no tag to compare
@@ -138,6 +141,19 @@ func (v Verdict) ChangedYtdl() bool {
 		}
 	}
 	return false
+}
+
+// FFmpegVersion turns an ffmpeg build id into the part a person recognises:
+// "1785863997_9.0" → "9.0". The build id is what gets COMPARED, because it is the
+// only exact answer; the version is what gets SHOWN, because the build number
+// means nothing to the reader and pretending otherwise is noise, not honesty. A
+// value in any other shape is shown whole rather than trimmed into something it
+// might not be.
+func FFmpegVersion(build string) string {
+	if i := strings.LastIndex(build, "_"); i >= 0 && i+1 < len(build) {
+		return build[i+1:]
+	}
+	return build
 }
 
 // WithInstalled returns v with its local facts replaced by the given ones.

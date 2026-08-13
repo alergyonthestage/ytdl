@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/alergyonthestage/ytdl/internal/buildinfo"
 )
@@ -103,6 +104,7 @@ func TestReadInstalledReportsLocalFacts(t *testing.T) {
 	}
 	ourDir, _ := isolate(t)
 	fakeTool(t, ourDir, ComponentYtDlp, "2026.07.04")
+	fakeTool(t, ourDir, ComponentFFmpeg, "9.0")
 
 	state := t.TempDir()
 	writeMarker(t, state, "ytdl_version = v2.1.0\nyt_dlp_version = 2026.07.04\nffmpeg_build = 1785863997_9.0\n")
@@ -205,5 +207,86 @@ func TestLoadMarkerToleratesUnknownKeys(t *testing.T) {
 	}
 	if _, present := m["something_new"]; present {
 		t.Error("an unknown key was kept; only whitelisted keys are read")
+	}
+}
+
+// The marker records what the installer PUT there, not what is there now. A copy
+// the user has since deleted must not be reported as installed — the marker is
+// evidence, not a substitute for looking.
+func TestDependenciesDoNotTrustTheMarkerOverReality(t *testing.T) {
+	isolate(t) // nothing installed anywhere
+	state := t.TempDir()
+	writeMarker(t, state, "ffmpeg_build = 1785863997_9.0\n")
+
+	for _, d := range Dependencies(state, true) {
+		if !d.Missing() {
+			t.Errorf("%s reported as present at %q", d.Name, d.Path)
+		}
+		if d.Version != "" {
+			t.Errorf("%s reported version %q while absent from the machine", d.Name, d.Version)
+		}
+	}
+	if in := ReadInstalled(state); in.FFmpeg != "" {
+		t.Errorf("Installed.FFmpeg = %q for an ffmpeg that is not there", in.FFmpeg)
+	}
+}
+
+// An install predating the marker has ffmpeg but no record of WHICH ffmpeg. That
+// is a third state — present, version unknown — and it must not collapse into
+// either "absent" or a guess.
+func TestDependencyPresentButUnrecorded(t *testing.T) {
+	ourDir, _ := isolate(t)
+	fakeTool(t, ourDir, ComponentFFmpeg, "9.0")
+
+	var ff Dependency
+	for _, d := range Dependencies(t.TempDir(), true) {
+		if d.Name == ComponentFFmpeg {
+			ff = d
+		}
+	}
+	if ff.Missing() {
+		t.Fatal("ffmpeg is on the machine but was reported missing")
+	}
+	if ff.Version != "" {
+		t.Errorf("Version = %q; with no marker there is nothing to report", ff.Version)
+	}
+	if !ff.Ours {
+		t.Error("Ours = false for a copy in our own bin dir")
+	}
+}
+
+func TestFFmpegVersion(t *testing.T) {
+	cases := map[string]string{
+		"1785863997_9.0": "9.0",
+		"9.0":            "9.0", // no build prefix: shown whole
+		"":               "",
+		"weird_":         "weird_", // nothing after the separator: not trimmed into ""
+	}
+	for in, want := range cases {
+		if got := FFmpegVersion(in); got != want {
+			t.Errorf("FFmpegVersion(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A completed `ytdl --update` discards the verdict, so the surface stops telling
+// the user to do a thing they have just done.
+func TestInvalidate(t *testing.T) {
+	dir := t.TempDir()
+	if err := Save(dir, sampleVerdict(time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	if err := Invalidate(dir); err != nil {
+		t.Fatalf("Invalidate: %v", err)
+	}
+	if _, ok := Load(dir); ok {
+		t.Error("the verdict survived Invalidate")
+	}
+	// Idempotent: invalidating what is already gone is not a failure.
+	if err := Invalidate(dir); err != nil {
+		t.Errorf("second Invalidate: %v", err)
+	}
+	if err := Invalidate(""); err != nil {
+		t.Errorf("Invalidate with no state dir: %v", err)
 	}
 }

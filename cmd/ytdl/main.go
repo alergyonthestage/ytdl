@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alergyonthestage/ytdl/internal/buildinfo"
 	"github.com/alergyonthestage/ytdl/internal/cli"
 	"github.com/alergyonthestage/ytdl/internal/config"
 	"github.com/alergyonthestage/ytdl/internal/core"
@@ -29,6 +30,7 @@ import (
 	"github.com/alergyonthestage/ytdl/internal/queue"
 	"github.com/alergyonthestage/ytdl/internal/run"
 	"github.com/alergyonthestage/ytdl/internal/term"
+	"github.com/alergyonthestage/ytdl/internal/update"
 	"github.com/alergyonthestage/ytdl/internal/webui"
 )
 
@@ -69,7 +71,9 @@ func realMain(args []string) int {
 		fmt.Print(cli.HelpText(parsed))
 		return 0
 	case cli.ActionVersion:
-		return run.ShowVersion(os.Stdout)
+		settings, _ := resolveWithFlags(config.Partial{})
+		fmt.Print(cli.RenderVersion(updateSurface(settings.UpdateCheck, withVersions)))
+		return 0
 	case cli.ActionUpdate:
 		return run.Update()
 	case cli.ActionQueue:
@@ -124,6 +128,13 @@ func realMain(args []string) int {
 		return 1
 	}
 
+	// One of the two startup refresh sites (ADR-0016 §5). This one covers the plain
+	// `ytdl <url>` the installer itself tells people to type: without it a user who
+	// never enqueues and never opens the GUI would refresh the verdict never. It
+	// runs BEFORE the download, so the probe overlaps work the user is already
+	// waiting on, and writes for the NEXT invocation.
+	update.RefreshAsync(config.StatePath(), settings.UpdateCheck, time.Now())
+
 	o := core.Options{
 		Mode:     parsed.RunMode,
 		URL:      parsed.URL,
@@ -131,7 +142,74 @@ func realMain(args []string) int {
 		// Playlist mode is on via the -p flag or the persistent config default.
 		Playlist: parsed.Playlist || settings.PlaylistDefault,
 	}
-	return run.Dispatch(o, os.Stdout, os.Stderr)
+	rc := run.Dispatch(o, os.Stdout, os.Stderr)
+
+	// After the command's own output, never before it (design §6.1), and on
+	// failure as well as success: a stale dependency is MORE relevant when a
+	// download has just failed, though the notice never claims to be the cause.
+	printUpdateNotices(settings.UpdateCheck, withoutVersions)
+	return rc
+}
+
+// The two costs a surface can choose between when it reads the local facts. Asking
+// yt-dlp its version costs the better part of a second, so only a screen the user
+// deliberately opened pays it; a notice printed after a download reads the
+// versions from the cached verdict instead (see update.Dependencies).
+const (
+	withVersions    = true
+	withoutVersions = false
+)
+
+// updateSurface assembles the update view at the edge, so the cli renderers stay
+// pure. It pairs the remembered REMOTE answer with the LOCAL facts it can afford
+// to read.
+func updateSurface(enabled, versions bool) cli.UpdateView {
+	stateDir := config.StatePath()
+	v, have := update.Load(stateDir)
+	deps := update.Dependencies(stateDir, versions)
+
+	// The running build is free to read and authoritative, so it always replaces
+	// what the cache remembered: a verdict written by a previous build must not
+	// make this one look stale, and IsDev keys off exactly this field.
+	v.Installed.Ytdl = buildinfo.Version
+	// The ffmpeg build comes from the marker, which is a file read — free on every
+	// path, so it is always current.
+	v.Installed.FFmpeg = dependencyVersion(deps, update.ComponentFFmpeg)
+	if versions {
+		// Where we can afford to look, a dependency the user updated by hand since
+		// the last round must not still be reported as stale.
+		v.Installed.YtDlp = dependencyVersion(deps, update.ComponentYtDlp)
+	}
+
+	return cli.UpdateView{
+		Verdict:     v,
+		HaveVerdict: have,
+		Enabled:     enabled,
+		Deps:        deps,
+		Now:         time.Now(),
+	}
+}
+
+func dependencyVersion(deps []update.Dependency, name string) string {
+	for _, d := range deps {
+		if d.Name == name {
+			return d.Version
+		}
+	}
+	return ""
+}
+
+// printUpdateNotices writes the update and foreign-dependency notices to STDERR,
+// so they never contaminate output a script may be parsing, and so they carry the
+// same "!" warning mark as every other advisory ytdl prints.
+//
+// The two are separate messages because they are separate problems: one says
+// something newer exists, the other says the pin is not in force at all
+// (ADR-0016 §4, §8).
+func printUpdateNotices(enabled, versions bool) {
+	view := updateSurface(enabled, versions)
+	fmt.Fprint(os.Stderr, cli.RenderUpdateNotice(view))
+	fmt.Fprint(os.Stderr, cli.RenderForeignDependency(view))
 }
 
 // resolveSettings builds the layer Partials and resolves them. The session layer
@@ -184,6 +262,13 @@ func runDaemon(daemonArgs []string) int {
 	}
 
 	settings, _ := resolveWithFlags(config.Partial{})
+
+	// The other startup refresh site (ADR-0016 §5). It covers every path that goes
+	// through the daemon — `ytdl -b`, `gui`, `again`, `retry` — and, unlike the
+	// foreground one, it runs in a process that will still be alive when the probe
+	// answers.
+	update.RefreshAsync(stateDir, settings.UpdateCheck, time.Now())
+
 	sp := queue.Open(stateDir)
 	cfg := daemon.Config{
 		Spool:         sp,
@@ -861,6 +946,17 @@ func runStatusCmd() int {
 	if lp := daemonLogPath(stateDir); fileExists(lp) {
 		fmt.Printf("  diagnostica: %s\n", lp)
 	}
+	// `status` is where a user goes to ask whether anything is wrong, so the update
+	// state belongs on it — the same capability in both channels (ux-principles.md
+	// §7). It pays for the versions, because this screen was opened deliberately.
+	//
+	// The one-line state, not the two-line notice: this screen ALWAYS says where
+	// the update stands, including "disponibile un aggiornamento · ytdl --update",
+	// so printing the notice beside it would say the same thing twice. The foreign
+	// warning is a different fact and still prints.
+	view := updateSurface(settings.UpdateCheck, withVersions)
+	fmt.Print(cli.RenderUpdateState(view))
+	fmt.Fprint(os.Stderr, cli.RenderForeignDependency(view))
 	return 0
 }
 

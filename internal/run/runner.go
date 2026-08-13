@@ -21,7 +21,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alergyonthestage/ytdl/internal/buildinfo"
 	"github.com/alergyonthestage/ytdl/internal/config"
 	"github.com/alergyonthestage/ytdl/internal/core"
 	"github.com/alergyonthestage/ytdl/internal/daemon"
@@ -545,24 +544,6 @@ func runBackground(o core.Options, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// ShowVersion prints ytdl's version and yt-dlp's, tolerating a missing or
-// unresponsive yt-dlp (ytdl lines 101-108).
-func ShowVersion(w io.Writer) int {
-	fmt.Fprintf(w, "ytdl %s\n", buildinfo.Version)
-	path, _, found := update.Resolve(ytDlp)
-	if !found {
-		fmt.Fprintln(w, "yt-dlp non installato")
-		return 0
-	}
-	out, err := exec.Command(path, "--version").Output()
-	if err != nil {
-		fmt.Fprintln(w, "yt-dlp (non risponde)")
-		return 0
-	}
-	fmt.Fprintf(w, "yt-dlp %s\n", strings.TrimSpace(string(out)))
-	return 0
-}
-
 // Update re-runs the installer, the single place the provisioning logic lives
 // (ytdl lines 112-131). It streams `curl … | bash`.
 func Update() int {
@@ -601,6 +582,14 @@ func Update() int {
 	if curlErr != nil || shErr != nil {
 		return updateFailed()
 	}
+
+	// Whatever the installer just did, the cached verdict is now describing a
+	// machine that no longer exists. Discarding it stops the notice from telling
+	// the user, for up to a day, to do the thing they have just done — a surface
+	// asking for an action already taken breaks the honesty rule as surely as a
+	// wrong version string would (ux-principles.md §5). Best-effort: a stale cache
+	// must never turn a successful update into a failed one.
+	_ = update.Invalidate(config.StatePath())
 	return 0
 }
 
