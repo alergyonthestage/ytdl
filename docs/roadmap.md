@@ -707,7 +707,7 @@ two findings, **G27** and **G28**, which land in this cycle. What remains is the
   which scope decided it; no per-download control is sticky by accident; the same
   rule is stated once in `ux-principles.md` §8 and holds in both channels.
 
-#### Cycle 6-plus — the update path (`F`) — **analysis done, gate A closed, design at gate B (2026-08-12)**
+#### Cycle 6-plus — the update path (`F`) — **gates A and B closed; implementation next (2026-08-13)**
 
 Not a gate-C finding: raised by the maintainer on 2026-08-09, immediately after
 installing v2.1.0 by hand. **Pulled ahead of Cycle 6 on 2026-08-12**, when ytdl
@@ -720,7 +720,10 @@ every one of those references.
 
 **Its rulings are [ADR-0016](decisions/0016-cycle6plus-update-path.md) and its
 design is [design-cycle6plus-update.md](design-cycle6plus-update.md)** — read
-those first: they answer all four questions below, and the design awaits gate B.
+those first: they answer all four questions below. The design was **approved at
+gate B on 2026-08-13**; the implementation session starts from
+[handoff-cycle6plus-implementation.md](handoff-cycle6plus-implementation.md),
+which is deleted at the cycle's close.
 
 **What already exists, so the cycle does not rebuild it:** `ytdl --update`
 (`internal/run/runner.go`) re-runs `install.sh` through `curl … | bash`, and the
