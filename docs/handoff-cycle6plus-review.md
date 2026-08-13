@@ -15,12 +15,12 @@ built the same day**. All eleven steps of the previous handoff are done.
 flowchart LR
   A["analysis<br/>✓"] --> GA["gate A<br/>✓ ADR-0016"]
   GA --> D["design<br/>✓"] --> GB["gate B<br/>✓"]
-  GB --> I["implementation<br/>✓ 15 commits"]
+  GB --> I["implementation<br/>✓ built"]
   I --> R["review<br/>◀ you are here"]
   R --> GC["gate C"] --> DOC["docs"]
 ```
 
-**Branch `feat/update-path/implementation`, 15 commits, NOT merged.** `main` is
+**Branch `feat/update-path/implementation`, NOT merged.** `main` is
 untouched and still 11 commits ahead of `origin/main` (docs only).
 
 | Check | State |
@@ -153,7 +153,7 @@ go build ./... && go test -race ./...
 go vet ./... && gofmt -l .
 bash tests/test-installer.sh
 git diff main -- internal/core/ internal/daemon/   # must be empty
-git log --oneline main..HEAD                        # 15 commits
+git log --oneline main..HEAD                        # the cycle, commit by commit
 git diff main --stat
 ```
 
