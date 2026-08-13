@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -33,8 +34,13 @@ import (
 type hub struct {
 	srv *httptest.Server
 
-	tags map[string]string // slug -> tag served by /<slug>/releases/latest
-	deps string            // deps.conf body; "" serves a 404
+	// mu guards everything the handler reads. Some tests change what the server
+	// answers BETWEEN requests, and without this that change races the handler
+	// goroutine still finishing the previous one.
+	mu        sync.Mutex
+	tags      map[string]string // slug -> tag served by /<slug>/releases/latest
+	deps      string            // deps.conf body; "" serves a 404
+	installer string            // install.sh body; "" serves a 404
 
 	// location, when set, is served verbatim instead of a well-formed tag URL,
 	// and status overrides the 302.
@@ -42,6 +48,23 @@ type hub struct {
 	status   int
 
 	hits atomic.Int64
+}
+
+// The setters exist so a test can change the answer mid-run; setup before the
+// first request may as well use them too, so there is one way to do it.
+func (h *hub) setDeps(s string)      { h.mu.Lock(); h.deps = s; h.mu.Unlock() }
+func (h *hub) setInstaller(s string) { h.mu.Lock(); h.installer = s; h.mu.Unlock() }
+
+func (h *hub) setTag(slug, tag string) {
+	h.mu.Lock()
+	h.tags[slug] = tag
+	h.mu.Unlock()
+}
+
+func (h *hub) setRedirect(status int, location string) {
+	h.mu.Lock()
+	h.status, h.location = status, location
+	h.mu.Unlock()
 }
 
 func newHub(t *testing.T) *hub {
@@ -58,6 +81,8 @@ func newHub(t *testing.T) *hub {
 
 func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 	h.hits.Add(1)
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	path := strings.TrimPrefix(r.URL.Path, "/")
 
 	if slug, ok := strings.CutSuffix(path, "/releases/latest"); ok {
@@ -78,6 +103,15 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Location", loc)
 		}
 		w.WriteHeader(status)
+		return
+	}
+
+	if strings.HasSuffix(path, "/install.sh") {
+		if h.installer == "" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprint(w, h.installer)
 		return
 	}
 
@@ -112,7 +146,7 @@ func ctxT(t *testing.T) context.Context {
 
 func TestLatestTagReadsTheRedirect(t *testing.T) {
 	h := newHub(t)
-	h.tags["alergyonthestage/ytdl"] = "v2.2.0"
+	h.setTag("alergyonthestage/ytdl", "v2.2.0")
 
 	got, err := LatestTag(ctxT(t), nil, "alergyonthestage/ytdl")
 	if err != nil {
@@ -150,8 +184,8 @@ func TestLatestTagRefusesEveryMalformedAnswer(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHub(t)
-			h.status, h.location = tc.status, tc.location
-			h.tags["o/r"] = "v1.0.0"
+			h.setRedirect(tc.status, tc.location)
+			h.setTag("o/r", "v1.0.0")
 
 			got, err := LatestTag(ctxT(t), nil, "o/r")
 			if err == nil {
@@ -186,7 +220,7 @@ func TestLatestTagHonoursContextCancellation(t *testing.T) {
 
 func TestFetchPinReadsAnExplicitTag(t *testing.T) {
 	h := newHub(t)
-	h.deps = validDeps
+	h.setDeps(validDeps)
 
 	pin, err := FetchPin(ctxT(t), nil, "o/r", "main")
 	if err != nil {
@@ -206,8 +240,8 @@ func TestFetchPinReadsAnExplicitTag(t *testing.T) {
 // placeholder (design §2).
 func TestFetchPinResolvesTheLatestPolicy(t *testing.T) {
 	h := newHub(t)
-	h.deps = strings.Replace(validDeps, "2026.07.04", LatestPolicy, 1)
-	h.tags[YtDlpSlug] = "2026.08.02"
+	h.setDeps(strings.Replace(validDeps, "2026.07.04", LatestPolicy, 1))
+	h.setTag(YtDlpSlug, "2026.08.02")
 
 	pin, err := FetchPin(ctxT(t), nil, "o/r", "main")
 	if err != nil {
@@ -226,7 +260,7 @@ func TestFetchPinResolvesTheLatestPolicy(t *testing.T) {
 // because that is indistinguishable from the policy currently BEING latest.
 func TestFetchPinFailsClosedWhenLatestCannotBeResolved(t *testing.T) {
 	h := newHub(t)
-	h.deps = strings.Replace(validDeps, "2026.07.04", LatestPolicy, 1)
+	h.setDeps(strings.Replace(validDeps, "2026.07.04", LatestPolicy, 1))
 	// yt-dlp's slug is deliberately absent from h.tags, so its probe 404s.
 
 	pin, err := FetchPin(ctxT(t), nil, "o/r", "main")
@@ -255,7 +289,7 @@ func TestFetchPinRejectsBadFiles(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHub(t)
-			h.deps = tc.deps
+			h.setDeps(tc.deps)
 
 			if pin, err := FetchPin(ctxT(t), nil, "o/r", "main"); err == nil {
 				t.Fatalf("FetchPin returned %+v, want an error", pin)
@@ -271,7 +305,7 @@ func TestFetchPinRejectsBadFiles(t *testing.T) {
 // same commit as deps.conf, still rejects an unknown key: there it is a typo.
 func TestFetchPinToleratesAKeyItDoesNotKnowYet(t *testing.T) {
 	h := newHub(t)
-	h.deps = validDeps + "some_key_from_a_later_cycle = whatever\n"
+	h.setDeps(validDeps + "some_key_from_a_later_cycle = whatever\n")
 
 	pin, err := FetchPin(ctxT(t), nil, "o/r", "main")
 	if err != nil {
@@ -293,8 +327,8 @@ func TestFetchPinUnreachable(t *testing.T) {
 // deps.conf keeps its comments and its aligned spacing; the parser must not care.
 func TestFetchPinToleratesCommentsAndSpacing(t *testing.T) {
 	h := newHub(t)
-	h.deps = "\n   # a comment\n\n\tyt_dlp_version\t=\t2026.07.04   \n" +
-		"ffmpeg_build_arm64=1785863997_9.0\nffmpeg_build_amd64=1785871427_9.0\n\n# trailing comment\n"
+	h.setDeps("\n   # a comment\n\n\tyt_dlp_version\t=\t2026.07.04   \n" +
+		"ffmpeg_build_arm64=1785863997_9.0\nffmpeg_build_amd64=1785871427_9.0\n\n# trailing comment\n")
 
 	pin, err := FetchPin(ctxT(t), nil, "o/r", "main")
 	if err != nil {
@@ -362,7 +396,7 @@ func TestSlugAndBranchHonourTheEnvironment(t *testing.T) {
 // a shared client would break every other request made through it.
 func TestDoNoRedirectDoesNotMutateTheCallersClient(t *testing.T) {
 	h := newHub(t)
-	h.tags["o/r"] = "v1.0.0"
+	h.setTag("o/r", "v1.0.0")
 
 	c := &http.Client{Timeout: 5 * time.Second}
 	if _, err := LatestTag(ctxT(t), c, "o/r"); err != nil {
@@ -380,7 +414,7 @@ func TestDoNoRedirectDoesNotMutateTheCallersClient(t *testing.T) {
 // downstream has to know there were two.
 func TestFetchPinResolvesTheBuildForThisArchitecture(t *testing.T) {
 	h := newHub(t)
-	h.deps = validDeps
+	h.setDeps(validDeps)
 
 	pin, err := FetchPin(ctxT(t), nil, "o/r", "main")
 	if err != nil {
@@ -402,7 +436,7 @@ func TestFetchPinResolvesTheBuildForThisArchitecture(t *testing.T) {
 // can act on. Fail closed rather than install something unattested.
 func TestFetchPinFailsWhenThisArchitectureIsNotPinned(t *testing.T) {
 	h := newHub(t)
-	h.deps = "yt_dlp_version = 2026.07.04\nffmpeg_build_riscv64 = 1_9.0\n"
+	h.setDeps("yt_dlp_version = 2026.07.04\nffmpeg_build_riscv64 = 1_9.0\n")
 
 	if pin, err := FetchPin(ctxT(t), nil, "o/r", "main"); err == nil {
 		t.Fatalf("FetchPin returned %+v, want an error", pin)
