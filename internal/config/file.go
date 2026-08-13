@@ -212,6 +212,12 @@ func assign(p *Partial, key, value string, line int) *Warning {
 			return &Warning{Line: line, Msg: fmt.Sprintf("invalid open_folder_on_done %q (want true|false); ignoring", value)}
 		}
 		p.OpenFolderOnDone = &b
+	case "update_check":
+		b, ok := parseBool(value)
+		if !ok {
+			return &Warning{Line: line, Msg: fmt.Sprintf("invalid update_check %q (want true|false); ignoring", value)}
+		}
+		p.UpdateCheck = &b
 	default:
 		return &Warning{Line: line, Msg: fmt.Sprintf("unknown key %q; ignoring", key)}
 	}

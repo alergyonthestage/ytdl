@@ -165,6 +165,7 @@ func maintenanceRows(v ConfigView) []configRow {
 		{"conservazione", retentionText(s.LogRetentionDays), sourceOf(v.File.LogRetentionDays != nil)},
 		{"log accanto all'audio", yesNo(s.BreadcrumbOnFailure), sourceOf(v.File.BreadcrumbOnFailure != nil)},
 		{"timeout per job", timeoutText(s.JobTimeout), sourceOf(v.File.JobTimeout != nil)},
+		{"controllo aggiornamenti", yesNo(s.UpdateCheck), sourceOf(v.File.UpdateCheck != nil)},
 	}
 }
 

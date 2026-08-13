@@ -274,6 +274,55 @@ func TestOpenFolderOnDoneDefaultsOff(t *testing.T) {
 	}
 }
 
+func TestLoadFileUpdateCheck(t *testing.T) {
+	for _, good := range []struct {
+		in   string
+		want bool
+	}{{"true", true}, {"false", false}, {"FALSE", false}} {
+		t.Run("valid "+good.in, func(t *testing.T) {
+			p, warns, err := LoadFile(writeConfig(t, "update_check = "+good.in+"\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(warns) != 0 {
+				t.Fatalf("unexpected warnings: %v", warns)
+			}
+			if p.UpdateCheck == nil || *p.UpdateCheck != good.want {
+				t.Errorf("UpdateCheck = %v, want %v", p.UpdateCheck, good.want)
+			}
+		})
+	}
+	// A garbage value warns and falls through to the default rather than being
+	// read as "off": consent that the user did not actually withdraw must not be
+	// lost to a typo.
+	for _, bad := range []string{"yes", "no", "0", "", "sì"} {
+		t.Run("invalid "+bad, func(t *testing.T) {
+			path := writeConfig(t, "update_check = "+bad+"\n")
+			p, warns, err := LoadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(warns) != 1 {
+				t.Fatalf("want 1 warning for %q, got %d: %v", bad, len(warns), warns)
+			}
+			if p.UpdateCheck != nil {
+				t.Errorf("invalid update_check %q was kept: %v", bad, *p.UpdateCheck)
+			}
+			if s, _ := Resolve(Partial{}, Partial{}, p, Env{}); !s.UpdateCheck {
+				t.Error("a garbage value must fall through to the default, not to off")
+			}
+		})
+	}
+}
+
+// The default carries the cycle: the person it exists for will never open a
+// settings screen to switch the check on (ADR-0016 §6).
+func TestUpdateCheckDefaultsOn(t *testing.T) {
+	if !Defaults().UpdateCheck {
+		t.Error("update_check defaults to false; ADR-0016 §6 requires on")
+	}
+}
+
 func TestLoadFileBackendKeys(t *testing.T) {
 	t.Setenv("HOME", "/home/tester")
 	path := writeConfig(t, `

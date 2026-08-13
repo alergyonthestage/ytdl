@@ -23,6 +23,7 @@ func sampleSettings(dir string) Settings {
 	s.Concurrency = 4
 	s.JobTimeout = 300
 	s.OpenFolderOnDone = true
+	s.UpdateCheck = false // non-default, so the round-trip actually exercises it
 	return s
 }
 

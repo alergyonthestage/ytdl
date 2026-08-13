@@ -52,6 +52,18 @@ type Settings struct {
 	// a background completion already notifies (design §9.4). Not read by
 	// core.BuildArgs.
 	OpenFolderOnDone bool // default: false
+
+	// Cycle 6-plus setting: may ytdl check, on its own, whether an update exists
+	// (ADR-0016 §6). It is an outbound call on someone else's machine, so it gets
+	// its own whitelist key — but it defaults to ON, because the person this
+	// cycle exists for will never open a settings screen to switch it on, and a
+	// default of off would deliver them nothing. The honesty cost of that default
+	// is paid by the notice, which says the check exists and where to turn it off.
+	//
+	// It governs the AUTOMATIC probe only. A user who turns it off keeps the
+	// manual check and `ytdl --update`: consent is about the machine phoning home
+	// by itself, not about the user's right to ask. Not read by core.BuildArgs.
+	UpdateCheck bool // default: true
 }
 
 // Defaults copied verbatim from the Bash ytdl (lines 31-41, 196).
@@ -87,6 +99,10 @@ const (
 	// design choice) — and sits well above the recommended 2–3 default so ordinary
 	// settings stay quiet. The future config UI surfaces the same warning.
 	ConcurrencyAdvisoryThreshold = 8
+	// DefaultUpdateCheck is whether ytdl checks for its own updates unasked. On,
+	// deliberately — see Settings.UpdateCheck for why the default carries the
+	// cycle rather than the other way round (ADR-0016 §6).
+	DefaultUpdateCheck = true
 
 	// NameTemplate is the filename template with yt-dlp first-present fallback
 	// chains: artist -> creator -> xartist -> uploader, and track -> xtrack ->
@@ -149,6 +165,7 @@ func Defaults() Settings {
 		JobTimeout:  DefaultJobTimeout,
 
 		OpenFolderOnDone: false,
+		UpdateCheck:      DefaultUpdateCheck,
 	}
 }
 
@@ -197,6 +214,7 @@ type Partial struct {
 	JobTimeout  *int
 
 	OpenFolderOnDone *bool
+	UpdateCheck      *bool
 }
 
 // Env is the environment layer. For parity with the Bash tool only
@@ -297,6 +315,9 @@ func apply(s *Settings, p Partial) {
 	}
 	if p.OpenFolderOnDone != nil {
 		s.OpenFolderOnDone = *p.OpenFolderOnDone
+	}
+	if p.UpdateCheck != nil {
+		s.UpdateCheck = *p.UpdateCheck
 	}
 }
 
