@@ -707,7 +707,7 @@ two findings, **G27** and **G28**, which land in this cycle. What remains is the
   which scope decided it; no per-download control is sticky by accident; the same
   rule is stated once in `ux-principles.md` §8 and holds in both channels.
 
-#### Cycle 6-plus — the update path (`F`) — **gates A and B closed; implementation next (2026-08-13)**
+#### Cycle 6-plus — the update path (`F`) — **implementation COMPLETE; review next (2026-08-13)**
 
 Not a gate-C finding: raised by the maintainer on 2026-08-09, immediately after
 installing v2.1.0 by hand. **Pulled ahead of Cycle 6 on 2026-08-12**, when ytdl
@@ -721,9 +721,37 @@ every one of those references.
 **Its rulings are [ADR-0016](decisions/0016-cycle6plus-update-path.md) and its
 design is [design-cycle6plus-update.md](design-cycle6plus-update.md)** — read
 those first: they answer all four questions below. The design was **approved at
-gate B on 2026-08-13**; the implementation session starts from
-[handoff-cycle6plus-implementation.md](handoff-cycle6plus-implementation.md),
-which is deleted at the cycle's close.
+gate B on 2026-08-13** and **built the same day**; the review session starts from
+[handoff-cycle6plus-review.md](handoff-cycle6plus-review.md), which is deleted at
+the cycle's close.
+
+**Where it stands (2026-08-13).** All eleven implementation steps are done, in
+twelve commits on `feat/update-path/implementation`, **not yet merged**. The
+suite is green under `-race`, `go vet` and `gofmt` are clean, and the parity gate
+(`git diff main -- internal/core/ internal/daemon/`) is **empty at every commit**.
+`tests/test-installer.sh` grew from 21 assertions to 80. What remains is review →
+gate C → the documentation phase.
+
+Three things the implementation learned that the design could not have known, all
+carried back into [ADR-0016](decisions/0016-cycle6plus-update-path.md) §14:
+
+- **ffmpeg's build id is per architecture** (`1785863997_9.0` on arm64,
+  `1785871427_9.0` on amd64, for the same ffmpeg 9.0). A single `ffmpeg_build`,
+  as the design sketched it, could not have described both.
+- **The Go probe tolerates an unknown deps.conf key; install.sh still refuses
+  one.** A deployed binary is arbitrarily older than the file it reads, so a key
+  added later would otherwise drop the whole fleet to "non verificato" — and
+  stop it seeing the very update that teaches it that key.
+- **`--ffmpeg-location` is appended after `core.BuildArgs`.** ytdl never invokes
+  ffmpeg (yt-dlp does, off the inherited `$PATH`), so without it the pin said
+  which ffmpeg was *installed* but not which one was *used*.
+
+**Two things the container cannot close, carried to the maintainer:** the four
+ffmpeg sha256 values in `deps.conf` were **computed here, not attested** — they
+must be verified on the Mac before the release that ships them, since the whole
+value of §12 is that the sum means someone checked; and the GUI's visuals, the
+banner, the update panel and the handover reload have been exercised by node and
+by curl against a live daemon, but never by a browser.
 
 **What already exists, so the cycle does not rebuild it:** `ytdl --update`
 (`internal/run/runner.go`) re-runs `install.sh` through `curl … | bash`, and the
@@ -777,14 +805,18 @@ replacing a *running* binary (atomic `mv`; the live process keeps its inode,
     daemon takes everything by injection, so **the constraint needed no amendment**
     and `internal/daemon` stays byte-unchanged. What ADR-0016 §7 *does* amend is
     ADR-0008: the daemon gains a third exit cause, an explicit user request.
-- **Design must settle — applying it from the GUI**, the hard half. The binary to
-  replace is the one serving the page: the daemon holds the flock and the queue,
-  the installer overwrites `~/.local/bin/ytdl` while it runs, and the live process
-  stays on the old inode until it restarts. So the design owes an answer on
-  refusing (or waiting) while downloads are in flight, running the installer
-  detached, restarting the daemon, and getting the browser to reconnect — against
-  [ADR-0008](decisions/0008-daemon-lifecycle.md), where an open SSE connection *is*
-  the liveness clause.
+- ~~**Design must settle — applying it from the GUI**~~, the hard half: **answered
+  and built** ([ADR-0016](decisions/0016-cycle6plus-update-path.md) §9,
+  [design](design-cycle6plus-update.md) §7.2). The installer runs detached and
+  setsid'd, so it outlives the binary it replaces; the old daemon keeps its own
+  inode and therefore survives to *report* the outcome; it then closes the
+  listener with `Close` (never `Shutdown`, which an SSE connection would block
+  for ever), hands the session token to the child in the environment, and exits
+  — the third exit cause ADR-0008 gains. The browser reconnects by polling, not
+  by SSE, because that connection dies at the handover by construction.
+  Downloads in flight gate the **action** and never the news, and emptiness is
+  re-checked server-side at the click. Most updates cost no restart at all: after
+  the installer became idempotent, a re-pinned yt-dlp leaves the page where it is.
 - **Non-negotiable:** the update stays the installer. No second download-and-verify
   path in Go (item 1.9,
   [ADR-0005](decisions/0005-macos-floor-and-single-engine.md)) — that one is what
@@ -794,7 +826,20 @@ replacing a *running* binary (atomic `mv`; the live process keeps its inode,
   update without opening a Terminal; and the check can be turned off. **Raised on
   2026-08-12:** the acceptance test is now a person who is not the maintainer —
   they must be able to go from "there is an update" to "I am on it" from the GUI
-  alone, with nobody at their keyboard.
+  alone, with nobody at their keyboard. **Built as of 2026-08-13; the acceptance
+  test itself is verified when the maintainer opens the page on macOS, which is
+  the one thing the container cannot do.**
+- **Known risk this cycle introduces, to watch rather than to fix now:** pinning
+  an exact ffmpeg build trades a moving target for a fixed one, and a fixed URL
+  can 404. The `latest` redirect could never fail that way; a pinned build can, if
+  upstream stops serving it, and then *every new install* breaks until the pin is
+  moved. Upstream's index advertises only the current build per architecture, and
+  whether older ones stay reachable is **unverified**. The remedy costs one commit
+  and reaches everyone within a day — but it needs someone to notice, so a failed
+  install must keep saying plainly which URL it could not fetch. If it ever bites,
+  the durable fix is to mirror the four zips as ytdl release assets: that puts
+  availability *and* provenance in the maintainer's hands, and is a cycle of its
+  own rather than a patch.
 
 #### Cycle 6-launch — the desktop launcher (`F`) — **after the update path**
 

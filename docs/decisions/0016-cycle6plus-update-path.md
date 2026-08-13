@@ -1,11 +1,12 @@
 # ADR-0016 — ytdl owns its dependency versions, and the update is one axis the user can see and apply
 
-- **Status:** accepted (gate A of Cycle 6-plus, 2026-08-12; revised twice on
-  2026-08-13 — first by the maintainer's dependency ruling, then by the analysis
-  of the maintainer's own reaction latency, which separated the pin's *mechanism*
-  from its *policy* in §2–§3). These are *rulings*, not a design: the interfaces,
-  endpoints, DOM and tests they imply are produced by this cycle's design phase,
-  which this document constrains.
+- **Status:** accepted and **implemented** (gate A of Cycle 6-plus, 2026-08-12;
+  revised twice on 2026-08-13 — first by the maintainer's dependency ruling, then
+  by the analysis of the maintainer's own reaction latency, which separated the
+  pin's *mechanism* from its *policy* in §2–§3; **amended a third time on
+  2026-08-13 by what building it found**, §14). These are *rulings*, not a design:
+  the interfaces, endpoints, DOM and tests they imply are produced by this cycle's
+  design phase, which this document constrains.
 - **Context:** the Cycle 6-plus analysis (2026-08-12), which the roadmap required
   to settle the probe, when it runs, consent, and where it lives — before any of
   it was built; plus the maintainer's ruling of 2026-08-13 that yt-dlp's version
@@ -356,6 +357,64 @@ the user back the decision §2 took away; a hint fires only at the moment the us
 is already stuck, and says the one thing that helps. This is the only concession
 this ADR makes to the stranded case, and it is enough because §2's policy is
 `latest` — the update the hint points at is genuinely there.
+
+### 14. What building it corrected (amendment, 2026-08-13)
+
+Three things the implementation established that §1–§13 got wrong or left open.
+They are recorded here rather than only in the commits, because each is a ruling
+in its own right and a future reader will otherwise re-derive it.
+
+**14.1 ffmpeg's build id is per ARCHITECTURE.** §2 and §12 assumed one
+`ffmpeg_build` could name the pinned build. It cannot: upstream builds macOS
+arm64 and amd64 separately and stamps them with different ids — measured
+2026-08-13, `1785863997_9.0` and `1785871427_9.0` for the same ffmpeg 9.0. So
+`deps.conf` declares one per architecture, and both readers resolve the machine's
+own, exactly as they already resolve `latest` into a tag. A pin that names every
+architecture except the running one **aborts**; it never falls back.
+
+**14.2 The Go probe tolerates an unknown key; `install.sh` still refuses one.**
+The design asked both to fail closed. That is right for the installer — it is
+fetched from the same commit as `deps.conf`, so a key it does not know is a typo
+in the pin, and refusing costs nothing. It is wrong for the probe: a deployed
+binary is arbitrarily older than the file it reads, so a key added by a later
+cycle would make the pin unreadable for **every existing installation**, dropping
+the whole fleet to "non verificato" — and stopping it seeing the very update that
+teaches it the new key. That is the exact inverse of the property §2 exists for.
+The probe therefore fails only on what it actually needs and cannot get.
+
+**14.3 §4 was not true for ffmpeg until `--ffmpeg-location`.** Resolving ytdl's
+dependencies by absolute path achieves §4 for yt-dlp, which ytdl execs. It does
+nothing for ffmpeg, which **ytdl never invokes** — yt-dlp does, off the `$PATH` it
+inherited. So the pin stated which ffmpeg was *installed* while a Homebrew one,
+earlier on `$PATH`, did the converting: the same ordering hole, one process
+further down. yt-dlp is now told the directory of our own copy, appended after
+`core.BuildArgs` exactly as `TempRedirectArgs` is, and only when the copy is
+ours — a `$PATH` ffmpeg is one yt-dlp would have found by itself, and naming its
+location would claim an ownership ytdl does not have.
+
+### 15. The cost of pinning ffmpeg, stated (amendment, 2026-08-13)
+
+§12 records what the checksum buys. It does not record what the pin costs, and
+the omission would read as an oversight rather than an accepted trade.
+
+Pinning replaces a moving target with a fixed one, and **a fixed URL can 404**.
+The `latest` redirect could never fail that way. A pinned build can, the day
+upstream stops serving it — and then *every new install* breaks, where before it
+would merely have fetched something untested. Upstream's index advertises only
+the current build per architecture; whether older builds stay reachable is
+**unverified**, and this ADR does not pretend otherwise.
+
+The trade is still worth taking, because the failure is **loud, immediate and
+one commit from fixed** — the installer aborts naming the URL it could not
+fetch, and a new pin reaches every installation within a day — whereas the thing
+it replaced was silent: an unverified ffmpeg installs perfectly and says nothing.
+A loud failure with a same-day remedy beats a silent one with none.
+
+If it does bite, the durable answer is **not** a fallback to `latest`, which
+would dissolve the guarantee the moment it is needed. It is to mirror the four
+zips as ytdl release assets, putting availability *and* provenance in the
+maintainer's hands. That is a cycle of its own, not a patch, and it is recorded
+here so nobody reaches for the fallback instead.
 
 ## Consequences
 

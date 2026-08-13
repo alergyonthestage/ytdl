@@ -9,6 +9,16 @@ Revised 2026-08-13 for the dependency ruling (ADR-0016 §2–§4, §11–§12): 
 what it drives, the installer becomes idempotent, and the user is left with one
 update axis.
 
+**Built 2026-08-13.** Three things this document had wrong or left open were
+corrected while implementing it, and the corrections are rulings in their own
+right: they live in [ADR-0016 §14](decisions/0016-cycle6plus-update-path.md).
+In short — ffmpeg's build id is **per architecture**, so §2's single
+`ffmpeg_build` became one key per arch (corrected below); the Go probe
+**tolerates** an unknown `deps.conf` key while `install.sh` still refuses one
+(§8's test row corrected below); and `--ffmpeg-location` is appended after
+`core.BuildArgs`, without which §4 was simply not true for ffmpeg. Everything
+else in this document was built as written.
+
 Normative background: [ux-principles.md](ux-principles.md) §4 (an action that
 cannot work is disabled with a reason), §5 (a surface never states something
 untrue), §7 (a capability lands in both channels).
@@ -47,12 +57,19 @@ same `raw.githubusercontent.com/<slug>/<branch>/` it comes from itself.
 # yt_dlp_version accepts "latest" (the current policy) or an exact tag; writing a
 # tag here is the rollback lever, and it reaches every installation within a day.
 yt_dlp_version              = latest
-ffmpeg_build                = 1785863997_9.0
+ffmpeg_build_arm64          = 1785863997_9.0
+ffmpeg_build_amd64          = 1785871427_9.0
 ffmpeg_sha256_arm64_ffmpeg  = <hex>
 ffmpeg_sha256_arm64_ffprobe = <hex>
 ffmpeg_sha256_amd64_ffmpeg  = <hex>
 ffmpeg_sha256_amd64_ffprobe = <hex>
 ```
+
+**One build id per architecture** (corrected while building, ADR-0016 §14.1):
+upstream builds macOS arm64 and amd64 separately and stamps them differently, so
+a single value could not describe both. Both readers resolve the machine's own,
+exactly as they resolve `latest` into a tag; a pin naming every architecture
+except the running one aborts rather than guessing.
 
 `latest` is resolved — by the installer and by the probe alike — with the same
 redirect read used for ytdl's own tag, so everything downstream compares two
@@ -74,6 +91,13 @@ none — ADR-0016 §12.
 **Fetching `deps.conf` fails closed.** If it cannot be read or a key is missing,
 the installer aborts with a message; it never falls back to `latest`, because a
 silent fallback is exactly the unpinned behaviour §2 removes.
+
+**The two readers differ on ONE point, deliberately** (ADR-0016 §14.2): an
+unknown key aborts `install.sh` and is ignored by the Go probe. The installer
+arrives from the same commit as the file, so a key it does not know is a typo in
+the pin; a deployed binary is arbitrarily older than the file it reads, so the
+same strictness there would drop the whole fleet to "non verificato" the day a
+key is added — and stop it seeing the update that teaches it that key.
 
 ## 3. New package: `internal/update`
 
@@ -481,11 +505,11 @@ got.
 | area | test |
 |---|---|
 | `internal/update` | tag probe: `302` + `Location` parsed; non-3xx, missing/garbage `Location`, timeout → error, never a guess |
-| | pin fetch: valid, missing key, unknown key rejected, unreachable |
+| | pin fetch: valid, missing key, unreachable, **an unknown key TOLERATED** (ADR-0016 §14.2 — a deployed binary is older than the file it reads; `install.sh` still refuses one, being fetched from the same commit) |
 | | `Known`/`Available`/`Changes` across the matrix: ytdl moved, pin moved, both, neither, `dev`, either source silent |
 | | cache: round trip, TTL boundary, corrupt file = no verdict, atomic write leaves no partial |
 | | refresh: disabled → no probe; fresh cache → no probe |
-| `internal/run` | resolution prefers our copy, falls back to `$PATH`, reports `Foreign`; the golden argv is unchanged either way |
+| `internal/run` | resolution prefers our copy, falls back to `$PATH`, reports `Foreign`; the golden argv is unchanged either way — asserted by running a recording shim in both modes and comparing against `core.BuildArgs` itself. Plus `--ffmpeg-location`: present for our own copy, absent for a `$PATH` one, and never on dry run (ADR-0016 §14.3) |
 | `internal/config` | `update_check` round-trips through `LoadFile`/`Save`; default on; a garbage value warns and falls back |
 | `internal/cli` | the notice renders each verdict state, the foreign-dependency message, and "" when there is nothing to say |
 | `internal/webui` | `/api/state` carries `update`; nil `Updater` → no fields **and** no control; `POST /api/update` → `409` + reason on a non-empty queue, `409` when already running, `202` otherwise; the notice is present in state **while** blocked |
