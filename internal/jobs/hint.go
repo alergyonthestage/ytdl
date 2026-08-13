@@ -21,6 +21,15 @@ import "strings"
 //     up.
 //   - The list is ORDERED, most specific first: a 429 also says "Unable to
 //     download webpage", and the answer is not "check your network".
+
+// msgUpdateToFix is the remedy for every failure an update actually fixes.
+//
+// It names the ACTION first and each channel's own way to reach it second,
+// because this one string is rendered in both: a GUI user has no Terminal — that
+// is the whole reason Cycle 6-plus exists — and until this cycle the line sent
+// them to a command line they do not have (ux-principles.md §9.2).
+const msgUpdateToFix = "Quasi sempre è yt-dlp non aggiornato: aggiorna ytdl e riprova — dalle impostazioni, o con  ytdl --update."
+
 type failurePattern struct {
 	needles []string
 	hint    string
@@ -60,7 +69,7 @@ var failurePatterns = []failurePattern{
 		// dead end. CheckDeps also refuses to start without ffmpeg, so a
 		// postprocessing failure that reaches a record is rarely a missing one.
 		needles: []string{"ffmpeg not found", "ffprobe and ffmpeg", "ffmpeg-location"},
-		hint:    "Manca ffmpeg o è incompleto: reinstalla le dipendenze con  ytdl --update.",
+		hint:    "Manca ffmpeg o è incompleto: reinstalla le dipendenze — dalle impostazioni, o con  ytdl --update.",
 	},
 	{
 		needles: []string{"unsupported url", "is not a valid url"},
@@ -78,14 +87,27 @@ var failurePatterns = []failurePattern{
 		// A 403 on YouTube is almost always a signature yt-dlp can no longer
 		// produce, which is the same remedy as the extractor failures below.
 		needles: []string{"http error 403"},
-		hint:    "Quasi sempre è yt-dlp non aggiornato: lancia  ytdl --update  e riprova.",
+		hint:    msgUpdateToFix,
 	},
 	{
+		// The stranded case, and the only concession ADR-0016 §13 makes to it: a
+		// user whose downloads have started failing because their extractor is
+		// behind what YouTube now needs must not have to understand any of the pin
+		// machinery. A hint fires exactly when they are already stuck and says the
+		// one thing that helps.
+		//
+		// It is honest because the policy is "latest": the update it points at is
+		// genuinely there to take. Under a frozen pin this line would send people
+		// to an update that changes nothing, which is why the policy and this hint
+		// are the same decision.
 		needles: []string{
 			"unable to extract", "nsig extraction", "signature extraction",
 			"player response", "please report this issue", "yt-dlp/yt-dlp/issues",
+			// YouTube's "this app" refusal: a client-signature rejection, which is
+			// what a newer yt-dlp exists to fix.
+			"not available on this app",
 		},
-		hint: "Quasi sempre è yt-dlp non aggiornato: lancia  ytdl --update  e riprova.",
+		hint: msgUpdateToFix,
 	},
 	{
 		// Last: these needles are the most generic ones in the table.

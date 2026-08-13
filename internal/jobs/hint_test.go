@@ -144,3 +144,58 @@ func TestFailureHintStillCatchesAMissingFFmpeg(t *testing.T) {
 		t.Errorf("a genuinely missing ffmpeg lost its hint: %q", got)
 	}
 }
+
+// The break-glass remedy of ADR-0016 §13. A user whose downloads have started
+// failing because their extractor is behind what YouTube now needs must not have
+// to understand any of the pin machinery: the hint fires at the moment they are
+// already stuck and names updating as the next step.
+//
+// It is deliberately NOT a flag, a config key or a GUI control — those would
+// hand back the version decision that ADR-0016 §2 took away.
+func TestOutdatedExtractorPointsAtTheUpdate(t *testing.T) {
+	stranded := []string{
+		"ERROR: unable to extract player response; please report this issue",
+		"ERROR: [youtube] nsig extraction failed: Some formats may be missing",
+		"ERROR: Signature extraction failed",
+		"ERROR: unable to download video data: HTTP Error 403: Forbidden",
+		"ERROR: The following content is not available on this app",
+		"Please report this issue on https://github.com/yt-dlp/yt-dlp/issues",
+	}
+	for _, reason := range stranded {
+		hint := FailureHint(reason)
+		if hint == "" {
+			t.Errorf("no hint for a stranded extractor: %q", reason)
+			continue
+		}
+		if !strings.Contains(hint, "aggiorna ytdl") {
+			t.Errorf("the hint for %q does not name updating: %q", reason, hint)
+		}
+	}
+}
+
+// The hint is rendered in BOTH channels from one string, so it has to be
+// actionable in both: a GUI user has no Terminal, which is the whole reason this
+// cycle exists (ux-principles.md §9.2).
+func TestUpdateHintIsActionableInBothChannels(t *testing.T) {
+	hint := FailureHint("ERROR: unable to extract player response")
+	if !strings.Contains(hint, "impostazioni") {
+		t.Errorf("the hint offers a GUI user no way to act: %q", hint)
+	}
+	if !strings.Contains(hint, "ytdl --update") {
+		t.Errorf("the hint no longer gives the terminal user the exact command: %q", hint)
+	}
+}
+
+// The one case with NO remedy stays without one. Naming a step ytdl cannot
+// perform would be the same defect one layer up, and an update does not solve a
+// bot check.
+func TestABotCheckStillGetsNoUpdateHint(t *testing.T) {
+	for _, reason := range []string{
+		"ERROR: Sign in to confirm you're not a bot",
+		"ERROR: This video is age-restricted",
+	} {
+		if hint := FailureHint(reason); hint != "" {
+			t.Errorf("a case with no remedy was given one: %q → %q", reason, hint)
+		}
+	}
+}
