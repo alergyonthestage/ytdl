@@ -726,10 +726,10 @@ gate B on 2026-08-13** and **built the same day**; the review session starts fro
 the cycle's close.
 
 **Where it stands (2026-08-13).** All eleven implementation steps are done, in
-twelve commits on `feat/update-path/implementation`, **not yet merged**. The
+15 commits on `feat/update-path/implementation`, **not yet merged**. The
 suite is green under `-race`, `go vet` and `gofmt` are clean, and the parity gate
 (`git diff main -- internal/core/ internal/daemon/`) is **empty at every commit**.
-`tests/test-installer.sh` grew from 21 assertions to 80. What remains is review →
+`tests/test-installer.sh` grew from 21 assertions to 92. What remains is review →
 gate C → the documentation phase.
 
 Three things the implementation learned that the design could not have known, all

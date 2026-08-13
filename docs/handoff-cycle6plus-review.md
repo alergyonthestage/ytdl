@@ -15,12 +15,12 @@ built the same day**. All eleven steps of the previous handoff are done.
 flowchart LR
   A["analysis<br/>✓"] --> GA["gate A<br/>✓ ADR-0016"]
   GA --> D["design<br/>✓"] --> GB["gate B<br/>✓"]
-  GB --> I["implementation<br/>✓ 13 commits"]
+  GB --> I["implementation<br/>✓ 15 commits"]
   I --> R["review<br/>◀ you are here"]
   R --> GC["gate C"] --> DOC["docs"]
 ```
 
-**Branch `feat/update-path/implementation`, 13 commits, NOT merged.** `main` is
+**Branch `feat/update-path/implementation`, 15 commits, NOT merged.** `main` is
 untouched and still 11 commits ahead of `origin/main` (docs only).
 
 | Check | State |
@@ -28,7 +28,7 @@ untouched and still 11 commits ahead of `origin/main` (docs only).
 | `go build ./... && go test -race ./...` | green |
 | `go vet ./...` · `gofmt -l .` | clean |
 | `git diff main -- internal/core/ internal/daemon/` | **empty at every commit** |
-| `bash tests/test-installer.sh` | 80 assertions, 0 failed (was 21) |
+| `bash tests/test-installer.sh` | 92 assertions, 0 failed (was 21) |
 | Coverage | update 84% · cli 98% · webui 83% · run 84% · jobs 94% |
 
 ## Read these first, in this order
@@ -38,7 +38,7 @@ untouched and still 11 commits ahead of `origin/main` (docs only).
 | 1 | [decisions/0016-cycle6plus-update-path.md](decisions/0016-cycle6plus-update-path.md) | The rulings, **including §14–§15 added after building** — three corrections the implementation forced, and the ruling that the ffmpeg pin must create no standing obligation |
 | 2 | [design-cycle6plus-update.md](design-cycle6plus-update.md) | What was built. Its header lists the three places the design was wrong and now says so |
 | 3 | [ux-principles.md](ux-principles.md) §4, §5, §7, §9 | Normative for every surface this cycle added |
-| 4 | [roadmap.md](roadmap.md) § Cycle 6-plus | Scope, "done when", and the recorded availability risk |
+| 4 | [roadmap.md](roadmap.md) § Cycle 6-plus | Scope, "done when", and why the ffmpeg pin creates no standing obligation |
 | 5 | `/workspace/.claude/CLAUDE.md` | The six project non-negotiables |
 | 6 | `git log --oneline main..HEAD` | Each commit's message states its reasoning; they are the design rationale for anything the documents do not cover |
 
@@ -153,8 +153,8 @@ go build ./... && go test -race ./...
 go vet ./... && gofmt -l .
 bash tests/test-installer.sh
 git diff main -- internal/core/ internal/daemon/   # must be empty
-git log --oneline main..HEAD                        # 13 commits
-git diff main --stat                                # 47 files
+git log --oneline main..HEAD                        # 15 commits
+git diff main --stat
 ```
 
 ## After the review
