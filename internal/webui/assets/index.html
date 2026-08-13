@@ -23,6 +23,17 @@
 
 <main>
 
+  <!-- The update banner sits ABOVE the view container, so it shows on all three
+       views. It appears whenever an update is available and is NEVER gated by
+       the queue: emptiness gates the action, not the news, so a user with
+       downloads running is still told there is an update and still told what to
+       do about it (ADR-0016 §9). Empty markup on purpose — everything in it is
+       state, written by app.js as text nodes. -->
+  <div class="banner" id="updateBanner" hidden>
+    <span id="updateBannerText"></span>
+    <span class="banner-actions" id="updateBannerActions"></span>
+  </div>
+
   <!-- #/ ------------------------------------------------------------------ -->
   <div class="view" id="view-download">
     <div class="split">
@@ -188,6 +199,33 @@
         </div>
         <div class="checks field">
           <label><input type="checkbox" id="s_breadcrumbOnFailure"> Lascia un .log accanto all'audio se fallisce</label>
+        </div>
+      </section>
+
+      <!-- ALWAYS present, even when nothing is stale: "which version am I on?"
+           has to be answerable at any time, which is why this is a block in
+           Impostazioni rather than something that appears only when there is an
+           update to apply (design §6.2). -->
+      <section id="updateSection">
+        <h2>Versione e aggiornamenti</h2>
+        <dl class="versions" id="updateVersions"></dl>
+        <p class="update-state" id="updateState"></p>
+        <div class="update-actions">
+          <button type="button" class="secondary" id="checkUpdate">Controlla ora</button>
+          <span id="updateActionSlot"></span>
+        </div>
+        <table class="changes" id="updateChanges" hidden>
+          <caption>Cosa cambia</caption>
+          <thead><tr><th>Componente</th><th>Ora</th><th>Dopo</th></tr></thead>
+          <tbody id="updateChangesBody"></tbody>
+        </table>
+        <div class="update-panel" id="updatePanel" hidden>
+          <p id="updatePanelText"></p>
+          <div class="update-panel-actions" id="updatePanelActions"></div>
+          <pre class="log" id="updateLog" hidden></pre>
+        </div>
+        <div class="checks field">
+          <label><input type="checkbox" id="s_updateCheck"> Controlla da solo se c'è un aggiornamento</label>
         </div>
       </section>
 

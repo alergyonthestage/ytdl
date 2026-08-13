@@ -155,6 +155,7 @@ type settingsDTO struct {
 	Concurrency         int    `json:"concurrency"` // 0 = unlimited
 	JobTimeout          int    `json:"jobTimeout"`  // seconds; 0 = no limit
 	OpenFolderOnDone    bool   `json:"openFolderOnDone"`
+	UpdateCheck         bool   `json:"updateCheck"`
 }
 
 func toSettingsDTO(s config.Settings) settingsDTO {
@@ -168,6 +169,7 @@ func toSettingsDTO(s config.Settings) settingsDTO {
 		NotifyOn: s.NotifyOn, NotifyForeground: s.NotifyForeground,
 		NotifySound: s.NotifySound, Concurrency: s.Concurrency,
 		JobTimeout: s.JobTimeout, OpenFolderOnDone: s.OpenFolderOnDone,
+		UpdateCheck: s.UpdateCheck,
 	}
 }
 
@@ -182,6 +184,7 @@ func (d settingsDTO) toSettings() config.Settings {
 		NotifyOn: d.NotifyOn, NotifyForeground: d.NotifyForeground,
 		NotifySound: d.NotifySound, Concurrency: d.Concurrency,
 		JobTimeout: d.JobTimeout, OpenFolderOnDone: d.OpenFolderOnDone,
+		UpdateCheck: d.UpdateCheck,
 	}
 }
 

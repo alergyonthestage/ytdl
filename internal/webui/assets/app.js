@@ -610,6 +610,7 @@ function applyState(s, sessionTrusted) {
   renderRecent(s.history);
   setDaemon(s.daemonRunning);
   setOpenFolderAvailability(s.canOpen !== false);
+  applyUpdate(s.update);
   retentionDays = Number(s.retentionDays) || 0;
   $("historyWindow").textContent = "— " + retentionLabel();
   if (sessionTrusted === false) return;
@@ -797,7 +798,7 @@ $("saveSession").addEventListener("click", async () => {
 const SETTING_IDS = ["outputDir", "format", "audioQuality", "playlistDefault", "nameTemplate",
   "stripBrackets", "stripTags", "embedThumbnail", "embedMetadata", "logDir", "logRetentionDays",
   "breadcrumbOnFailure", "notify", "notifyOn", "notifyForeground", "notifySound", "concurrency",
-  "jobTimeout", "openFolderOnDone"];
+  "jobTimeout", "openFolderOnDone", "updateCheck"];
 
 function fillSettings(s) {
   // concurrency 0 means "no cap"; show it as an explicit choice rather than as a
@@ -960,3 +961,291 @@ loadSettings()
   .then(loadState)
   .catch((err) => setMsg("msg", "bad", err.message || "Motore non raggiungibile."))
   .finally(connect);
+
+// ---- updates -------------------------------------------------------------
+//
+// One axis, one verdict, one action (ADR-0016 §8). Two surfaces, because
+// noticing and checking are different jobs: a banner above every view for the
+// news, and a block in Impostazioni that is always there for "which version am
+// I on?".
+//
+// Everything below builds DOM and writes textContent. No innerHTML anywhere —
+// these strings include versions and installer output, and spa_test.go enforces
+// the ban.
+
+let updateInfo = null;      // the last /api/state update object, or null
+let updatePollTimer = 0;
+let updateVersionBefore = "";  // the ytdl version in force when the update started
+let updateDeadline = 0;        // when to stop waiting for the interface to return
+
+// How long to wait for the new interface to come back before saying so. Past
+// this the page stops guessing and names the one thing that reopens it — the
+// only place a Terminal is mentioned, and the thing Cycle 6-launch removes.
+const RESTART_TIMEOUT_MS = 60000;
+const UPDATE_POLL_MS = 1500;
+
+function applyUpdate(u) {
+  // No update object means the capability is absent: render nothing at all
+  // rather than a dead control (ux-principles.md §4).
+  if (!u) {
+    $("updateBanner").hidden = true;
+    $("updateSection").hidden = true;
+    return;
+  }
+  $("updateSection").hidden = false;
+  updateInfo = u;
+  renderUpdateBanner();
+  renderUpdateVersions();
+  renderUpdateState();
+  renderUpdateChanges();
+  renderUpdateAction();
+}
+
+// updateStateText is the three verdict states, kept distinct. "Non verificato"
+// is not "sei aggiornato", and rounding one up to the other is the defect this
+// whole surface exists to avoid (ADR-0016 §8).
+function updateStateText(u) {
+  if (!u.enabled && !u.checkedAt) return "Controllo automatico disattivato.";
+  if (!u.checkedAt) return "Aggiornamenti non verificati: nessun controllo ancora eseguito.";
+  const when = whenText(u.checkedAt);
+  if (!u.known) return "Aggiornamenti non verificati — ultimo tentativo " + when + ".";
+  if (u.available) return "È disponibile un aggiornamento — verificato " + when + ".";
+  return "Sei aggiornato — verificato " + when + ".";
+}
+
+function renderUpdateState() {
+  const p = $("updateState");
+  p.textContent = updateStateText(updateInfo);
+  // The consent state is a separate sentence, so it never gets folded into the
+  // verdict: a user who turned the check off is up to date as of a date, not
+  // "unknown".
+  if (!updateInfo.enabled && updateInfo.checkedAt) {
+    p.textContent += " Il controllo automatico è disattivato.";
+  }
+}
+
+// The installed versions are LOCAL facts and are always shown, whether or not
+// any probe ever succeeded (ADR-0016 §8).
+function renderUpdateVersions() {
+  const dl = $("updateVersions");
+  const inst = updateInfo.installed || {};
+  const rows = [];
+  for (const [label, value] of [["ytdl", inst.ytdl], ["yt-dlp", inst.ytDlp], ["ffmpeg", inst.ffmpeg]]) {
+    const dt = el("dt", "", label);
+    const dd = el("dd", "", value || "non installato");
+    if (!value) dd.className = "muted";
+    rows.push(dt, dd);
+  }
+  // A dependency ytdl did not install is a different problem with a different
+  // remedy: the pin is simply not in force for it.
+  for (const name of updateInfo.foreign || []) {
+    rows.push(el("dt", "warn", name), el("dd", "warn",
+      "non installato da ytdl: la versione verificata non è quella in uso"));
+  }
+  replaceChildren(dl, rows);
+}
+
+function renderUpdateChanges() {
+  const table = $("updateChanges");
+  const changes = updateInfo.changes || [];
+  table.hidden = changes.length === 0;
+  replaceChildren($("updateChangesBody"), changes.map((c) => {
+    const tr = el("tr");
+    tr.append(el("td", "", c.component), el("td", "", c.from), el("td", "", c.to));
+    return tr;
+  }));
+}
+
+// blockedText names the reason AND the count — an action that cannot work is
+// disabled with a reason, never rendered live and failed (ux-principles.md §4),
+// and no number appears without what it counts (§5).
+function blockedText(b) {
+  if (!b) return "";
+  if (b.reason === "running") return "Un aggiornamento è già in corso.";
+  if (!b.pending) return "Non riesco a leggere la coda: l'aggiornamento parte a coda vuota.";
+  const n = b.pending;
+  return n + (n === 1 ? " download in corso" : " download in corso") +
+    ": l'aggiornamento parte a coda vuota.";
+}
+
+// The banner shows whenever an update is available, INCLUDING with a non-empty
+// queue. When the queue blocks the action it says so here too, so the disabled
+// button in Impostazioni is never a mystery.
+function renderUpdateBanner() {
+  const banner = $("updateBanner");
+  const show = updateInfo.available && !updateInfo.busy;
+  banner.hidden = !show;
+  if (!show) return;
+
+  let text = "È disponibile un aggiornamento di ytdl.";
+  if (updateInfo.blocked) text += " " + blockedText(updateInfo.blocked);
+  $("updateBannerText").textContent = text;
+
+  const go = button("Vedi", "secondary", () => {
+    location.hash = ROUTES.settings;
+    $("updateSection").scrollIntoView({ block: "start" });
+    $("checkUpdate").focus();
+  });
+  replaceChildren($("updateBannerActions"), [go]);
+}
+
+// renderUpdateAction draws the one action, or the disabled one with its reason.
+function renderUpdateAction() {
+  const slot = $("updateActionSlot");
+  if (!updateInfo.available || updateInfo.busy) {
+    replaceChildren(slot, []);
+    return;
+  }
+  if (updateInfo.blocked) {
+    const b = button("Aggiorna", "", () => {});
+    b.disabled = true;
+    b.title = blockedText(updateInfo.blocked);
+    replaceChildren(slot, [b, el("span", "muted", blockedText(updateInfo.blocked))]);
+    return;
+  }
+  replaceChildren(slot, [button("Aggiorna", "", confirmUpdate)]);
+}
+
+// confirmUpdate names the cost honestly, and only the cost that will actually be
+// paid: when ytdl itself is not changing there is no handover, so the sentence
+// drops the restart clause rather than promising one (design §5, §6.2).
+function confirmUpdate() {
+  const changes = updateInfo.changes || [];
+  const restarts = changes.some((c) => c.component === "ytdl");
+  const what = changes.map((c) => c.component + " alla " + c.to).join(" e ");
+  let msg = "Aggiorna " + (what || "ytdl") + ".";
+  if (restarts) msg += " L'interfaccia si chiude e si riapre da sola.";
+  msg += " I download devono essere finiti.";
+
+  const slot = $("updateActionSlot");
+  const go = button("Conferma", "", () => startUpdate(false));
+  const cancel = button("Annulla", "secondary", renderUpdateAction);
+  replaceChildren(slot, [el("span", "confirm-text", msg), go, cancel]);
+  go.focus();
+}
+
+async function startUpdate(force) {
+  setMsg("settingsMsg", "", "");
+  updateVersionBefore = (updateInfo && updateInfo.installed && updateInfo.installed.ytdl) || "";
+  try {
+    const st = await api("/api/update", { force: !!force });
+    showUpdatePanel(st);
+    scheduleUpdatePoll();
+  } catch (err) {
+    // A refusal carries its reason (the queue filled up between render and
+    // click, say) rather than a bare failure.
+    setMsg("settingsMsg", "bad", err.message);
+    loadState().catch(() => {});
+  }
+}
+
+function scheduleUpdatePoll() {
+  clearTimeout(updatePollTimer);
+  updatePollTimer = setTimeout(pollUpdate, UPDATE_POLL_MS);
+}
+
+// The panel POLLS rather than listening on SSE. The SSE connection dies at the
+// handover by construction, and a transport that disappears exactly when the
+// news matters is the wrong transport: independent polls fail during the gap and
+// succeed after it, which is precisely the signal this needs (design §6.2).
+async function pollUpdate() {
+  let st = null;
+  try {
+    const r = await fetch("/api/update/status");
+    if (r.ok) st = await r.json();
+  } catch (e) { /* the server is mid-handover; that is expected, keep polling */ }
+
+  if (st) showUpdatePanel(st);
+
+  if (st && st.state === "done" && st.changed) {
+    // The old daemon reported success and is now handing over. Wait for the
+    // server that answers to be the NEW build, then reload exactly once.
+    if (!updateDeadline) updateDeadline = Date.now() + RESTART_TIMEOUT_MS;
+    if (await newBuildIsServing()) {
+      // The one legitimate reload (ADR-0016 §10): at this moment the document is
+      // stale BY DEFINITION, because the server that will answer its next
+      // request is a different build from the one that served it.
+      location.reload();
+      return;
+    }
+    if (Date.now() > updateDeadline) {
+      $("updatePanelText").textContent =
+        "L'aggiornamento è riuscito, ma non sono riuscito a riaprire l'interfaccia da solo. " +
+        "Riaprila con  ytdl gui  dal Terminale.";
+      return;
+    }
+  } else if (st && (st.state === "done" || st.state === "failed")) {
+    // Done without a restart, or failed: nothing more to wait for.
+    loadState().catch(() => {});
+    return;
+  }
+  scheduleUpdatePoll();
+}
+
+// newBuildIsServing reports whether the server answering now is running the
+// version the installer put down. Comparing versions is exact; waiting for a
+// failed request and then a successful one would miss a handover fast enough to
+// leave no gap.
+async function newBuildIsServing() {
+  try {
+    const r = await fetch("/api/state");
+    if (!r.ok) return false;
+    const s = await r.json();
+    const now = s.update && s.update.installed && s.update.installed.ytdl;
+    return !!now && now !== updateVersionBefore;
+  } catch (e) {
+    return false;
+  }
+}
+
+function showUpdatePanel(st) {
+  const panel = $("updatePanel");
+  panel.hidden = false;
+  $("updateBanner").hidden = true;
+
+  const text = $("updatePanelText");
+  const actions = $("updatePanelActions");
+  const log = $("updateLog");
+  log.hidden = true;
+  replaceChildren(actions, []);
+
+  if (st.state === "running") {
+    text.textContent = "Aggiornamento in corso…";
+    return;
+  }
+  if (st.state === "failed") {
+    // A partial failure is never summarised: what is offered is the exit code's
+    // consequence in words, the log, and a retry that reinstalls everything.
+    text.textContent = "L'aggiornamento non è riuscito. ytdl è rimasto quello di prima.";
+    const detail = button("Vedi il dettaglio", "secondary", () => {
+      log.hidden = !log.hidden;
+      log.textContent = st.logTail || "(nessun output)";
+    });
+    replaceChildren(actions, [detail, button("Riprova", "", () => startUpdate(true))]);
+    return;
+  }
+  if (st.state === "done") {
+    text.textContent = st.changed
+      ? "Aggiornato. Riapro l'interfaccia…"
+      : "Aggiornato. Non serve riavviare nulla.";
+    return;
+  }
+  panel.hidden = true;
+}
+
+$("checkUpdate").addEventListener("click", async () => {
+  const b = $("checkUpdate");
+  b.disabled = true;
+  const was = b.textContent;
+  b.textContent = "Controllo…";
+  try {
+    // The manual check works even with the automatic one off: consent is about
+    // the machine phoning home by itself, not the user's right to ask.
+    applyUpdate(await api("/api/update/check", {}));
+  } catch (err) {
+    setMsg("settingsMsg", "bad", err.message);
+  } finally {
+    b.textContent = was;
+    b.disabled = false;
+  }
+});
