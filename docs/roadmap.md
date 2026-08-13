@@ -725,11 +725,12 @@ those first: they answer all four questions below, and the design awaits gate B.
 **What already exists, so the cycle does not rebuild it:** `ytdl --update`
 (`internal/run/runner.go`) re-runs `install.sh` through `curl … | bash`, and the
 installer is the single provisioning path — it fetches ytdl, yt-dlp and ffmpeg,
-checksum-verifies **ytdl and yt-dlp** (ffmpeg's upstream publishes no sums we
-consume — corrected 2026-08-12, [ADR-0016](decisions/0016-cycle6plus-update-path.md)
-§10), and already handles replacing a *running* binary (atomic `mv`; the live
-process keeps its inode, `install.sh:253`). Applying an update is not the gap.
-The gap is:
+checksum-verifies **ytdl and yt-dlp only** (ffmpeg's upstream publishes no sums we
+consume — corrected 2026-08-12; the cycle closes the gap by pinning an immutable
+ffmpeg build and attesting its sha256,
+[ADR-0016](decisions/0016-cycle6plus-update-path.md) §12), and already handles
+replacing a *running* binary (atomic `mv`; the live process keeps its inode,
+`install.sh:253`). Applying an update is not the gap. The gap is:
 
 - **Nothing detects one.** There is no version comparison anywhere: the installer
   always fetches `releases/latest` (re-downloading ffmpeg even when current), and
@@ -740,11 +741,19 @@ The gap is:
   findings: one channel cannot do what the other does, and the person who needs it
   most has the fewest tools.
 
-- **Scope:** a probe for **both** components (ytdl *and* yt-dlp — the second is the
-  one that actually breaks every few months), a cached verdict, a notice in each
-  channel, and a way to act on it from the GUI. **Semi-automatic by maintainer
-  decision (2026-08-09): detect, then ask.** Never a silent self-replacement —
-  there is no rollback story, and other people depend on this tool.
+- **Scope:** a probe, a cached verdict, a notice in each channel, and a way to act
+  on it from the GUI. **Semi-automatic by maintainer decision (2026-08-09): detect,
+  then ask.** Never a silent self-replacement — there is no rollback story, and
+  other people depend on this tool.
+- **Widened on 2026-08-13 by the dependency ruling** ([ADR-0016](decisions/0016-cycle6plus-update-path.md)
+  §2–§4, §11–§12): ytdl **pins** the yt-dlp and ffmpeg versions it drives, in a
+  `deps.conf` the installer fetches, so which dependency a machine runs stops being
+  an accident of when it was installed and stops being a user decision. The user is
+  left with **one axis** — update ytdl — and the installer becomes **idempotent**,
+  skipping any component already at the pinned version. A CI guard exercises the
+  golden argv against the newest yt-dlp so re-pinning is a signal, not a hope, and
+  ytdl resolves its own copies by absolute path rather than losing a `$PATH` race
+  to a Homebrew yt-dlp it never installed.
 - ~~**Analysis must settle:**~~ **all four answered** by
   [ADR-0016](decisions/0016-cycle6plus-update-path.md):
   - ~~**The probe.**~~ The `releases/latest` redirect wins (§1). Measured: both

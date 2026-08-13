@@ -5,125 +5,161 @@ Design phase of Cycle 6-plus. It implements
 rulings; where this document had to choose something the ADR left open, the
 choice is marked **(design choice)** and carries its reason.
 
+Revised 2026-08-13 for the dependency ruling (ADR-0016 §2–§4, §11–§12): ytdl pins
+what it drives, the installer becomes idempotent, and the user is left with one
+update axis.
+
 Normative background: [ux-principles.md](ux-principles.md) §4 (an action that
 cannot work is disabled with a reason), §5 (a surface never states something
 untrue), §7 (a capability lands in both channels).
 
 ## 1. Shape
 
-Detection and application are separate concerns with a file between them. Nothing
-probes the network on a path a user is waiting on.
+Detection and application are separate concerns with a cache file between them.
+Nothing probes the network on a path a user is waiting on, and the *pin* — not
+upstream's newest — is what the machine is compared against.
 
 ```mermaid
 flowchart LR
-  subgraph refresh["off the critical path"]
-    S["startup:<br/>daemon role · foreground run"] --> R["update.RefreshAsync"]
-    R --> P["HEAD releases/latest ×2"]
-    P --> C[("update.json<br/>cached verdict")]
+  subgraph sources["two sources, off the critical path"]
+    A["HEAD ytdl releases/latest<br/>→ newest ytdl tag"]
+    B["GET deps.conf @ main<br/>→ required yt-dlp / ffmpeg"]
   end
-  subgraph read["every surface, from cache"]
-    C --> CLI["CLI: one line"]
-    C --> GUI["GUI: banner + settings block"]
-  end
-  GUI --> A["POST /api/update"]
-  A --> I["install.sh, detached"]
-  I --> H["handover to the new binary"]
+  S["startup:<br/>daemon role · foreground run"] --> R["update.RefreshAsync"]
+  R --> A & B
+  A & B --> C[("update.json<br/>cached verdict")]
+  C --> CLI["CLI: one line"]
+  C --> GUI["GUI: banner + settings block"]
+  GUI --> P["POST /api/update"]
+  P --> I["install.sh, idempotent, detached"]
+  I --> H{"did the ytdl<br/>binary change?"}
+  H -->|yes| HO["handover + one reload"]
+  H -->|no| DONE["done in place, no restart"]
 ```
 
-## 2. New package: `internal/update`
+## 2. The pin: `deps.conf`
 
-It owns detection, the cache, and launching the installer. It imports
-`buildinfo`, `config` and the standard library only. **`internal/core` and
-`internal/daemon` are not touched**; the daemon receives everything by injection
-from `cmd/ytdl`, which is what makes that possible.
+At the repository root, beside `install.sh`, fetched by the installer from the
+same `raw.githubusercontent.com/<slug>/<branch>/` it comes from itself.
 
-### 2.1 Data model
+```
+# Dependency pin for ytdl — maintainer-managed (ADR-0016 §2).
+yt_dlp_version              = 2026.07.04
+ffmpeg_build                = 1785863997_9.0
+ffmpeg_sha256_arm64_ffmpeg  = <hex>
+ffmpeg_sha256_arm64_ffprobe = <hex>
+ffmpeg_sha256_amd64_ffmpeg  = <hex>
+ffmpeg_sha256_amd64_ffprobe = <hex>
+```
+
+**(design choice) `key = value`, not JSON.** `install.sh` must parse this on a
+stock Mac, where `jq` does not exist and hand-rolled JSON parsing in bash is how
+installers get subtle. The project already has a strict `key = value` format that
+is **never `source`d** — the U4 security property of the config file — and this
+reuses that discipline: read with `awk`, whitelist the keys, reject anything else.
+
+yt-dlp needs no checksum here: its release publishes a per-release
+`SHA2-256SUMS`, verified reachable at
+`releases/download/<tag>/SHA2-256SUMS`. ffmpeg does, because its host publishes
+none — ADR-0016 §12.
+
+**Fetching `deps.conf` fails closed.** If it cannot be read or a key is missing,
+the installer aborts with a message; it never falls back to `latest`, because a
+silent fallback is exactly the unpinned behaviour §2 removes.
+
+## 3. New package: `internal/update`
+
+Owns detection, the cache, and launching the installer. Imports `buildinfo`,
+`config` and the standard library only. **`internal/core` and `internal/daemon`
+are not touched.**
+
+### 3.1 Data model
 
 ```go
-// Status is what is known about one component. Both fields are literal version
-// strings, compared for equality and never parsed (ADR-0016 §1).
-type Status struct {
-	Installed string `json:"installed,omitempty"` // "" = could not be read
-	Latest    string `json:"latest,omitempty"`    // "" = the probe did not answer
+// Pin is what deps.conf declares — the versions this ytdl requires.
+type Pin struct {
+	YtDlp  string `json:"yt_dlp,omitempty"`  // exact tag, "" = not answered
+	FFmpeg string `json:"ffmpeg,omitempty"`  // exact build id
+}
+
+// Installed is what this machine actually has, read locally.
+type Installed struct {
+	Ytdl   string   `json:"ytdl,omitempty"`
+	YtDlp  string   `json:"yt_dlp,omitempty"`
+	FFmpeg string   `json:"ffmpeg,omitempty"`
+	Foreign []string `json:"foreign,omitempty"` // deps resolved outside our bin dir
 }
 
 // Verdict is one check round, as cached.
 type Verdict struct {
-	CheckedAt time.Time `json:"checked_at"`
-	Ytdl      Status    `json:"ytdl"`
-	Ytdlp     Status    `json:"yt_dlp"`
+	CheckedAt  time.Time `json:"checked_at"`
+	LatestYtdl string    `json:"latest_ytdl,omitempty"` // "" = probe unanswered
+	Pin        Pin       `json:"pin"`
+	Installed  Installed `json:"installed"`
 }
 ```
 
-`Stale` is **derived, never stored** — the same discipline the history record's
-id follows:
+Everything a surface asks is **derived, never stored** — the same discipline the
+history record's id follows, and the reason a stale cache can never contradict
+the binary reading it:
 
 ```go
-// Stale reports whether this component is behind. It is false whenever the
-// answer is not known, and false for a "dev" build, which is never nagged.
-func (s Status) Stale() bool {
-	return s.Installed != "" && s.Latest != "" &&
-		s.Installed != buildinfo.DevVersion && s.Installed != s.Latest
-}
+// Known reports whether both sources answered. It is the difference between
+// "up to date" and "not verified" (ADR-0016 §8).
+func (v Verdict) Known() bool
 
-// Known reports whether the probe answered for this component at all — the
-// difference between "up to date" and "not verified" (ADR-0016 §5).
-func (s Status) Known() bool { return s.Latest != "" }
+// Available reports whether anything differs: a newer ytdl, or a pin this
+// machine does not satisfy. One axis, whatever moved (ADR-0016 §8).
+func (v Verdict) Available() bool
+
+// Changes lists what would change, for the surface that shows the detail.
+func (v Verdict) Changes() []Change  // {Component, From, To}
 ```
 
-**(design choice)** Storing `Stale` would let a stale cache contradict the
-binary that reads it — after an update the installed version changes while the
-file does not. Deriving it makes that impossible.
+A `dev` build is never compared and never reported stale.
 
-### 2.2 Probe
+### 3.2 Probes
 
 ```go
-// Probe returns the tag of a repository's latest release by reading the redirect
-// that github.com answers to releases/latest. It deliberately does NOT follow
-// it: the redirect target IS the answer, which is why this needs no API, no
-// token and no rate-limit budget (ADR-0016 §1).
-func Probe(ctx context.Context, c *http.Client, slug string) (string, error)
+// LatestTag returns a repository's newest release tag by reading the redirect
+// github.com answers to releases/latest. It deliberately does NOT follow it: the
+// redirect target IS the answer, which is why this needs no API and no
+// rate-limit budget (ADR-0016 §1).
+func LatestTag(ctx context.Context, c *http.Client, slug string) (string, error)
+
+// FetchPin reads deps.conf from the branch the installer comes from.
+func FetchPin(ctx context.Context, c *http.Client, slug, branch string) (Pin, error)
 ```
 
-- The client is passed in, and `releasesBase` is a package var, so tests point
-  both at an `httptest.Server` — the repo has no outbound-HTTP test pattern to
-  copy, so this cycle establishes one.
+- Client and base URLs are injected (package vars), so tests point them at an
+  `httptest.Server`. The repo has no outbound-HTTP test pattern to copy, so this
+  cycle establishes one.
 - `CheckRedirect` returns `http.ErrUseLastResponse`; a non-3xx answer, a missing
-  `Location`, or a `Location` that does not end in `/releases/tag/<tag>` is an
-  error, not a guess.
-- Hard timeout (10 s) and an explicit `User-Agent: ytdl/<version>`.
-- The repo slug comes from `YTDL_REPO` exactly as `run.Update()` reads it, so a
-  fork updates from its own releases and probes its own releases.
+  `Location`, or a `Location` that is not `…/releases/tag/<tag>` is an error, not
+  a guess. 10 s timeout, explicit `User-Agent: ytdl/<version>`.
+- Slug and branch come from `YTDL_REPO` / `YTDL_BRANCH`, exactly as `run.Update()`
+  reads them, so a fork probes and updates from its own repository.
 
-```go
-// Local reads the installed versions: buildinfo.Version, and `yt-dlp --version`
-// for the yt-dlp binary on PATH. A missing or unresponsive yt-dlp yields "",
-// which reads as "not known" everywhere — never as an error.
-func Local(ctx context.Context) (ytdl, ytdlp string)
-```
-
-### 2.3 Cache
+### 3.3 Cache
 
 `${XDG_STATE_HOME:-~/.local/state}/ytdl/update.json`, beside `queue/`, `logs/`,
 `daemon.log` and `gui.token`.
 
 ```go
-func Load(stateDir string) (Verdict, bool)          // missing/corrupt = (zero, false)
-func Save(stateDir string, v Verdict) error         // temp file + rename, 0600
+func Load(stateDir string) (Verdict, bool)   // missing/corrupt = (zero, false)
+func Save(stateDir string, v Verdict) error  // temp file + rename, 0600
 func (v Verdict) Fresh(now time.Time, ttl time.Duration) bool
 const DefaultTTL = 24 * time.Hour
 ```
 
-A corrupt or unreadable cache is **never** an error a caller must handle — it is
-simply "no verdict", which renders as "not verified". Writing is atomic so a
-process that dies mid-write cannot leave a half-file that reads as a verdict.
+A corrupt cache is never an error a caller must handle — it is "no verdict",
+which renders as "not verified". The write is atomic, so a process dying
+mid-write cannot leave a half-file that reads as a verdict.
 
-**(design choice) TTL = 24 h.** The check is startup-only (ADR-0016 §2), so the
-TTL exists to stop a user in a shell loop probing GitHub once per command, not to
-schedule anything. A day means a release is noticed on the first use of the next
-day at the latest.
+**(design choice) TTL = 24 h.** The check is startup-only (ADR-0016 §5), so the
+TTL only stops a user in a shell loop from probing once per command.
 
-### 2.4 Refresh
+### 3.4 Refresh
 
 ```go
 // RefreshAsync runs one check round in the background when checking is enabled
@@ -132,114 +168,159 @@ day at the latest.
 func RefreshAsync(stateDir string, enabled bool, now time.Time)
 ```
 
-Two call sites, both in `cmd/ytdl`, both at startup:
+Two call sites, both in `cmd/ytdl`, both at startup: `runDaemon` before
+`daemon.Serve` (covers `-b`, `gui`, `again`, `retry`), and the foreground run
+action (covers the plain `ytdl <url>` the installer itself tells users to type —
+without it, a foreground-only user would never refresh).
 
-| call site | covers |
-|---|---|
-| `runDaemon`, before `daemon.Serve` | `ytdl -b`, `ytdl gui`, `again`, `retry`, a resumed queue |
-| `realMain`, on the run action | the plain foreground `ytdl <url>` — the command the installer itself tells the user to type |
+## 4. Dependency resolution (`internal/run`)
 
-The foreground case is why the second site exists: a user who only ever runs
-`ytdl <url>` would otherwise never refresh. The probe runs while the download
-does, and its result surfaces on the *next* invocation.
+```go
+// toolPath resolves a dependency ytdl drives: OUR copy under the install dir
+// when it exists, else whatever $PATH offers — in which case ours is false and
+// the surface says so instead of pretending the pin holds.
+func toolPath(name string) (path string, ours bool)
+```
 
-## 3. Consent: the `update_check` key
+This replaces the bare `const ytDlp = "yt-dlp"` at the six call sites in
+`internal/run`. The install dir is `$YTDL_BIN_DIR` or `~/.local/bin`; the
+override exists so the golden/integration tests can point it at their shim
+directory.
 
-An ordinary whitelist key, `bool`, default `true` (ADR-0016 §3). The mechanical
-inventory, all of it load-bearing:
+Why it is needed, and why it is legal:
 
-| file | change |
-|---|---|
-| `internal/config/config.go` | `UpdateCheck bool` on `Settings`, default `true` |
-| `internal/config/file.go` | `case "update_check"` in the assign switch |
-| `internal/config/save.go` | one line in the emitter, in whitelist order |
-| `internal/webui/handlers.go` | `settingsDTO` + both mappers |
-| `internal/webui/assets/app.js` | `SETTING_IDS` |
-| `internal/webui/assets/index.html` | the settings control |
-| `internal/cli/help.go` | the config key documentation |
+- `PrependLocalBin` prepends `~/.local/bin` **only when absent from `$PATH`**
+  (`runner.go:62-66`). A Mac whose `.zprofile` runs Homebrew's `shellenv` after
+  the installer's line has `/opt/homebrew/bin` first, so a Homebrew yt-dlp wins
+  the `LookPath` and ytdl silently drives a binary it never installed.
+- Verified: the golden files contain **no `argv[0]`** — they begin at the first
+  flag — and the program name lives in `internal/run`, outside the frozen
+  `internal/core`. The parity gate is untouched.
+- Existing tests keep working: with no `~/.local/bin/yt-dlp` in the test
+  environment, resolution falls back to `$PATH` and finds the shim exactly as
+  today.
 
-The key governs the **automatic** probe only. A user who turns it off keeps the
-manual "Controlla ora" button and `ytdl --update`: consent is about the machine
-phoning home on its own, not about the user's right to ask.
+## 5. The idempotent installer
 
-## 4. CLI surface
+`install.sh` gains a pin-aware, skip-what-is-current pass. The order is
+unchanged; only the "do I need to?" question is new.
+
+```mermaid
+flowchart TD
+  A["fetch deps.conf"] -->|unreadable| X["abort: never fall back to latest"]
+  A --> B{"yt-dlp --version<br/>== pin?"}
+  B -->|yes| C["skip"]
+  B -->|no| D["fetch tag asset + per-release SHA2-256SUMS, verify, install"]
+  C & D --> E{"marker ffmpeg_build<br/>== pin, and both run?"}
+  E -->|yes| F["skip"]
+  E -->|no| G["fetch versioned zips, verify vs deps.conf sha256, install"]
+  F & G --> H{"ytdl --version<br/>== newest tag?"}
+  H -->|yes| I["skip"]
+  H -->|no| J["fetch asset + SHA2-256SUMS, verify, atomic mv"]
+  I & J --> K["write installed.conf marker"]
+```
+
+- **yt-dlp** is self-describing: `yt-dlp --version` is byte-identical to its tag,
+  so no marker is needed.
+- **ffmpeg** is not: `ffmpeg -version` reports `9.0`, while the pin is a build id
+  (`1785863997_9.0`). The marker file is what makes the comparison exact, and it
+  is also what lets ytdl *show* which ffmpeg it has.
+- **ytdl** compares against the newest tag, read with the same redirect the Go
+  probe uses.
+- **`--force` / `YTDL_FORCE=1`** reinstalls everything regardless — what a retry
+  after a failed update uses, and what the maintainer uses to reproduce.
+
+Marker: `${XDG_STATE_HOME:-~/.local/state}/ytdl/installed.conf`, same
+`key = value` format (`ytdl_version`, `yt_dlp_version`, `ffmpeg_build`,
+`installed_at`).
+
+**Consequence for the GUI (design choice):** when the installer skips ytdl
+itself — the common "the maintainer re-pinned yt-dlp" update — **no handover and
+no reload happen at all.** The page reports the update done and stays exactly
+where it was. Only a changed ytdl binary costs the restart of §7.2.
+
+## 6. Surfaces
+
+### 6.1 CLI
 
 One pure renderer, three call sites, no existing signature changed:
 
 ```go
-// RenderUpdateNotice renders the cached verdict as at most one line per stale
-// component, or "" when there is nothing worth saying.
-func RenderUpdateNotice(v update.Verdict, known bool, now time.Time) string
+// RenderUpdateNotice renders the cached verdict as at most two lines, or "" when
+// there is nothing worth saying.
+func RenderUpdateNotice(v update.Verdict, now time.Time) string
 ```
 
 ```
-! Aggiornamento disponibile: ytdl v2.2.0 (hai v2.1.0) · yt-dlp 2026.08.02 (hai 2026.07.04)
-  Aggiorna con:  ytdl --update          (per non ricevere più questo avviso: update_check = false)
+! Aggiornamento disponibile per ytdl v2.2.0 (hai v2.1.0), con yt-dlp 2026.08.02.
+  Aggiorna con:  ytdl --update      (per non ricevere più questo avviso: update_check = false)
 ```
 
-Rules that make it tolerable rather than nagging:
+One axis: the line names ytdl and mentions what comes with it. When only the pin
+moved, it still reads as one update — *«Aggiornamento disponibile per ytdl:
+richiede yt-dlp 2026.08.02 (hai 2026.07.04).»*
 
-- It is printed **after** the command's own output, never before it — burying
-  what the user asked for under a notice is how the notice gets hated.
-- It appears on a run action (success **and** failure — a stale yt-dlp is *more*
-  relevant when a download just failed, though the line never claims to be the
-  cause), and always in `ytdl --version` and `ytdl status`.
-- It never appears when there is nothing stale, when checking is off, or for a
-  `dev` build.
-- The "how to turn it off" clause is what pays for the default-on ruling.
+A separate, distinct message exists for the §4 case, because it is a different
+problem with a different remedy:
 
-`ytdl --version` additionally gains the *known* state even when current, since
-that screen is where a user goes to ask:
+```
+! ytdl sta usando yt-dlp da /opt/homebrew/bin/yt-dlp, che non ha installato lui.
+  La versione verificata con questo ytdl è 2026.07.04.  Ripristina con:  ytdl --update
+```
+
+Placement rules that make it tolerable rather than nagging: printed **after** the
+command's own output, never before it; on a run action (success and failure — a
+stale dependency is *more* relevant when a download just failed, though the line
+never claims to be the cause); always in `ytdl --version` and `ytdl status`;
+never when nothing differs, when checking is off, or for a `dev` build.
+
+`ytdl --version` shows the whole truth, since that screen is where a user goes to
+ask:
 
 ```
 ytdl v2.1.0
-yt-dlp 2026.07.04
+yt-dlp 2026.07.04   (verificata con questo ytdl)
+ffmpeg 9.0
 Aggiornamenti: sei aggiornato · verificato il 12/08/2026
 ```
 
-…or `Aggiornamenti: non verificati (nessuna connessione all'ultimo tentativo)`,
-or `Aggiornamenti: controllo automatico disattivato`. Three distinct states,
-never collapsed (ADR-0016 §5).
+…or `non verificati (nessuna connessione all'ultimo tentativo)`, or `controllo
+automatico disattivato`. Three states, never collapsed (ADR-0016 §8).
 
-## 5. GUI surface
+### 6.2 GUI
 
-### 5.1 The capability seam
-
-`webui` stays a front-end: it gets the capability injected and never shells out
-itself.
+`webui` stays a front-end and gets the capability injected:
 
 ```go
 // Updater is the update capability. A nil Updater means the capability is
 // absent, and NO update control is rendered at all — never a dead one
 // (ux-principles.md §4).
 type Updater interface {
-	Verdict() (update.Verdict, bool)                  // from cache
+	Verdict() (update.Verdict, bool)                   // from cache
 	Check(ctx context.Context) (update.Verdict, error) // on demand, bounded
-	Start() error                                      // launch the installer
-	Progress() update.Progress                         // of the running/last run
+	Start(force bool) error                            // launch the installer
+	Progress() update.Progress
 }
 ```
 
-`Deps.Updater` joins `Resolve`, `DaemonRunning` and `Spool`; tests inject a fake
-and never touch the network.
-
-### 5.2 Endpoints
-
 | route | method | behaviour |
 |---|---|---|
-| `/api/state` | GET | gains an `update` object (below) |
-| `/api/update/check` | POST | runs one probe round now, returns the fresh verdict. Bounded; this is a user-initiated wait, so it may block |
-| `/api/update` | POST | starts the update. `409` when the queue is not empty, or when one is already running |
-| `/api/update/status` | GET | `{state, target, startedAt, endedAt, logTail}` |
+| `/api/state` | GET | gains an `update` object |
+| `/api/update/check` | POST | one probe round now, returns the fresh verdict (a user-initiated wait, so it may block) |
+| `/api/update` | POST | starts it. `409` when the queue is not empty, or one is already running |
+| `/api/update/status` | GET | `{state, changed, startedAt, endedAt, logTail}` |
 
 ```jsonc
 // stateDTO.update
 {
-  "enabled": true,                    // update_check
-  "checkedAt": "2026-08-12T14:02:11Z",// absent = never checked
-  "busy": false,
-  "ytdl":  {"installed": "v2.1.0", "latest": "v2.2.0", "stale": true},
-  "ytDlp": {"installed": "2026.07.04", "latest": "2026.07.04"}
+  "enabled": true,
+  "checkedAt": "2026-08-12T14:02:11Z",   // absent = never checked
+  "known": true, "available": true, "busy": false,
+  "installed": {"ytdl": "v2.1.0", "ytDlp": "2026.07.04", "ffmpeg": "9.0"},
+  "changes": [{"component": "ytdl", "from": "v2.1.0", "to": "v2.2.0"},
+              {"component": "yt-dlp", "from": "2026.07.04", "to": "2026.08.02"}],
+  "foreign": ["yt-dlp"],                  // absent when everything is ours
+  "blocked": {"reason": "queue", "pending": 2}   // absent when it can start
 }
 ```
 
@@ -249,72 +330,72 @@ that disappears exactly when the news matters is the wrong transport. Independen
 polls fail during the gap and succeed after it, which is precisely the signal the
 page needs.
 
-### 5.3 What the user sees
-
-Two surfaces, because the two jobs are different: *noticing* and *checking*.
+Two surfaces, because noticing and checking are different jobs:
 
 - **A banner**, above the view container so it shows on all three views, rendered
-  **only** when something is stale. It states what is stale and carries the
-  primary action. It is dismissible for the tab, and comes back on the next one.
+  **whenever an update is available — never gated by the queue** (ADR-0016 §9).
+  A user with a full queue is told there is an update *and* what to do about it.
 - **A block in Impostazioni — "Versione e aggiornamenti" — always present**,
   because "which version am I on?" must be answerable when nothing is stale. It
-  carries: both installed versions; the verdict with its date (or "non
-  verificato"); **Controlla ora**; the `update_check` toggle; and the same
-  primary action when there is something to apply.
+  carries both installed dependency versions, the verdict with its date (or "non
+  verificato"), **Controlla ora**, the `update_check` toggle, the `changes` table,
+  and the action.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Aggiornato: probe ok, uguali
-  [*] --> NonVerificato: probe fallito o mai eseguito
-  [*] --> Disponibile: probe ok, diversi
+  [*] --> Aggiornato: entrambe le fonti ok, tutto uguale
+  [*] --> NonVerificato: una fonte non ha risposto
+  [*] --> Disponibile: qualcosa è cambiato
+  Disponibile --> Bloccato: coda non vuota
+  Bloccato --> Disponibile: la coda si svuota
   Disponibile --> Confermo: "Aggiorna"
   Confermo --> Disponibile: "Annulla"
   Confermo --> InCorso: POST /api/update (202)
-  Confermo --> Bloccato: 409 coda non vuota
-  Bloccato --> Disponibile: la coda si svuota
-  InCorso --> Riavvio: installer uscito 0
-  InCorso --> Fallito: installer uscito != 0
-  Riavvio --> [*]: la pagina si ricarica sulla nuova versione
-  Fallito --> Disponibile: "Riprova" (con il log a un clic)
+  InCorso --> Fatto: installer 0, ytdl invariato
+  InCorso --> Riavvio: installer 0, ytdl sostituito
+  InCorso --> Fallito: installer != 0
+  Fatto --> Aggiornato: nessun riavvio, la pagina resta
+  Riavvio --> [*]: un solo reload sulla nuova versione
+  Fallito --> Disponibile: "Riprova" (--force) con il log a un clic
 ```
 
-The confirmation step is **inline, not a browser `confirm()`** — it must say what
-it costs: *«L'aggiornamento chiude e riapre l'interfaccia, e richiede qualche
-minuto perché riscarica anche yt-dlp e ffmpeg. I download devono essere finiti.»*
-That sentence is the entire payment for ADR-0016 §9.
+When the queue is not empty the **action** is disabled with the reason and the
+count — *«2 download in corso: l'aggiornamento parte a coda vuota»* — while the
+notice itself stays. The emptiness is re-checked server-side at the click, so a
+job enqueued between render and click is still refused.
 
-When the queue is not empty the action is **disabled with the reason and the
-count** ("2 download in corso — l'aggiornamento parte a coda vuota"), never
-hidden and never silently ignored. The emptiness is re-checked server-side at the
-click, so a job enqueued between render and click is still refused.
+The confirmation names its cost honestly, and after §5 that cost is usually
+small: *«Aggiorna ytdl alla v2.2.0 e yt-dlp alla 2026.08.02. L'interfaccia si
+chiude e si riapre da sola. I download devono essere finiti.»* When ytdl itself
+is not changing, the sentence drops the restart clause, because there will not be
+one.
 
-## 6. Applying the update
+## 7. Applying the update
 
-### 6.1 Launching the installer
+### 7.1 Launching the installer
 
 ```go
 // Start launches install.sh detached and returns immediately. The child is
 // setsid'd with its stdio on update.log, so it outlives the process that
 // launched it — including the binary it is about to replace.
-func (r *Runner) Start() error
+func (r *Runner) Start(force bool) error
 ```
 
-- The command is built exactly like `run.Update()`: a `curl` process piped into a
-  `bash` process, **never a shell string with the URL interpolated into it** —
-  the slug is `YTDL_REPO`-controlled, and that is why the existing code is
-  written that way.
-- Refuses when `Progress().State == Running`.
-- A goroutine `Wait()`s and records the outcome; the daemon survives the
-  installer (its own inode) so this is the normal path, not a lucky one.
+- Built exactly like `run.Update()`: a `curl` process piped into a `bash` process,
+  **never a shell string with the URL interpolated** — the slug is
+  `YTDL_REPO`-controlled, which is why the existing code is written that way.
+- Refuses when one is already running.
+- A goroutine `Wait()`s and records the outcome; the daemon survives the installer
+  (its own inode), so this is the normal path, not a lucky one.
 
-`${state}/update-run.json` (state, startedAt, endedAt, target, exitCode) plus
-`${state}/update.log` (the installer's own output, truncated per run). The state
-file is what lets the *reloaded* page confirm the outcome after the handover: the
-new daemon reports "just updated" when `state == ok`, `target ==
-buildinfo.Version` and `endedAt` is within a few minutes. No acknowledgement
-endpoint, no extra round trip.
+`${state}/update-run.json` (state, startedAt, endedAt, exitCode, and whether the
+ytdl binary changed) plus `${state}/update.log` (the installer's output,
+truncated per run). The run file is what lets a *reloaded* page confirm the
+outcome after a handover, with no acknowledgement endpoint: the new daemon
+reports "just updated" when the run ended ok within the last few minutes and its
+own `buildinfo.Version` matches what was installed.
 
-### 6.2 The handover
+### 7.2 The handover — only when the ytdl binary changed
 
 ```mermaid
 sequenceDiagram
@@ -332,67 +413,71 @@ sequenceDiagram
 
 Each step exists because of a specific finding:
 
-1. **`Close`, not `Shutdown`.** `Shutdown` waits for active connections, and an
-   SSE connection never ends — it would block forever. `Close` frees the port
-   deterministically before the child is even spawned, so there is no bind race
-   to lose. (Today `startWebUI` treats a failed bind as a silent degradation to
-   headless; this design never depends on that path, and the cycle makes it say
-   so instead of failing mute.)
+1. **`Close`, not `Shutdown`.** `Shutdown` waits for active connections and an SSE
+   connection never ends — it would block forever. `Close` frees the port
+   deterministically *before* the child is spawned, so there is no bind race to
+   lose. (Today `startWebUI` degrades to headless silently on a failed bind; this
+   design never relies on that path, and the cycle makes it say so instead of
+   failing mute.)
 2. **The token travels in the environment.** Without it the child answers `401 …
    riapri l'interfaccia con ytdl gui` — a Terminal, i.e. the acceptance test
    failing. `runDaemon` reads `YTDL_GUI_TOKEN` and uses it instead of generating,
    *only* when set; an ordinary `ytdl gui` still gets a fresh token. The variable
-   is readable only by the same user (0600 token file, same-user process
-   environment), so it adds no exposure class the token file does not already
-   have.
-3. **The outgoing daemon must not delete `gui.token`.** Its `defer
-   os.Remove(...)` would delete the file the child has just written with the same
-   value. `os.Exit` skips defers, which is the mechanism — stated explicitly here
-   because it is otherwise an accident waiting to be "cleaned up".
-4. **The flock needs no explicit release.** It is held on an open fd inside
+   is readable only by the same user, so it adds no exposure class the 0600 token
+   file does not already have.
+3. **The outgoing daemon must not delete `gui.token`.** Its `defer os.Remove(...)`
+   would delete the file the child just wrote with the same value. `os.Exit` skips
+   defers, which is the mechanism — stated here because it is otherwise an
+   accident waiting to be "cleaned up".
+4. **The flock needs no explicit release.** It is held on an fd inside
    `daemon.Serve`, which `cmd/ytdl` cannot reach — and does not need to: process
    exit releases it. The child's `serveGUI` *already* retries the lock while
    serving the UI, because Cycle 3 built it for the "a headless daemon holds the
    queue" case. The handover reuses that, unchanged.
 
-This is the third exit cause ADR-0016 §7 adds to ADR-0008: the daemon exits
-because it was **asked to**, not because it went idle.
+This is the third exit cause ADR-0016 §9 adds to ADR-0008: the daemon exits
+because it was **asked to**.
 
-### 6.3 When it goes wrong
+### 7.3 When it goes wrong
 
 | failure | what the user is told |
 |---|---|
-| installer exits non-zero | «L'aggiornamento non è riuscito. ytdl è rimasto quello di prima.» + **Vedi il dettaglio** (the tail of `update.log`, as `textContent`) + **Riprova** |
-| the interface does not come back within 60 s | «L'aggiornamento è riuscito, ma non sono riuscito a riaprire l'interfaccia da solo.» + how to reopen it. The one place a Terminal is named — and Cycle 6-launch removes even that |
+| installer exits non-zero | «L'aggiornamento non è riuscito. ytdl è rimasto quello di prima.» + **Vedi il dettaglio** (the tail of `update.log`, as `textContent`) + **Riprova** (which uses `--force`) |
+| `deps.conf` unreadable | the installer aborts before touching anything; the page reports it as a failed update with the log. Never a silent fall back to `latest` |
+| the interface does not return within 60 s | «L'aggiornamento è riuscito, ma non sono riuscito a riaprire l'interfaccia da solo.» + how to reopen it. The one place a Terminal is named — and Cycle 6-launch removes even that |
 | the probe fails | nothing. Silence, and the last known verdict keeps its date |
 | the daemon dies mid-install | the installer is setsid'd and finishes anyway; the run state stays `running` and the page says it cannot tell how it went, pointing at the log. It never guesses |
 
-A partial installer failure is **never** summarised as "yt-dlp updated" or
-similar: what is reported is the exit code and the log, because the installer is
-the only thing that knows what it got through.
+A partial installer failure is **never** summarised: what is reported is the exit
+code and the log, because the installer is the only thing that knows how far it
+got.
 
-## 7. Test plan
+## 8. Test plan
 
 | area | test |
 |---|---|
-| `internal/update` | probe: `302` + `Location` parsed; non-3xx, missing/garbage `Location`, timeout, network error → error, never a guess |
-| | `Stale()`/`Known()`: equal, different, `dev`, empty either side |
+| `internal/update` | tag probe: `302` + `Location` parsed; non-3xx, missing/garbage `Location`, timeout → error, never a guess |
+| | pin fetch: valid, missing key, unknown key rejected, unreachable |
+| | `Known`/`Available`/`Changes` across the matrix: ytdl moved, pin moved, both, neither, `dev`, either source silent |
 | | cache: round trip, TTL boundary, corrupt file = no verdict, atomic write leaves no partial |
 | | refresh: disabled → no probe; fresh cache → no probe |
-| `internal/config` | `update_check` round-trips through `LoadFile`/`Save`; default is on; a garbage value warns and falls back (the established asymmetry) |
-| `internal/cli` | the notice renders the three states and empty when nothing is stale, off, or `dev` |
-| `internal/webui` | `/api/state` carries `update`; nil `Updater` → no update fields **and** no control; `POST /api/update` → `409` + reason with a non-empty queue, `409` when already running, `202` otherwise; `/api/update/status` shape |
-| `spa_test.go` | the reload prohibition is **narrowed**: exactly one `location.reload(` and it is in the update handover path; every other navigation rule and the `innerHTML` ban unchanged |
-| `spa_behaviour_test.go` | the banner appears only when stale; the action is disabled with a reason on a non-empty queue; the panel renders in-progress / done / failed |
-| `cmd/ytdl` | `YTDL_GUI_TOKEN` is honoured when set and ignored when empty; a fresh token is generated otherwise |
-| gate | `git diff main -- internal/core/ internal/daemon/` is empty; `go test -race ./...`; `gofmt -l .` empty |
+| `internal/run` | resolution prefers our copy, falls back to `$PATH`, reports `Foreign`; the golden argv is unchanged either way |
+| `internal/config` | `update_check` round-trips through `LoadFile`/`Save`; default on; a garbage value warns and falls back |
+| `internal/cli` | the notice renders each verdict state, the foreign-dependency message, and "" when there is nothing to say |
+| `internal/webui` | `/api/state` carries `update`; nil `Updater` → no fields **and** no control; `POST /api/update` → `409` + reason on a non-empty queue, `409` when already running, `202` otherwise; the notice is present in state **while** blocked |
+| `tests/test-installer.sh` | `deps.conf` parsing (valid, missing, garbage, unknown key); skip-when-current per component; `--force` reinstalls; the marker is written; an unreadable `deps.conf` aborts and installs nothing. All pure bash, no network |
+| CI | the golden argv is run through **both** the pinned yt-dlp and the newest one, asserting neither rejects an option (ADR-0016 §3). The newest-version job may be informational, but it must be visible |
+| `spa_test.go` | the reload prohibition is **narrowed**: exactly one `location.reload(`, in the handover path; every other navigation rule and the `innerHTML` ban unchanged |
+| `spa_behaviour_test.go` | the banner appears whenever available, **including with a non-empty queue**; the action is disabled with a reason; the panel renders in-progress / done-without-restart / done-with-restart / failed |
+| `cmd/ytdl` | `YTDL_GUI_TOKEN` honoured when set, ignored when empty, fresh token otherwise |
+| gate | `git diff main -- internal/core/ internal/daemon/` empty; `go test -race ./...`; `gofmt -l .` empty |
 
-## 8. What this cycle does not do
+## 9. What this cycle does not do
 
-- It does not touch `install.sh` (ADR-0016 §9) — so an update still refetches
-  everything, and the design pays for that in the wait's legibility, not in code.
-- It does not add checksum verification for ffmpeg (ADR-0016 §10) — it corrects
-  the roadmap sentence that says otherwise and registers the finding.
+- It does not add a break-glass "install the newest yt-dlp anyway" flag. That would
+  hand the user back the decision ADR-0016 §2 took away from them; if a stranded
+  user ever needs it, the remedy is a one-commit re-pin, which is the whole point
+  of putting the pin in a file.
 - It does not touch `internal/core` or `internal/daemon`.
 - It does not add a launcher: starting the GUI without a Terminal is Cycle
   6-launch, which runs next and inherits this handover.
