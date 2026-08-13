@@ -746,14 +746,19 @@ replacing a *running* binary (atomic `mv`; the live process keeps its inode,
   then ask.** Never a silent self-replacement — there is no rollback story, and
   other people depend on this tool.
 - **Widened on 2026-08-13 by the dependency ruling** ([ADR-0016](decisions/0016-cycle6plus-update-path.md)
-  §2–§4, §11–§12): ytdl **pins** the yt-dlp and ffmpeg versions it drives, in a
-  `deps.conf` the installer fetches, so which dependency a machine runs stops being
-  an accident of when it was installed and stops being a user decision. The user is
-  left with **one axis** — update ytdl — and the installer becomes **idempotent**,
-  skipping any component already at the pinned version. A CI guard exercises the
-  golden argv against the newest yt-dlp so re-pinning is a signal, not a hope, and
-  ytdl resolves its own copies by absolute path rather than losing a `$PATH` race
-  to a Homebrew yt-dlp it never installed.
+  §2–§4, §11–§13): **ytdl declares what it drives** in a `deps.conf` the installer
+  fetches, so which dependency a machine runs stops being an accident of when it
+  was installed, and stops being a user decision. The **mechanism is a pin; the
+  policy is separate** and starts at `latest` — a frozen version would convert
+  yt-dlp's frequent, self-healing staleness into a failure waiting on a maintainer
+  whose reaction latency is weeks, while the file gives the rollback lever the
+  project has never had (one commit reaches every installation within a day).
+  ffmpeg *is* pinned hard, because there the pin buys the missing checksum at no
+  recurring cost. The user is left with **one axis** — update ytdl — the installer
+  becomes **idempotent**, a scheduled **canary** exercises ytdl end to end against
+  the newest yt-dlp so a regression arrives as an email rather than as a user who
+  quietly stops using the tool, and ytdl resolves its own binaries by absolute path
+  instead of losing a `$PATH` race to a Homebrew yt-dlp it never installed.
 - ~~**Analysis must settle:**~~ **all four answered** by
   [ADR-0016](decisions/0016-cycle6plus-update-path.md):
   - ~~**The probe.**~~ The `releases/latest` redirect wins (§1). Measured: both

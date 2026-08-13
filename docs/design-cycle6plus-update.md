@@ -43,14 +43,22 @@ At the repository root, beside `install.sh`, fetched by the installer from the
 same `raw.githubusercontent.com/<slug>/<branch>/` it comes from itself.
 
 ```
-# Dependency pin for ytdl — maintainer-managed (ADR-0016 §2).
-yt_dlp_version              = 2026.07.04
+# What ytdl requires — maintainer-managed (ADR-0016 §2).
+# yt_dlp_version accepts "latest" (the current policy) or an exact tag; writing a
+# tag here is the rollback lever, and it reaches every installation within a day.
+yt_dlp_version              = latest
 ffmpeg_build                = 1785863997_9.0
 ffmpeg_sha256_arm64_ffmpeg  = <hex>
 ffmpeg_sha256_arm64_ffprobe = <hex>
 ffmpeg_sha256_amd64_ffmpeg  = <hex>
 ffmpeg_sha256_amd64_ffprobe = <hex>
 ```
+
+`latest` is resolved — by the installer and by the probe alike — with the same
+redirect read used for ytdl's own tag, so everything downstream compares two
+concrete version strings and never a placeholder. **ffmpeg has no `latest`**: it
+is always an exact build, because that is what makes its checksum meaningful
+(ADR-0016 §12).
 
 **(design choice) `key = value`, not JSON.** `install.sh` must parse this on a
 stock Mac, where `jq` does not exist and hand-rolled JSON parsing in bash is how
@@ -76,7 +84,8 @@ are not touched.**
 ### 3.1 Data model
 
 ```go
-// Pin is what deps.conf declares — the versions this ytdl requires.
+// Pin is what deps.conf declares, already RESOLVED: "latest" never survives this
+// far, so every comparison downstream is between two concrete version strings.
 type Pin struct {
 	YtDlp  string `json:"yt_dlp,omitempty"`  // exact tag, "" = not answered
 	FFmpeg string `json:"ffmpeg,omitempty"`  // exact build id
@@ -108,8 +117,9 @@ the binary reading it:
 // "up to date" and "not verified" (ADR-0016 §8).
 func (v Verdict) Known() bool
 
-// Available reports whether anything differs: a newer ytdl, or a pin this
-// machine does not satisfy. One axis, whatever moved (ADR-0016 §8).
+// Available reports whether anything DIFFERS — never "is newer". A pin may name
+// an older yt-dlp than the one installed (the rollback lever, ADR-0016 §2), and
+// that is an update to apply like any other. One axis, whatever moved.
 func (v Verdict) Available() bool
 
 // Changes lists what would change, for the surface that shows the detail.
@@ -127,7 +137,9 @@ A `dev` build is never compared and never reported stale.
 // rate-limit budget (ADR-0016 §1).
 func LatestTag(ctx context.Context, c *http.Client, slug string) (string, error)
 
-// FetchPin reads deps.conf from the branch the installer comes from.
+// FetchPin reads deps.conf from the branch the installer comes from and returns
+// it RESOLVED: a yt_dlp_version of "latest" is turned into a concrete tag by the
+// same redirect read, so no caller ever has to know which policy is in force.
 func FetchPin(ctx context.Context, c *http.Client, slug, branch string) (Pin, error)
 ```
 
@@ -207,8 +219,9 @@ unchanged; only the "do I need to?" question is new.
 
 ```mermaid
 flowchart TD
-  A["fetch deps.conf"] -->|unreadable| X["abort: never fall back to latest"]
-  A --> B{"yt-dlp --version<br/>== pin?"}
+  A["fetch deps.conf"] -->|unreadable| X["abort: install nothing"]
+  A --> R["resolve the policy:<br/>a tag stays a tag,<br/>'latest' → one redirect read"]
+  R --> B{"yt-dlp --version<br/>== resolved target?"}
   B -->|yes| C["skip"]
   B -->|no| D["fetch tag asset + per-release SHA2-256SUMS, verify, install"]
   C & D --> E{"marker ffmpeg_build<br/>== pin, and both run?"}
@@ -220,8 +233,14 @@ flowchart TD
   I & J --> K["write installed.conf marker"]
 ```
 
+- **The policy is resolved once, before anything is fetched.** `latest` costs one
+  redirect read — the same one the ytdl comparison already makes. An unreadable
+  `deps.conf` **aborts and installs nothing**: falling back to `latest` would be
+  indistinguishable from the policy currently being `latest`, and the day the
+  maintainer pins a rollback, that silent equivalence would quietly ignore it.
 - **yt-dlp** is self-describing: `yt-dlp --version` is byte-identical to its tag,
-  so no marker is needed.
+  so no marker is needed. The comparison is equality, so a **downgrade** to a
+  pinned older tag is handled by the same path as an upgrade.
 - **ffmpeg** is not: `ffmpeg -version` reports `9.0`, while the pin is a build id
   (`1785863997_9.0`). The marker file is what makes the comparison exact, and it
   is also what lets ytdl *show* which ffmpeg it has.
@@ -256,9 +275,14 @@ func RenderUpdateNotice(v update.Verdict, now time.Time) string
   Aggiorna con:  ytdl --update      (per non ricevere più questo avviso: update_check = false)
 ```
 
-One axis: the line names ytdl and mentions what comes with it. When only the pin
-moved, it still reads as one update — *«Aggiornamento disponibile per ytdl:
-richiede yt-dlp 2026.08.02 (hai 2026.07.04).»*
+One axis: the line names ytdl and mentions what comes with it. When only the
+dependency moved, it still reads as one update — *«Aggiornamento disponibile per
+ytdl: richiede yt-dlp 2026.08.02 (hai 2026.07.04).»*
+
+The wording is **version-neutral**, never "più recente": after a rollback the
+required yt-dlp is *older* than the installed one, and the sentence must still be
+true. "richiede X (hai Y)" is true in both directions; "è disponibile una
+versione più recente" would not be.
 
 A separate, distinct message exists for the §4 case, because it is a different
 problem with a different remedy:
@@ -465,19 +489,30 @@ got.
 | `internal/config` | `update_check` round-trips through `LoadFile`/`Save`; default on; a garbage value warns and falls back |
 | `internal/cli` | the notice renders each verdict state, the foreign-dependency message, and "" when there is nothing to say |
 | `internal/webui` | `/api/state` carries `update`; nil `Updater` → no fields **and** no control; `POST /api/update` → `409` + reason on a non-empty queue, `409` when already running, `202` otherwise; the notice is present in state **while** blocked |
-| `tests/test-installer.sh` | `deps.conf` parsing (valid, missing, garbage, unknown key); skip-when-current per component; `--force` reinstalls; the marker is written; an unreadable `deps.conf` aborts and installs nothing. All pure bash, no network |
-| CI | the golden argv is run through **both** the pinned yt-dlp and the newest one, asserting neither rejects an option (ADR-0016 §3). The newest-version job may be informational, but it must be visible |
+| `tests/test-installer.sh` | `deps.conf` parsing (valid, missing, garbage, unknown key, `latest`); skip-when-current per component; a pinned **older** tag reinstalls (downgrade); `--force` reinstalls; the marker is written; an unreadable `deps.conf` aborts and installs nothing. All pure bash, no network |
+| CI — canary (ADR-0016 §3) | a scheduled job runs ytdl **end to end** against the newest yt-dlp and against the resolved pin: a fixture media file over local HTTP (yt-dlp's `generic` extractor), ffmpeg from the runner, asserting the produced filename, the written ID3 tags, that `--print-to-file after_move:` returned the path, and that the `--progress-template` lines still parse. Red ⇒ the maintainer is emailed. Recorded limit: the extractor is not YouTube's, so the metadata **fallback chain** is not what this exercises |
 | `spa_test.go` | the reload prohibition is **narrowed**: exactly one `location.reload(`, in the handover path; every other navigation rule and the `innerHTML` ban unchanged |
 | `spa_behaviour_test.go` | the banner appears whenever available, **including with a non-empty queue**; the action is disabled with a reason; the panel renders in-progress / done-without-restart / done-with-restart / failed |
 | `cmd/ytdl` | `YTDL_GUI_TOKEN` honoured when set, ignored when empty, fresh token otherwise |
 | gate | `git diff main -- internal/core/ internal/daemon/` empty; `go test -race ./...`; `gofmt -l .` empty |
 
-## 9. What this cycle does not do
+## 9. The break-glass, and what this cycle still does not do
 
-- It does not add a break-glass "install the newest yt-dlp anyway" flag. That would
-  hand the user back the decision ADR-0016 §2 took away from them; if a stranded
-  user ever needs it, the remedy is a one-commit re-pin, which is the whole point
-  of putting the pin in a file.
+The stranded case — downloads failing because the extractor is behind what YouTube
+now needs — is served by **one hint**, in the catalogue that already exists
+(`internal/jobs/hint.go`): a failure whose signature matches an outdated extractor
+gets a line naming the update as the next step. With the policy at `latest` that
+update is genuinely there to take, which is what makes the hint honest.
+
+It is deliberately not a flag, a config key or a GUI control: those would hand the
+user back the decision ADR-0016 §2 removed. A hint fires only when the user is
+already stuck and says the one thing that helps.
+
+What the cycle does **not** do:
+
+- It does not let anyone choose a yt-dlp version — neither the user (a hint is not
+  a choice) nor the installer (an unreadable `deps.conf` aborts rather than
+  guessing).
 - It does not touch `internal/core` or `internal/daemon`.
 - It does not add a launcher: starting the GUI without a Terminal is Cycle
   6-launch, which runs next and inherits this handover.
