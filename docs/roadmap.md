@@ -707,7 +707,7 @@ two findings, **G27** and **G28**, which land in this cycle. What remains is the
   which scope decided it; no per-download control is sticky by accident; the same
   rule is stated once in `ux-principles.md` §8 and holds in both channels.
 
-#### Cycle 6-plus — the update path (`F`) — **next**
+#### Cycle 6-plus — the update path (`F`) — **gates A and B closed; implementation next (2026-08-13)**
 
 Not a gate-C finding: raised by the maintainer on 2026-08-09, immediately after
 installing v2.1.0 by hand. **Pulled ahead of Cycle 6 on 2026-08-12**, when ytdl
@@ -718,12 +718,22 @@ rather than renumbered (the `2B-plus` precedent), because
 G25 to Cycle 9 and the `S` group to Cycle 10 — taking a number here would falsify
 every one of those references.
 
+**Its rulings are [ADR-0016](decisions/0016-cycle6plus-update-path.md) and its
+design is [design-cycle6plus-update.md](design-cycle6plus-update.md)** — read
+those first: they answer all four questions below. The design was **approved at
+gate B on 2026-08-13**; the implementation session starts from
+[handoff-cycle6plus-implementation.md](handoff-cycle6plus-implementation.md),
+which is deleted at the cycle's close.
+
 **What already exists, so the cycle does not rebuild it:** `ytdl --update`
 (`internal/run/runner.go`) re-runs `install.sh` through `curl … | bash`, and the
 installer is the single provisioning path — it fetches ytdl, yt-dlp and ffmpeg,
-checksum-verifies each, and already handles replacing a *running* binary (atomic
-`mv`; the live process keeps its inode, `install.sh:253`). Applying an update is
-not the gap. The gap is:
+checksum-verifies **ytdl and yt-dlp only** (ffmpeg's upstream publishes no sums we
+consume — corrected 2026-08-12; the cycle closes the gap by pinning an immutable
+ffmpeg build and attesting its sha256,
+[ADR-0016](decisions/0016-cycle6plus-update-path.md) §12), and already handles
+replacing a *running* binary (atomic `mv`; the live process keeps its inode,
+`install.sh:253`). Applying an update is not the gap. The gap is:
 
 - **Nothing detects one.** There is no version comparison anywhere: the installer
   always fetches `releases/latest` (re-downloading ffmpeg even when current), and
@@ -734,24 +744,39 @@ not the gap. The gap is:
   findings: one channel cannot do what the other does, and the person who needs it
   most has the fewest tools.
 
-- **Scope:** a probe for **both** components (ytdl *and* yt-dlp — the second is the
-  one that actually breaks every few months), a cached verdict, a notice in each
-  channel, and a way to act on it from the GUI. **Semi-automatic by maintainer
-  decision (2026-08-09): detect, then ask.** Never a silent self-replacement —
-  there is no rollback story, and other people depend on this tool.
-- **Analysis must settle:**
-  - **The probe.** `HEAD` on `github.com/<slug>/releases/latest` and read the
-    redirect (no API, no rate limit) versus `api.github.com` (a clean tag, but 60
-    unauthenticated requests per hour per IP).
-  - **When it runs.** Never on a hot path — a download must not wait on the
-    network. A verdict cached under `${XDG_STATE_HOME}/ytdl/` with a TTL, refreshed
-    off the critical path, so the answer surfaces on the *next* invocation.
-  - **Consent.** This is an outbound call on a schedule: it needs its own config
-    key (`update_check`) and plain wording, or it is a phone-home nobody agreed to.
-  - **Where it lives.** The natural home for a periodic check is the daemon — and
-    `internal/daemon` has been untouched for four cycles and is half the parity
-    gate. Either the check lives in the webui/jobs layer, or the constraint is
-    amended in this cycle's ADR. It is not quietly worked around.
+- **Scope:** a probe, a cached verdict, a notice in each channel, and a way to act
+  on it from the GUI. **Semi-automatic by maintainer decision (2026-08-09): detect,
+  then ask.** Never a silent self-replacement — there is no rollback story, and
+  other people depend on this tool.
+- **Widened on 2026-08-13 by the dependency ruling** ([ADR-0016](decisions/0016-cycle6plus-update-path.md)
+  §2–§4, §11–§13): **ytdl declares what it drives** in a `deps.conf` the installer
+  fetches, so which dependency a machine runs stops being an accident of when it
+  was installed, and stops being a user decision. The **mechanism is a pin; the
+  policy is separate** and starts at `latest` — a frozen version would convert
+  yt-dlp's frequent, self-healing staleness into a failure waiting on a maintainer
+  whose reaction latency is weeks, while the file gives the rollback lever the
+  project has never had (one commit reaches every installation within a day).
+  ffmpeg *is* pinned hard, because there the pin buys the missing checksum at no
+  recurring cost. The user is left with **one axis** — update ytdl — the installer
+  becomes **idempotent**, a scheduled **canary** exercises ytdl end to end against
+  the newest yt-dlp so a regression arrives as an email rather than as a user who
+  quietly stops using the tool, and ytdl resolves its own binaries by absolute path
+  instead of losing a `$PATH` race to a Homebrew yt-dlp it never installed.
+- ~~**Analysis must settle:**~~ **all four answered** by
+  [ADR-0016](decisions/0016-cycle6plus-update-path.md):
+  - ~~**The probe.**~~ The `releases/latest` redirect wins (§1). Measured: both
+    components already carry locally the exact string their tag carries, so the
+    comparison is **string equality**, not version ordering — no semver parser, no
+    date parser. `api.github.com` is rejected (60 requests/hour per IP).
+  - ~~**When it runs.**~~ At startup, never as a poll (§2); every surface reads a
+    cached verdict from `${XDG_STATE_HOME}/ytdl/update.json`, refreshed off the
+    critical path for the *next* invocation.
+  - ~~**Consent.**~~ `update_check`, default **on** (§3), governing the automatic
+    probe only — the manual check and `ytdl --update` stay available when it is off.
+  - ~~**Where it lives.**~~ A new `internal/update`, driven from `cmd/ytdl`. The
+    daemon takes everything by injection, so **the constraint needed no amendment**
+    and `internal/daemon` stays byte-unchanged. What ADR-0016 §7 *does* amend is
+    ADR-0008: the daemon gains a third exit cause, an explicit user request.
 - **Design must settle — applying it from the GUI**, the hard half. The binary to
   replace is the one serving the page: the daemon holds the flock and the queue,
   the installer overwrites `~/.local/bin/ytdl` while it runs, and the live process
