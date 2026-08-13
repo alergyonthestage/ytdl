@@ -123,6 +123,9 @@ type stateDTO struct {
 	// something downloaded two months ago answers "nessun download corrisponde"
 	// and the user concludes ytdl lost their downloads. 0 = kept forever.
 	RetentionDays int `json:"retentionDays"`
+	// Update is absent when no Updater was injected — the capability is not there,
+	// so the page must render no control for it (ux-principles.md §4).
+	Update *updateDTO `json:"update,omitempty"`
 }
 
 type progressPayload struct {
@@ -303,6 +306,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		SessionOut:    s.sessionOut(),
 		CanOpen:       jobs.CanOpen(),
 		RetentionDays: retentionDays,
+		Update:        s.buildUpdateDTO(),
 	})
 }
 

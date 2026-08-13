@@ -68,6 +68,11 @@ type Deps struct {
 	//
 	// An empty Token disables the check — for tests only; production always sets it.
 	Token string
+	// Updater is the update capability (Cycle 6-plus). Optional, and its absence
+	// is meaningful: a nil Updater renders NO update control at all rather than a
+	// dead one (ux-principles.md §4). cmd/ytdl supplies it; a test that does not
+	// care about updates simply leaves it nil.
+	Updater Updater
 }
 
 // Progress is one running job's live-progress snapshot, streamed to the browser
@@ -115,6 +120,11 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("/api/history/open", s.handleHistoryOpen)
 	api.HandleFunc("/api/history/log", s.handleHistoryLog)
 	api.HandleFunc("/api/queue/cancel", s.handleQueueCancel)
+	// Cycle 6-plus. All three answer 404 when no Updater was injected, so a build
+	// without the capability has no half-working surface behind it.
+	api.HandleFunc("/api/update", s.handleUpdateStart)
+	api.HandleFunc("/api/update/check", s.handleUpdateCheck)
+	api.HandleFunc("/api/update/status", s.handleUpdateStatus)
 	mux.Handle("/api/", s.guardAPI(api))
 	return s.securityHeaders(s.guardLocalHost(mux))
 }
