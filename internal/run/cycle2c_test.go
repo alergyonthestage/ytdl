@@ -24,6 +24,7 @@ func writeFakeYtDlp(t *testing.T, script string) {
 		}
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	useShimDir(t, bin)
 }
 
 // captureStderr runs fn with os.Stderr redirected to a pipe and returns what was

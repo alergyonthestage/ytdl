@@ -28,6 +28,7 @@ func TestRunQueuedCancelKillsProcessGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	useShimDir(t, bin)
 
 	dest := t.TempDir()
 	o := runOptions(t, core.ModeSilent, dest)
@@ -82,6 +83,7 @@ wait
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	useShimDir(t, bin)
 
 	dest := t.TempDir()
 	o := runOptions(t, core.ModeSilent, dest)
