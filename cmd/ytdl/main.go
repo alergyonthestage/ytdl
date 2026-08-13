@@ -280,10 +280,18 @@ func runDaemon(daemonArgs []string) int {
 
 	var srv *webui.Server
 	if gui {
-		token, err := newGUIToken()
+		// The token an outgoing daemon handed us, or a fresh one. An ordinary
+		// `ytdl gui` always gets a fresh one, because nothing set the variable.
+		token, err := sessionToken()
 		if err != nil {
 			return 1
 		}
+		upd := newGUIUpdater(stateDir, func() config.Settings {
+			s, _ := resolveWithFlags(config.Partial{})
+			return s
+		})
+		upd.wireHandover(token)
+
 		srv = webui.New(webui.Deps{
 			Spool:         sp,
 			ConfigPath:    config.ConfigPath(),
@@ -294,6 +302,7 @@ func runDaemon(daemonArgs []string) int {
 			// daemon spawned by `ytdl -b` still owns the queue.
 			DaemonRunning: func() bool { return daemon.IsRunning(sp.LockPath()) },
 			Token:         token,
+			Updater:       upd,
 		})
 		cfg.LiveClients = srv.HasClients
 		// Set explicitly (Serve would only default its own copy) because serveGUI
@@ -305,8 +314,15 @@ func runDaemon(daemonArgs []string) int {
 		// serves immediately — publishing the token first, so `ytdl gui` can read
 		// it the moment the port answers.
 		_ = writeGUIToken(guiTokenPath(stateDir), token)
+		// NOTE: the handover exits with os.Exit, which skips this defer ON PURPOSE
+		// — by then the token file belongs to the incoming daemon, which has
+		// written the same value into it (see handOver).
 		defer os.Remove(guiTokenPath(stateDir))
-		stopWeb := startWebUI(srv)
+
+		hs, stopWeb := startWebUI(srv, stateDir)
+		// Published for the handover, which has to close this listener before it
+		// spawns the replacement.
+		upd.setWeb(hs)
 		defer stopWeb()
 
 		return serveGUI(cfg, srv)
@@ -413,13 +429,20 @@ func jobRunner(sp *queue.Spool, srv *webui.Server) func(context.Context, queue.C
 	}
 }
 
-// startWebUI binds the loopback GUI port and serves the interface, returning a
-// shutdown func. It runs from daemon.AfterLock, so the caller already owns the
-// queue. A bind failure is non-fatal: the daemon simply drains headlessly.
-func startWebUI(srv *webui.Server) func() {
+// startWebUI binds the loopback GUI port and serves the interface, returning the
+// server (for the handover, which must close its listener) and a graceful
+// shutdown func for the ordinary exit.
+//
+// A bind failure is still non-fatal — the daemon simply drains headlessly — but
+// it is no longer MUTE. The user asked for an interface and did not get one, and
+// with /dev/null stdio the diagnostics log is the only place that can say so;
+// `ytdl status` points at it. Failing silently is what the update path must never
+// rely on, and it should not have been relied on before either.
+func startWebUI(srv *webui.Server, stateDir string) (*http.Server, func()) {
 	ln, err := net.Listen("tcp", guiAddr())
 	if err != nil {
-		return func() {}
+		logDaemon(stateDir, "gui: could not bind "+guiAddr()+": "+err.Error()+" — draining headlessly")
+		return nil, func() {}
 	}
 	hs := &http.Server{
 		Handler:           srv.Handler(),
@@ -429,7 +452,7 @@ func startWebUI(srv *webui.Server) func() {
 		// No WriteTimeout on purpose: SSE responses are long-lived by design.
 	}
 	go hs.Serve(ln)
-	return func() {
+	return hs, func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_ = hs.Shutdown(ctx)

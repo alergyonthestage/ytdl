@@ -74,6 +74,12 @@ type Runner struct {
 	Slug     string // "" = Slug()
 	Branch   string // "" = Branch()
 
+	// OnFinish, when set, is called once with the recorded outcome after each run
+	// completes. It is how the daemon learns it has to hand over to the binary
+	// that has just replaced it (ADR-0016 §9). It runs on the waiter goroutine, so
+	// a handler that exits the process is a legitimate thing for it to do.
+	OnFinish func(Run)
+
 	mu      sync.Mutex
 	running bool
 }
@@ -217,7 +223,13 @@ func (r *Runner) finish(started time.Time, curlErr, shErr error) {
 		// longer exists.
 		_ = Invalidate(r.StateDir)
 	}
+	// The record is written BEFORE the callback, so a handler that hands over and
+	// exits leaves the outcome on disk for the next process — and for the page,
+	// which polls the same file through whichever daemon is answering.
 	_ = SaveRun(r.StateDir, run)
+	if r.OnFinish != nil {
+		r.OnFinish(run)
+	}
 }
 
 // exitCode digs the installer's own exit status out of the error, preferring
