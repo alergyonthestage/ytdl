@@ -26,6 +26,9 @@ DEPS_URL="https://raw.githubusercontent.com/$REPO_SLUG/$BRANCH/deps.conf"
 # version, so the URL has to name it.
 YTDLP_RELEASES="https://github.com/yt-dlp/yt-dlp/releases/download"
 FFMPEG_BASE="https://ffmpeg.martin-riedl.de/download/macos"
+# The unpinned redirect, used ONLY when the attested build is gone (see
+# install_ffmpeg). Keeping ytdl installable outranks keeping it verifiable.
+FFMPEG_REDIRECT="https://ffmpeg.martin-riedl.de/redirect/latest/macos"
 # The compiled ytdl binaries are published per release; /latest/ gives the
 # newest without pinning a version (see docs/decisions/0005).
 RELEASE_BASE="https://github.com/$REPO_SLUG/releases/latest/download"
@@ -49,6 +52,11 @@ OS_MAJOR=""; OS_MINOR=""; TIER=""; ARCH=""; ARCH_KEY=""
 # is aiming at. "latest" never survives past resolve_targets, so every comparison
 # below is between two concrete strings.
 DEPS_FILE=""; YTDLP_TARGET=""; FFMPEG_TARGET=""; YTDL_TARGET=""
+
+# Whether the ffmpeg actually installed is the build deps.conf attests. It is 0
+# only when that build has been withdrawn upstream and we fell back (§ADR-0016
+# §15); the marker records it, and every surface says so.
+FFMPEG_PINNED=1
 
 TMPDIR_YTDL=""
 cleanup() { [ -n "$TMPDIR_YTDL" ] && rm -rf "$TMPDIR_YTDL"; return 0; }
@@ -319,6 +327,7 @@ write_marker() {
     printf 'ytdl_version = %s\n'   "$(ytdl_version "$INSTALL_DIR/ytdl")"
     printf 'yt_dlp_version = %s\n' "$(tool_version "$INSTALL_DIR/yt-dlp")"
     printf 'ffmpeg_build = %s\n'   "$FFMPEG_TARGET"
+    printf 'ffmpeg_pinned = %s\n'  "$([ "$FFMPEG_PINNED" -eq 1 ] && echo true || echo false)"
     printf 'installed_at = %s\n'   "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } > "$tmp" && mv "$tmp" "$dir/installed.conf"
 }
@@ -332,6 +341,38 @@ download() {
     "Download failed: $url" \
     "Check your internet connection and run the installer again." \
     "If it keeps failing, the download server may be temporarily unavailable."
+}
+
+# download_status fetches url and echoes the HTTP status it got.
+#
+# It exists to tell two failures apart that `download` deliberately collapses:
+# "upstream says this is gone" (404) and "we could not ask" (no network, DNS,
+# TLS — curl reports 000). Only the first may ever lead to a fallback; treating
+# the second as a withdrawal would install something unverified over a flaky
+# hotel wifi.
+download_status() {
+  local url="$1" dest="$2"
+  curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 \
+       -w '%{http_code}' -o "$dest" "$url" 2>/dev/null || true
+}
+
+# ffmpeg_fetch_action STATUS — what an attempt that ended with this HTTP status
+# means. Kept as its own function because it is the RULE, and the rule is what is
+# worth pinning in a test; curl's behaviour is not.
+#
+#   200      the attested build is there  -> verify it
+#   404/410  upstream withdrew it         -> fall back, and record that we did
+#   anything else (000 = could not ask)   -> abort
+#
+# The last line is the important one. Treating "we could not ask" as a withdrawal
+# would silently downgrade a verified install to an unverified one over a flaky
+# connection — which is the property ADR-0016 §12 bought, given away for free.
+ffmpeg_fetch_action() {
+  case "$1" in
+    200)     printf 'verify\n' ;;
+    404|410) printf 'fallback\n' ;;
+    *)       printf 'abort\n' ;;
+  esac
 }
 
 # yt-dlp publishes SHA2-256SUMS per release. This installer executes remote
@@ -482,6 +523,26 @@ ffmpeg_url_for() {
   printf '%s/%s/%s/%s.zip\n' "$FFMPEG_BASE" "$ARCH_KEY" "$FFMPEG_TARGET" "$1"
 }
 
+# The unpinned URL: whatever upstream currently publishes for this architecture.
+ffmpeg_fallback_url_for() {
+  printf '%s/%s/release/%s.zip\n' "$FFMPEG_REDIRECT" "$ARCH_KEY" "$1"
+}
+
+# ffmpeg_current_build asks the redirect which build "latest" now means, so the
+# marker still records WHAT was installed even when it is not what was attested.
+# Empty when it cannot be worked out; the marker then simply says less.
+ffmpeg_current_build() {
+  local eff
+  eff="$(curl -sL --max-time 30 -o /dev/null -w '%{url_effective}' \
+         "$(ffmpeg_fallback_url_for ffmpeg)" 2>/dev/null)" || return 0
+  case "$eff" in
+    */download/macos/*/*/ffmpeg.zip)
+      eff="${eff%/ffmpeg.zip}"
+      printf '%s\n' "${eff##*/}"
+      ;;
+  esac
+}
+
 install_ffmpeg() {
   step "Installing ffmpeg"
 
@@ -490,21 +551,62 @@ install_ffmpeg() {
     return 0
   fi
 
-  local tool zip
+  # The pin is a PREFERENCE, not a precondition (ADR-0016 §15).
+  #
+  # An exact build id is what makes the checksum mean anything — but it is also a
+  # URL that can stop existing, and upstream publishes only its current build. If
+  # a withdrawn build aborted the install, ytdl would become uninstallable until
+  # somebody re-pinned it, and nobody would report it: users who cannot install a
+  # tool do not file issues, they give up. That is a recurring maintenance
+  # obligation this project explicitly refuses to take on.
+  #
+  # So a WITHDRAWN build falls back to the current one and records that this copy
+  # is not the attested one; every surface then says "non verificata" rather than
+  # claiming a guarantee it does not have. A network failure is NOT a withdrawal
+  # and still aborts: degrading to unverified over a flaky connection would be a
+  # silent downgrade of exactly the property §12 bought.
+  FFMPEG_PINNED=1
+  local tool zip status
   for tool in ffmpeg ffprobe; do
     zip="$TMPDIR_YTDL/$tool.zip"
     info "Downloading ${tool} ${FFMPEG_TARGET}…"
-    download "$(ffmpeg_url_for "$tool")" "$zip"
-    verify_pinned_checksum "$zip" "$(deps_get "ffmpeg_sha256_${ARCH_KEY}_${tool}")" "$tool.zip"
+    status="$(download_status "$(ffmpeg_url_for "$tool")" "$zip")"
+    case "$(ffmpeg_fetch_action "$status")" in
+      verify)
+        verify_pinned_checksum "$zip" "$(deps_get "ffmpeg_sha256_${ARCH_KEY}_${tool}")" "$tool.zip"
+        ;;
+      fallback)
+        FFMPEG_PINNED=0
+        warn "The ffmpeg build ytdl attests ($FFMPEG_TARGET) is no longer published."
+        warn "Installing the current build instead — it CANNOT be checksum-verified."
+        warn "ytdl will say so; nothing else changes."
+        download "$(ffmpeg_fallback_url_for "$tool")" "$zip"
+        ;;
+      *)
+        fail "Download failed: $(ffmpeg_url_for "$tool")" \
+          "The server answered ${status:-nothing at all}." \
+          "" \
+          "Check your internet connection and run the installer again."
+        ;;
+    esac
     extract_binary "$zip" "$tool" "$INSTALL_DIR/$tool"
   done
+
+  # Record what was actually installed, not what was asked for.
+  if [ "$FFMPEG_PINNED" -eq 0 ]; then
+    FFMPEG_TARGET="$(ffmpeg_current_build)"
+  fi
 
   # Binaries fetched with curl are not quarantined, but a previous manual
   # download might have left the attribute behind.
   xattr -d com.apple.quarantine "$INSTALL_DIR/ffmpeg" 2>/dev/null || true
   xattr -d com.apple.quarantine "$INSTALL_DIR/ffprobe" 2>/dev/null || true
 
-  ok "ffmpeg and ffprobe installed"
+  if [ "$FFMPEG_PINNED" -eq 1 ]; then
+    ok "ffmpeg and ffprobe installed (verified)"
+  else
+    ok "ffmpeg and ffprobe installed (NOT verified — the attested build is gone)"
+  fi
 }
 
 # ──────────────────────────────────────────────────────────────────

@@ -187,9 +187,10 @@ func RenderVersion(v UpdateView) string {
 }
 
 // dependencyLine states one dependency and, in parentheses, how it stands against
-// the pin. The four states stay distinct: absent, present-but-unrecorded, ours and
-// matching, ours but not what this ytdl requires — plus the foreign case, which
-// says where it came from rather than claiming a verdict about it.
+// the pin. The states stay distinct: absent, present-but-unrecorded, ours and
+// matching, ours but not what this ytdl requires, ours but UNATTESTED (its build
+// was withdrawn upstream) — plus the foreign case, which says where it came from
+// rather than claiming a verdict about it.
 func dependencyLine(d update.Dependency, p update.Pin) string {
 	if d.Missing() {
 		return fmt.Sprintf("%s non installato\n", d.Name)
@@ -202,6 +203,12 @@ func dependencyLine(d update.Dependency, p update.Pin) string {
 	switch {
 	case !d.Ours:
 		return fmt.Sprintf("%s %s   (da %s — non installata da ytdl)\n", d.Name, shown, d.Path)
+	case !d.Attested:
+		// Installed by us, but not the build the pin vouches for: that build was
+		// withdrawn upstream and the installer chose staying installable over
+		// staying verifiable. Saying "verificata" here would be the one thing this
+		// whole surface exists not to do.
+		return fmt.Sprintf("%s %s   (non verificata: la versione attestata non è più disponibile)\n", d.Name, shown)
 	case want == "" || d.Version == "":
 		return fmt.Sprintf("%s %s\n", d.Name, shown)
 	case want == d.Version:

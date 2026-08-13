@@ -4,7 +4,9 @@
   revised twice on 2026-08-13 — first by the maintainer's dependency ruling, then
   by the analysis of the maintainer's own reaction latency, which separated the
   pin's *mechanism* from its *policy* in §2–§3; **amended a third time on
-  2026-08-13 by what building it found**, §14). These are *rulings*, not a design:
+  2026-08-13 by what building it found**, §14, **and a fourth by the maintainer's
+  ruling that the ffmpeg pin must create no standing obligation**, §15). These are
+  *rulings*, not a design:
   the interfaces, endpoints, DOM and tests they imply are produced by this cycle's
   design phase, which this document constrains.
 - **Context:** the Cycle 6-plus analysis (2026-08-12), which the roadmap required
@@ -126,6 +128,12 @@ channel this project has never had, and it exists whatever the policy says.
 ytdl never invokes it (yt-dlp does), its interface does not move, and pinning
 buys the checksum that is missing today (§12) plus exact reproducibility, at no
 recurring cost.
+
+*Amended by §15:* "at no recurring cost" was wrong. A pinned URL can be withdrawn
+upstream, which would have made every new install fail until someone re-pinned —
+a standing obligation this ADR promises not to create. The pin is therefore a
+**preference**: it degrades to the current build, loudly and on the record, rather
+than costing anyone their installation.
 
 The binary also embeds, at build time, the versions it was verified against —
 used for runtime honesty (§4), never as the source of truth.
@@ -392,29 +400,54 @@ further down. yt-dlp is now told the directory of our own copy, appended after
 ours — a `$PATH` ffmpeg is one yt-dlp would have found by itself, and naming its
 location would claim an ownership ytdl does not have.
 
-### 15. The cost of pinning ffmpeg, stated (amendment, 2026-08-13)
+### 15. The ffmpeg pin is a preference, not a precondition (amendment, 2026-08-13)
 
-§12 records what the checksum buys. It does not record what the pin costs, and
-the omission would read as an oversight rather than an accepted trade.
+§12 records what the checksum buys. It did not record what the pin costs, and the
+cost turned out to contradict a promise this ADR makes further down: **"the
+maintainer takes on no recurring obligation."**
 
-Pinning replaces a moving target with a fixed one, and **a fixed URL can 404**.
-The `latest` redirect could never fail that way. A pinned build can, the day
-upstream stops serving it — and then *every new install* breaks, where before it
-would merely have fetched something untested. Upstream's index advertises only
-the current build per architecture; whether older builds stay reachable is
-**unverified**, and this ADR does not pretend otherwise.
+Pinning replaces a moving target with a fixed one, and **a fixed URL can stop
+existing**. The `latest` redirect never could. Upstream publishes only its
+current build per architecture, and whether older ones stay reachable is
+**unverified**. So a hard pin means: the day upstream withdraws that build,
+*every new installation fails* until somebody re-pins — and nobody reports it,
+because a person who cannot install a tool does not file an issue, they give up.
+That is precisely the failure mode §3 was written to avoid, reintroduced through
+the back door, and it would have made the maintainer responsible for watching
+upstream indefinitely.
 
-The trade is still worth taking, because the failure is **loud, immediate and
-one commit from fixed** — the installer aborts naming the URL it could not
-fetch, and a new pin reaches every installation within a day — whereas the thing
-it replaced was silent: an unverified ffmpeg installs perfectly and says nothing.
-A loud failure with a same-day remedy beats a silent one with none.
+**Ruling (maintainer, 2026-08-13): the pin is a preference.** The installer
+requests the attested build; if upstream answers that it is **gone** (404/410) it
+installs the current one instead and **records that this copy is not attested**.
+Every surface then says `non verificata` rather than claiming a guarantee that
+was never obtained.
 
-If it does bite, the durable answer is **not** a fallback to `latest`, which
-would dissolve the guarantee the moment it is needed. It is to mirror the four
-zips as ytdl release assets, putting availability *and* provenance in the
-maintainer's hands. That is a cycle of its own, not a patch, and it is recorded
-here so nobody reaches for the fallback instead.
+Three properties make that honest rather than a quiet retreat:
+
+- **A withdrawal is not a network failure.** Only 404/410 falls back. Anything
+  else — including curl's `000`, meaning "could not ask" — **aborts**. Degrading
+  to unverified over a flaky connection would give away, for free, the exact
+  property §12 was introduced to buy. The rule lives in one function so it can be
+  tested as a rule.
+- **The degradation is stated, never silent.** The installer warns, the marker
+  records `ffmpeg_pinned = false`, and both channels show the copy as
+  unverified.
+- **An unattested copy is UNCOMPARED, not stale.** Its version is deliberately
+  left out of the verdict comparison. Comparing it against a build that no longer
+  exists would report an update on every check, for ever, that applying could
+  never resolve — the installer would simply fall back again. An empty side is
+  already this design's word for "nobody can answer this", and here nobody can.
+
+What this gives up is *reproducibility in the withdrawn case*: two users
+installing on either side of a withdrawal get different ffmpeg builds. That was
+always the weaker half of §12. The stronger half — every user gets the identical
+artefact the maintainer verified, whenever that artefact still exists — is
+untouched, and now it can never cost anyone their installation.
+
+The durable fix, if withdrawals turn out to be common, is **not** to make the
+fallback quieter: it is to mirror the four zips as ytdl release assets, which
+puts availability *and* provenance in the maintainer's hands. That is a cycle of
+its own, recorded here so nobody reaches for a silent fallback instead.
 
 ## Consequences
 

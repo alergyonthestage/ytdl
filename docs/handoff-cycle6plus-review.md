@@ -35,7 +35,7 @@ untouched and still 11 commits ahead of `origin/main` (docs only).
 
 | # | Document | Why |
 |---|---|---|
-| 1 | [decisions/0016-cycle6plus-update-path.md](decisions/0016-cycle6plus-update-path.md) | The rulings, **including §14–§15 added after building** — three corrections the implementation forced, and the cost of pinning ffmpeg |
+| 1 | [decisions/0016-cycle6plus-update-path.md](decisions/0016-cycle6plus-update-path.md) | The rulings, **including §14–§15 added after building** — three corrections the implementation forced, and the ruling that the ffmpeg pin must create no standing obligation |
 | 2 | [design-cycle6plus-update.md](design-cycle6plus-update.md) | What was built. Its header lists the three places the design was wrong and now says so |
 | 3 | [ux-principles.md](ux-principles.md) §4, §5, §7, §9 | Normative for every surface this cycle added |
 | 4 | [roadmap.md](roadmap.md) § Cycle 6-plus | Scope, "done when", and the recorded availability risk |
@@ -69,9 +69,14 @@ checklist to tick — it is where to spend the adversarial effort.
    not already have"). Decide whether you still agree, now that it is real.
 3. **`install.sh`** is the most safety-critical file in the repository and it grew
    a lot: policy resolution, three skip decisions, a marker, `--force`, a new
-   checksum path. The pure-bash tests cover the logic; **nothing has run the real
-   installer against the real network on a real Mac.** A wrong skip means a user
-   keeps a broken dependency and is told everything is fine.
+   checksum path, and the withdrawn-build fallback. The pure-bash tests cover the
+   logic; **nothing has run the real installer against the real network on a real
+   Mac.** A wrong skip means a user keeps a broken dependency and is told
+   everything is fine.
+   - The **fallback path has never fired**, because no build has been withdrawn
+     yet. It can be forced by pinning a build id that does not exist and running
+     the installer on a Mac — worth doing once, since it is the path that keeps
+     ytdl installable and it is entirely untested against reality.
 4. **`update.Runner.finish` runs on a goroutine that dies with the process.** The
    "daemon died mid-install" path (record stays `running`) is reasoned about but
    not tested — it cannot easily be.
@@ -117,6 +122,9 @@ So: when a test here looks like it proves something, check what it stubbed.
   them here. The entire value of ADR-0016 §12 is that the sum means *someone
   checked*; until they are verified on the Mac, they mean "some machine
   downloaded this". **This must not ship unverified.**
+  - Note that a *wrong* sum is now worse than a missing one: it is a checksum
+    mismatch, which **aborts** the install (a mismatch is not a withdrawal). Only
+    a withdrawn build falls back.
 - **The GUI has never been opened in a browser.** The banner, the settings block,
   the update panel and the handover reload were exercised by node and by curl
   against a live daemon, never by a rendering engine. There is no ffmpeg here

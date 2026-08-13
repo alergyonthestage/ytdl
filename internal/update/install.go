@@ -95,6 +95,12 @@ type Dependency struct {
 	Version string // "" = present, but nothing recorded its version
 	Path    string // "" = not found at all
 	Ours    bool   // provisioned by our own installer
+
+	// Attested reports that this copy is the exact build deps.conf vouches for.
+	// It is false only for an ffmpeg installed after its attested build was
+	// withdrawn upstream (ADR-0016 §15): keeping ytdl installable outranks
+	// keeping it verifiable, but the surface must say which one it got.
+	Attested bool
 }
 
 // Missing reports a dependency that is not on this machine at all — a different
@@ -117,10 +123,18 @@ func Dependencies(stateDir string, withVersions bool) []Dependency {
 	// predating the marker leaves it empty, and an empty side is never compared.
 	marker, _ := LoadMarker(stateDir)
 
+	// An install predating the marker has no ffmpeg_pinned key. Treat that as
+	// attested: every install before ADR-0016 §15 existed took the pinned path or
+	// no path at all, so "absent" here means "nothing ever fell back".
+	ffmpegAttested := marker[markerFFmpegPinned] != "false"
+
 	deps := make([]Dependency, 0, 2)
 	for _, name := range []string{ComponentYtDlp, ComponentFFmpeg} {
 		path, ours, found := Resolve(name)
-		d := Dependency{Name: name, Ours: ours}
+		// yt-dlp is always attested when present: it is fetched by tag and verified
+		// against the SHA2-256SUMS its own release publishes, which cannot be
+		// withdrawn separately from the tag.
+		d := Dependency{Name: name, Ours: ours, Attested: true}
 		if found {
 			d.Path = path
 		}
@@ -129,6 +143,7 @@ func Dependencies(stateDir string, withVersions bool) []Dependency {
 		case name == ComponentFFmpeg:
 			// Free: the marker is a file read, so it is answered on every path.
 			d.Version = marker[markerFFmpegBuild]
+			d.Attested = ffmpegAttested
 		case withVersions:
 			d.Version = toolVersion(path)
 		}
@@ -150,11 +165,20 @@ func ReadInstalled(stateDir string) Installed {
 func InstalledFrom(deps []Dependency) Installed {
 	in := Installed{Ytdl: buildinfo.Version}
 	for _, d := range deps {
-		switch d.Name {
-		case ComponentYtDlp:
+		switch {
+		case d.Name == ComponentYtDlp:
 			in.YtDlp = d.Version
-		case ComponentFFmpeg:
+		case d.Name == ComponentFFmpeg && d.Attested:
 			in.FFmpeg = d.Version
+		case d.Name == ComponentFFmpeg:
+			// Deliberately left EMPTY, which makes it uncompared.
+			//
+			// An unattested ffmpeg is one the pin's build no longer exists for, so
+			// comparing it against that build would report an update on every
+			// check, for ever, that applying could never resolve — the installer
+			// would fall back again and the difference would persist. An empty side
+			// is already the rule for "nobody answered this", and nobody can.
+			in.Unattested = append(in.Unattested, d.Name)
 		}
 		// Missing is not foreign: run.CheckDeps already has a message for a tool
 		// that is not there, and conflating the two would send a user with no
@@ -185,6 +209,7 @@ const (
 	markerYtdlVersion  = "ytdl_version"
 	markerYtDlpVersion = "yt_dlp_version"
 	markerFFmpegBuild  = "ffmpeg_build"
+	markerFFmpegPinned = "ffmpeg_pinned"
 	markerInstalledAt  = "installed_at"
 )
 
@@ -197,6 +222,7 @@ var markerKeys = map[string]bool{
 	markerYtdlVersion:  true,
 	markerYtDlpVersion: true,
 	markerFFmpegBuild:  true,
+	markerFFmpegPinned: true,
 	markerInstalledAt:  true,
 }
 

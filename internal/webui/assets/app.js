@@ -1054,6 +1054,13 @@ function renderUpdateVersions() {
     rows.push(el("dt", "warn", name), el("dd", "warn",
       "non installato da ytdl: la versione verificata non è quella in uso"));
   }
+  // Installed by us, but not the build ytdl vouches for — that build was
+  // withdrawn upstream, and staying installable won over staying verifiable.
+  // Saying nothing here would be claiming a guarantee that was not obtained.
+  for (const name of updateInfo.unattested || []) {
+    rows.push(el("dt", "warn", name), el("dd", "warn",
+      "non verificato: la versione attestata non è più disponibile"));
+  }
   replaceChildren(dl, rows);
 }
 

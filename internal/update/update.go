@@ -66,6 +66,14 @@ type Installed struct {
 	// problem from being out of date, with a different remedy, so it is a separate
 	// fact rather than a kind of staleness (ADR-0016 §4).
 	Foreign []string `json:"foreign,omitempty"`
+
+	// Unattested names the dependencies installed WITHOUT the checksum the pin
+	// declares, because the attested build was withdrawn upstream and the
+	// installer chose staying installable over staying verifiable (ADR-0016 §15).
+	// Like Foreign it is a fact about the install, not a kind of staleness — and
+	// the version of an unattested component is deliberately left out of the
+	// comparison above, so it can never become a permanent phantom update.
+	Unattested []string `json:"unattested,omitempty"`
 }
 
 // Verdict is one check round, as cached. Everything a surface asks of it is

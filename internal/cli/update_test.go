@@ -30,8 +30,8 @@ func view() UpdateView {
 		HaveVerdict: true,
 		Enabled:     true,
 		Deps: []update.Dependency{
-			{Name: update.ComponentYtDlp, Version: "2026.07.04", Path: "/home/u/.local/bin/yt-dlp", Ours: true},
-			{Name: update.ComponentFFmpeg, Version: testBuild, Path: "/home/u/.local/bin/ffmpeg", Ours: true},
+			{Name: update.ComponentYtDlp, Version: "2026.07.04", Path: "/home/u/.local/bin/yt-dlp", Ours: true, Attested: true},
+			{Name: update.ComponentFFmpeg, Version: testBuild, Path: "/home/u/.local/bin/ffmpeg", Ours: true, Attested: true},
 		},
 		Now: checkedOn.Add(time.Hour),
 	}
@@ -296,12 +296,12 @@ func TestRenderVersionDependencyStates(t *testing.T) {
 			// An install predating the marker: present, but nothing recorded which.
 			// Neither "absent" nor a guess.
 			name: "present, version unrecorded",
-			dep:  update.Dependency{Name: update.ComponentFFmpeg, Path: "/home/u/.local/bin/ffmpeg", Ours: true},
+			dep:  update.Dependency{Name: update.ComponentFFmpeg, Path: "/home/u/.local/bin/ffmpeg", Ours: true, Attested: true},
 			want: "ffmpeg (versione non registrata)",
 		},
 		{
 			name: "ours, but not what this ytdl requires",
-			dep:  update.Dependency{Name: update.ComponentYtDlp, Version: "2026.01.01", Path: "/home/u/.local/bin/yt-dlp", Ours: true},
+			dep:  update.Dependency{Name: update.ComponentYtDlp, Version: "2026.01.01", Path: "/home/u/.local/bin/yt-dlp", Ours: true, Attested: true},
 			want: "yt-dlp 2026.01.01   (questo ytdl richiede la 2026.07.04)",
 		},
 		{
@@ -310,6 +310,18 @@ func TestRenderVersionDependencyStates(t *testing.T) {
 			name: "somebody else's",
 			dep:  update.Dependency{Name: update.ComponentYtDlp, Version: "2020.01.01", Path: "/opt/homebrew/bin/yt-dlp"},
 			want: "yt-dlp 2020.01.01   (da /opt/homebrew/bin/yt-dlp — non installata da ytdl)",
+		},
+		{
+			// Ours, but not the build the pin vouches for: that build was withdrawn
+			// upstream and the installer chose staying installable over staying
+			// verifiable (ADR-0016 §15). Saying "verificata" here would be the one
+			// thing this surface exists not to do.
+			name: "ours, but its attested build is gone",
+			dep: update.Dependency{
+				Name: update.ComponentFFmpeg, Version: "1900000000_9.1",
+				Path: "/home/u/.local/bin/ffmpeg", Ours: true, Attested: false,
+			},
+			want: "ffmpeg 9.1   (non verificata: la versione attestata non è più disponibile)",
 		},
 	}
 	for _, tc := range cases {
@@ -334,5 +346,31 @@ func TestRenderVersionShowsLocalFactsWithoutAVerdict(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q:\n%s", want, got)
 		}
+	}
+}
+
+// An ffmpeg whose attested build was withdrawn is deliberately UNCOMPARED, so it
+// can never become a permanent phantom update: the difference could not be
+// resolved by updating, because the installer would fall back again.
+func TestAnUnattestedDependencyIsNeverAPhantomUpdate(t *testing.T) {
+	v := view()
+	// What the machine reports after a fallback: no ffmpeg build in the comparison.
+	v.Verdict.Installed.FFmpeg = ""
+	v.Verdict.Installed.Unattested = []string{update.ComponentFFmpeg}
+	v.Deps[1] = update.Dependency{
+		Name: update.ComponentFFmpeg, Version: "1900000000_9.1",
+		Path: "/home/u/.local/bin/ffmpeg", Ours: true, Attested: false,
+	}
+
+	if v.Verdict.Available() {
+		t.Errorf("an unattested ffmpeg reads as an available update: %+v", v.Verdict.Changes())
+	}
+	if got := RenderUpdateNotice(v); got != "" {
+		t.Errorf("the notice nags about something updating cannot fix:\n%s", got)
+	}
+	// But the screen still SAYS it is unverified — silence would be the dishonest
+	// half of the trade.
+	if got := RenderVersion(v); !strings.Contains(got, "non verificata") {
+		t.Errorf("RenderVersion hides that the copy is unattested:\n%s", got)
 	}
 }

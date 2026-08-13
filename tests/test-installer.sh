@@ -386,6 +386,41 @@ ytdl_is_current;   check "--force reinstalls ytdl"   "1" "$?"
 FORCE=0
 
 # ──────────────────────────────────────────────────────────────────
+#  The pin is a preference, not a precondition
+# ──────────────────────────────────────────────────────────────────
+# An exact build id is what makes the checksum mean anything, but it is also a
+# URL that can stop existing. If a withdrawn build aborted the install, ytdl
+# would become uninstallable until somebody re-pinned it — a recurring
+# maintenance obligation this project refuses to take on (ADR-0016 §15).
+printf '\nWhen the attested ffmpeg build is withdrawn\n'
+
+FFMPEG_TARGET="1785863997_9.0"
+ARCH_KEY="arm64"
+check "the pinned URL names the exact build" \
+  "https://ffmpeg.martin-riedl.de/download/macos/arm64/1785863997_9.0/ffmpeg.zip" \
+  "$(ffmpeg_url_for ffmpeg)"
+check "the fallback URL names no build at all" \
+  "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip" \
+  "$(ffmpeg_fallback_url_for ffmpeg)"
+
+# The decision is the thing worth pinning. Only "upstream says this is gone" may
+# lead to a fallback; "we could not ask" must abort, or a flaky connection would
+# silently downgrade a verified install to an unverified one — giving away for
+# free the property the checksum was introduced to buy.
+check "200 verifies"                    "verify"   "$(ffmpeg_fetch_action 200)"
+check "404 falls back"                  "fallback" "$(ffmpeg_fetch_action 404)"
+check "410 falls back too"              "fallback" "$(ffmpeg_fetch_action 410)"
+check "no answer at all ABORTS"         "abort"    "$(ffmpeg_fetch_action 000)"
+check "a server error ABORTS"           "abort"    "$(ffmpeg_fetch_action 500)"
+check "a proxy refusal ABORTS"          "abort"    "$(ffmpeg_fetch_action 403)"
+check "an empty status ABORTS"          "abort"    "$(ffmpeg_fetch_action "")"
+
+# And download_status really does report 000 rather than a status when it could
+# not ask, which is what makes the rule above reachable.
+check "an unreachable host reports no status" "000" \
+  "$(download_status "http://127.0.0.1:1/gone" "$TMPDIR_YTDL/got")"
+
+# ──────────────────────────────────────────────────────────────────
 #  The marker
 # ──────────────────────────────────────────────────────────────────
 # What was actually installed has to survive across runs: it is how the next run
@@ -400,6 +435,14 @@ check "the marker is written"        "0" "$([ -f "$(marker_path)" ] && echo 0 ||
 check "it records the ytdl version"  "v2.1.0"         "$(marker_get ytdl_version)"
 check "it records the yt-dlp version" "2026.07.04"    "$(marker_get yt_dlp_version)"
 check "it records the ffmpeg build"  "1785863997_9.0" "$(marker_get ffmpeg_build)"
+# Whether the copy on disk is the one the pin vouches for. Without this the
+# comparison would report a difference no update could ever resolve.
+check "it records that ffmpeg is attested" "true" "$(marker_get ffmpeg_pinned)"
+FFMPEG_PINNED=0
+write_marker
+check "a fallback is recorded as unattested" "false" "$(marker_get ffmpeg_pinned)"
+FFMPEG_PINNED=1
+write_marker
 check "an unset marker key is empty" ""               "$(marker_get not_a_key)"
 case "$(marker_get installed_at)" in
   20[0-9][0-9]-*T*Z) check "it records when" "0" "0" ;;

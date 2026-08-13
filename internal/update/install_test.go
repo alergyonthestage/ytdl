@@ -290,3 +290,67 @@ func TestInvalidate(t *testing.T) {
 		t.Errorf("Invalidate with no state dir: %v", err)
 	}
 }
+
+// An ffmpeg installed after its attested build was withdrawn is UNCOMPARED, not
+// stale. Comparing it against a build that no longer exists would report an
+// update on every check, for ever, that applying could never resolve — the
+// installer would fall back again and the difference would persist (ADR-0016 §15).
+func TestAnUnattestedFFmpegIsUncomparedRatherThanStale(t *testing.T) {
+	ourDir, _ := isolate(t)
+	fakeTool(t, ourDir, ComponentFFmpeg, "9.1")
+	state := t.TempDir()
+	writeMarker(t, state, "ffmpeg_build = 1900000000_9.1\nffmpeg_pinned = false\n")
+
+	var ff Dependency
+	for _, d := range Dependencies(state, false) {
+		if d.Name == ComponentFFmpeg {
+			ff = d
+		}
+	}
+	if ff.Attested {
+		t.Error("a fallback install was reported as attested")
+	}
+	// It is still SHOWN — silence would be the dishonest half of the trade.
+	if ff.Version != "1900000000_9.1" {
+		t.Errorf("Version = %q; the surface still has to say which copy this is", ff.Version)
+	}
+
+	in := InstalledFrom(Dependencies(state, false))
+	if in.FFmpeg != "" {
+		t.Errorf("Installed.FFmpeg = %q; an unattested copy must be uncompared", in.FFmpeg)
+	}
+	if len(in.Unattested) != 1 || in.Unattested[0] != ComponentFFmpeg {
+		t.Errorf("Unattested = %v, want [%s]", in.Unattested, ComponentFFmpeg)
+	}
+
+	// The proof it matters: with the pin naming the withdrawn build, nothing is
+	// reported as available.
+	v := Verdict{
+		CheckedAt:  time.Now(),
+		LatestYtdl: buildinfo.Version,
+		Pin:        Pin{YtDlp: "2026.07.04", FFmpeg: "1785863997_9.0"},
+		Installed:  in,
+	}
+	for _, c := range v.Changes() {
+		if c.Component == ComponentFFmpeg {
+			t.Errorf("a phantom ffmpeg update survived: %+v", c)
+		}
+	}
+}
+
+// An install predating the fallback has no ffmpeg_pinned key at all. Absent means
+// attested: every install before it existed took the pinned path or none.
+func TestAMarkerWithoutThePinnedKeyCountsAsAttested(t *testing.T) {
+	ourDir, _ := isolate(t)
+	fakeTool(t, ourDir, ComponentFFmpeg, "9.0")
+	state := t.TempDir()
+	writeMarker(t, state, "ffmpeg_build = 1785863997_9.0\n")
+
+	in := InstalledFrom(Dependencies(state, false))
+	if in.FFmpeg != "1785863997_9.0" {
+		t.Errorf("Installed.FFmpeg = %q, want the recorded build", in.FFmpeg)
+	}
+	if len(in.Unattested) != 0 {
+		t.Errorf("Unattested = %v, want none", in.Unattested)
+	}
+}

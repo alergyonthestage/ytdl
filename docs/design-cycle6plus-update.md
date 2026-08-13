@@ -73,9 +73,16 @@ except the running one aborts rather than guessing.
 
 `latest` is resolved — by the installer and by the probe alike — with the same
 redirect read used for ytdl's own tag, so everything downstream compares two
-concrete version strings and never a placeholder. **ffmpeg has no `latest`**: it
-is always an exact build, because that is what makes its checksum meaningful
-(ADR-0016 §12).
+concrete version strings and never a placeholder. **ffmpeg declares no `latest`**:
+the pin always names an exact build, because that is what makes its checksum
+meaningful (ADR-0016 §12).
+
+**But the pin is a preference, not a precondition** (ADR-0016 §15). If upstream
+has WITHDRAWN the attested build (404/410), the installer takes the current one,
+records `ffmpeg_pinned = false` in the marker, and every surface says `non
+verificata`. Anything other than a withdrawal — including "could not ask" —
+aborts instead. An unattested copy is left **uncompared**, so it can never become
+a phantom update that applying could not resolve.
 
 **(design choice) `key = value`, not JSON.** `install.sh` must parse this on a
 stock Mac, where `jq` does not exist and hand-rolled JSON parsing in bash is how
@@ -275,7 +282,9 @@ flowchart TD
 
 Marker: `${XDG_STATE_HOME:-~/.local/state}/ytdl/installed.conf`, same
 `key = value` format (`ytdl_version`, `yt_dlp_version`, `ffmpeg_build`,
-`installed_at`).
+`ffmpeg_pinned`, `installed_at`). `ffmpeg_pinned` is what keeps a fallback
+install honest and uncompared (ADR-0016 §15); an older marker without the key
+counts as attested, since nothing could have fallen back before it existed.
 
 **Consequence for the GUI (design choice):** when the installer skips ytdl
 itself — the common "the maintainer re-pinned yt-dlp" update — **no handover and
@@ -513,7 +522,7 @@ got.
 | `internal/config` | `update_check` round-trips through `LoadFile`/`Save`; default on; a garbage value warns and falls back |
 | `internal/cli` | the notice renders each verdict state, the foreign-dependency message, and "" when there is nothing to say |
 | `internal/webui` | `/api/state` carries `update`; nil `Updater` → no fields **and** no control; `POST /api/update` → `409` + reason on a non-empty queue, `409` when already running, `202` otherwise; the notice is present in state **while** blocked |
-| `tests/test-installer.sh` | `deps.conf` parsing (valid, missing, garbage, unknown key, `latest`); skip-when-current per component; a pinned **older** tag reinstalls (downgrade); `--force` reinstalls; the marker is written; an unreadable `deps.conf` aborts and installs nothing. All pure bash, no network |
+| `tests/test-installer.sh` | the withdrawn-build rule: 200 verifies, 404/410 falls back, **everything else aborts** (ADR-0016 §15), and the marker records which happened. Plus `deps.conf` parsing (valid, missing, garbage, unknown key, `latest`); skip-when-current per component; a pinned **older** tag reinstalls (downgrade); `--force` reinstalls; the marker is written; an unreadable `deps.conf` aborts and installs nothing. All pure bash, no network |
 | CI — canary (ADR-0016 §3) | a scheduled job runs ytdl **end to end** against the newest yt-dlp and against the resolved pin: a fixture media file over local HTTP (yt-dlp's `generic` extractor), ffmpeg from the runner, asserting the produced filename, the written ID3 tags, that `--print-to-file after_move:` returned the path, and that the `--progress-template` lines still parse. Red ⇒ the maintainer is emailed. Recorded limit: the extractor is not YouTube's, so the metadata **fallback chain** is not what this exercises |
 | `spa_test.go` | the reload prohibition is **narrowed**: exactly one `location.reload(`, in the handover path; every other navigation rule and the `innerHTML` ban unchanged |
 | `spa_behaviour_test.go` | the banner appears whenever available, **including with a non-empty queue**; the action is disabled with a reason; the panel renders in-progress / done-without-restart / done-with-restart / failed |

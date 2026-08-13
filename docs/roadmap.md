@@ -829,17 +829,20 @@ replacing a *running* binary (atomic `mv`; the live process keeps its inode,
   alone, with nobody at their keyboard. **Built as of 2026-08-13; the acceptance
   test itself is verified when the maintainer opens the page on macOS, which is
   the one thing the container cannot do.**
-- **Known risk this cycle introduces, to watch rather than to fix now:** pinning
-  an exact ffmpeg build trades a moving target for a fixed one, and a fixed URL
-  can 404. The `latest` redirect could never fail that way; a pinned build can, if
-  upstream stops serving it, and then *every new install* breaks until the pin is
-  moved. Upstream's index advertises only the current build per architecture, and
-  whether older ones stay reachable is **unverified**. The remedy costs one commit
-  and reaches everyone within a day — but it needs someone to notice, so a failed
-  install must keep saying plainly which URL it could not fetch. If it ever bites,
-  the durable fix is to mirror the four zips as ytdl release assets: that puts
-  availability *and* provenance in the maintainer's hands, and is a cycle of its
-  own rather than a patch.
+- **The ffmpeg pin creates no standing obligation** (ADR-0016 §15, ruled
+  2026-08-13 after the risk was raised at review). Pinning an exact build trades a
+  moving target for a fixed one, and a fixed URL can be withdrawn — which would
+  have made *every new install* fail until someone re-pinned, with nobody
+  reporting it, because a person who cannot install a tool gives up rather than
+  files an issue. That is the failure mode the canary exists to prevent,
+  reintroduced through the back door. So the pin is a **preference**: a withdrawn
+  build (404/410) falls back to the current one and is recorded as unattested,
+  every surface says `non verificata`, and only a withdrawal does this — "could
+  not ask" still aborts. An unattested copy is left uncompared, so it never
+  becomes a phantom update. **Nothing here needs periodic maintenance: if
+  `deps.conf` is never touched again, installs keep working.** If withdrawals turn
+  out to be common, the durable fix is mirroring the four zips as ytdl release
+  assets — a cycle of its own, never a quieter fallback.
 
 #### Cycle 6-launch — the desktop launcher (`F`) — **after the update path**
 

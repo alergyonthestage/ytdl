@@ -50,6 +50,9 @@ type updateDTO struct {
 	Installed installedDTO `json:"installed"`
 	Changes   []changeDTO  `json:"changes,omitempty"`
 	Foreign   []string     `json:"foreign,omitempty"`
+	// Unattested: installed by us, but not the build the pin vouches for, because
+	// that build was withdrawn upstream (ADR-0016 §15).
+	Unattested []string `json:"unattested,omitempty"`
 
 	// Blocked is absent when the update can start. It carries the REASON and the
 	// count, because an action that cannot work is disabled with a reason rather
@@ -92,7 +95,8 @@ func (s *Server) buildUpdateDTO() *updateDTO {
 			YtDlp:  v.Installed.YtDlp,
 			FFmpeg: update.FFmpegVersion(v.Installed.FFmpeg),
 		},
-		Foreign: v.Installed.Foreign,
+		Foreign:    v.Installed.Foreign,
+		Unattested: v.Installed.Unattested,
 	}
 	if have && !v.CheckedAt.IsZero() {
 		at := v.CheckedAt
