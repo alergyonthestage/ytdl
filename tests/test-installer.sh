@@ -355,6 +355,26 @@ ffmpeg_is_current
 check "a marker without ffprobe is not trusted"     "1" "$?"
 fake_tool ffprobe "9.0"
 
+# A copy recorded as NOT attested is never current, whatever its build id says.
+# The trigger is the intended remedy: upstream withdraws a build, every machine
+# falls back, the maintainer re-pins deps.conf to what they fell back TO — and
+# skipping here would promote bytes that were never checksummed to "verificata".
+# Not skipping re-fetches from the pinned URL and actually obtains the
+# attestation (ADR-0016 §15).
+printf 'ffmpeg_build = 1785863997_9.0\nffmpeg_pinned = false\n' > "$(marker_path)"
+ffmpeg_is_current
+check "an unattested ffmpeg is reinstalled, not skipped" "1" "$?"
+
+printf 'ffmpeg_build = 1785863997_9.0\nffmpeg_pinned = true\n' > "$(marker_path)"
+ffmpeg_is_current
+check "an attested ffmpeg at the pin is still skipped"   "0" "$?"
+
+# An install predating ADR-0016 §15 has no ffmpeg_pinned key at all. Absent means
+# "nothing ever fell back", so it must not cost those machines a reinstall.
+printf 'ffmpeg_build = 1785863997_9.0\n' > "$(marker_path)"
+ffmpeg_is_current
+check "a marker with no ffmpeg_pinned key still skips"   "0" "$?"
+
 rm -f "$(marker_path)"
 ffmpeg_is_current
 check "no marker means ffmpeg is reinstalled"       "1" "$?"

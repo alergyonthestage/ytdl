@@ -300,10 +300,19 @@ ytdlp_is_current() {
 # says 1785863997_9.0 — so the marker is the only exact answer. Both binaries must
 # also actually be there: a marker without the files it describes is a record of an
 # install that no longer exists.
+#
+# A copy the marker records as NOT attested is never "current", whatever its build
+# id says. The trigger is the intended remedy itself: upstream withdraws build X,
+# every installation falls back to Y, the maintainer re-pins deps.conf to Y — and
+# without this line each of those machines would skip ffmpeg and start calling
+# bytes that were never checksummed "verificata con questo ytdl". Not skipping
+# re-fetches the copy from the pinned URL and actually OBTAINS the attestation,
+# instead of carrying the doubt forward for ever (ADR-0016 §15).
 ffmpeg_is_current() {
   [ "$FORCE" -eq 0 ] || return 1
   [ -x "$INSTALL_DIR/ffmpeg" ] || return 1
   [ -x "$INSTALL_DIR/ffprobe" ] || return 1
+  [ "$(marker_get ffmpeg_pinned)" != "false" ] || return 1
   [ "$(marker_get ffmpeg_build)" = "$FFMPEG_TARGET" ]
 }
 
