@@ -108,6 +108,31 @@ func (u *guiUpdater) Start(force bool) error    { return u.runner.Start(force) }
 func (u *guiUpdater) Progress() update.Progress { return u.runner.Progress() }
 func (u *guiUpdater) Enabled() bool             { return u.settings().UpdateCheck }
 
+// Running reports whether an installer THIS daemon launched is still in flight.
+// It is what daemonAlive consults, and it is deliberately the in-memory answer:
+// the run record on disk describes any process, this one describes ours.
+func (u *guiUpdater) Running() bool { return u.runner.Running() }
+
+// daemonAlive is ADR-0008's lifetime rule with the installer's own duration added
+// to it: alive while a GUI client is connected OR while an update this process
+// launched is still running.
+//
+// The second clause exists because a connected client is not the only thing this
+// daemon owes something to. It also owes the RECORD of how the update went, and
+// only the process that launched the installer can write it — update.Runner
+// waits on the child and calls finish. Without this clause, closing the tab
+// mid-update drops the SSE client, the drained queue idle-exits the daemon after
+// 20 s, the setsid'd installer finishes anyway with nobody left to notice, and
+// update-run.json stays at "running": the update path is then refused with a
+// reason the user can neither see nor act on. Silent, deferred, and permanent
+// until the record is recognised as abandoned (V1, design §7.3).
+//
+// Both halves are injected rather than reached for, which is what keeps this
+// composition-root work: internal/daemon takes cfg.LiveClients and is untouched.
+func daemonAlive(hasClients, updating func() bool) func() bool {
+	return func() bool { return hasClients() || updating() }
+}
+
 // handOver replaces this daemon with the binary the installer has just put down.
 //
 // It runs only when the ytdl binary actually changed: after the installer became

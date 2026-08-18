@@ -304,7 +304,7 @@ func runDaemon(daemonArgs []string) int {
 			Token:         token,
 			Updater:       upd,
 		})
-		cfg.LiveClients = srv.HasClients
+		cfg.LiveClients = daemonAlive(srv.HasClients, upd.Running)
 		// Set explicitly (Serve would only default its own copy) because serveGUI
 		// reads it too, to decide how long to keep retrying the queue lock.
 		cfg.FirstClientGrace = daemon.DefaultFirstClientGrace

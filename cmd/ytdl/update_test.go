@@ -134,3 +134,58 @@ func TestUpdaterEnabledFollowsTheResolvedSetting(t *testing.T) {
 		}
 	}
 }
+
+// The daemon's lifetime covers the installer's whole run, not just the tab
+// watching it.
+//
+// Only the process that launched the installer can record how it went, so a
+// daemon that idle-exits mid-update leaves update-run.json at "running" with
+// nobody left to finish it — and that record then refuses every later update
+// (V1, ADR-0008's rule extended by ADR-0016 §9).
+func TestTheDaemonOutlivesTheUpdateItLaunched(t *testing.T) {
+	cases := []struct {
+		name              string
+		clients, updating bool
+		want              bool
+	}{
+		{"a tab is watching", true, false, true},
+		{"no tab, but an update is running", false, true, true},
+		{"a tab and an update", true, true, true},
+		{"neither: the ordinary idle-exit applies", false, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			alive := daemonAlive(
+				func() bool { return tc.clients },
+				func() bool { return tc.updating },
+			)
+			if got := alive(); got != tc.want {
+				t.Errorf("daemonAlive(clients=%v, updating=%v)() = %v, want %v",
+					tc.clients, tc.updating, got, tc.want)
+			}
+		})
+	}
+}
+
+// The updater reports ITS OWN installer, not any installer: the run record on
+// disk describes whatever process wrote it, and a daemon that adopted a stale
+// one must not hold itself alive for a run it cannot finish.
+func TestUpdaterRunningIsAboutThisProcess(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(update.BinDirEnv, t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+
+	u := newGUIUpdater(dir, func() config.Settings { return config.Defaults() })
+	if u.Running() {
+		t.Error("a fresh updater reports an installer in flight")
+	}
+	// Somebody else's record, left at "running".
+	if err := update.SaveRun(dir, update.Run{
+		State: update.StateRunning, StartedAt: timeFixture(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if u.Running() {
+		t.Error("a run record written by another process was adopted as ours")
+	}
+}
