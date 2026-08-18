@@ -141,9 +141,17 @@ func Dependencies(stateDir string, withVersions bool) []Dependency {
 		switch {
 		case !found:
 		case name == ComponentFFmpeg:
-			// Free: the marker is a file read, so it is answered on every path.
-			d.Version = marker[markerFFmpegBuild]
-			d.Attested = ffmpegAttested
+			// Free: the marker is a file read, so it is answered on every path — but
+			// it records what OUR installer put down, so it describes THIS copy only
+			// when this copy is ours. Attributing it to a Homebrew ffmpeg would print
+			// our recorded version beside somebody else's path, and would drag our
+			// "non verificata" onto a binary the pin never covered. A foreign copy
+			// therefore has no version anybody wrote down, which is what "" already
+			// means, and Foreign is the fact that describes it.
+			if ours {
+				d.Version = marker[markerFFmpegBuild]
+				d.Attested = ffmpegAttested
+			}
 		case withVersions:
 			d.Version = toolVersion(path)
 		}

@@ -20,7 +20,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alergyonthestage/ytdl/internal/buildinfo"
 	"github.com/alergyonthestage/ytdl/internal/cli"
 	"github.com/alergyonthestage/ytdl/internal/config"
 	"github.com/alergyonthestage/ytdl/internal/core"
@@ -168,18 +167,25 @@ func updateSurface(enabled, versions bool) cli.UpdateView {
 	v, have := update.Load(stateDir)
 	deps := update.Dependencies(stateDir, versions)
 
-	// The running build is free to read and authoritative, so it always replaces
-	// what the cache remembered: a verdict written by a previous build must not
-	// make this one look stale, and IsDev keys off exactly this field.
-	v.Installed.Ytdl = buildinfo.Version
-	// The ffmpeg build comes from the marker, which is a file read — free on every
-	// path, so it is always current.
-	v.Installed.FFmpeg = dependencyVersion(deps, update.ComponentFFmpeg)
-	if versions {
-		// Where we can afford to look, a dependency the user updated by hand since
-		// the last round must not still be reported as stale.
-		v.Installed.YtDlp = dependencyVersion(deps, update.ComponentYtDlp)
+	// The local facts always replace what the cache remembered: a verdict written
+	// by a previous build must not make this one look stale, and IsDev keys off
+	// Installed.Ytdl, which InstalledFrom fills from the running build.
+	//
+	// They are FLATTENED by InstalledFrom rather than assembled here. Assembling
+	// them here is what V2 was: it copied the marker's build id straight into
+	// Installed.FFmpeg, undoing the one place that deliberately leaves that field
+	// empty for a copy the pin does not vouch for — so an unattested ffmpeg was
+	// compared against a build that no longer exists, and reported an update on
+	// every single run that applying could never resolve (ADR-0016 §15). One
+	// flattening rule, one place, and both channels read it.
+	local := update.InstalledFrom(deps)
+	if !versions {
+		// Nothing asked yt-dlp its version on this path, so this walk has nothing to
+		// say about it: keep what the last round recorded rather than blanking a
+		// side that WAS answered.
+		local.YtDlp = v.Installed.YtDlp
 	}
+	v.Installed = local
 
 	return cli.UpdateView{
 		Verdict:     v,
@@ -188,15 +194,6 @@ func updateSurface(enabled, versions bool) cli.UpdateView {
 		Deps:        deps,
 		Now:         time.Now(),
 	}
-}
-
-func dependencyVersion(deps []update.Dependency, name string) string {
-	for _, d := range deps {
-		if d.Name == name {
-			return d.Version
-		}
-	}
-	return ""
 }
 
 // printUpdateNotices writes the update and foreign-dependency notices to STDERR,

@@ -2,10 +2,13 @@ package main
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/alergyonthestage/ytdl/internal/buildinfo"
+	"github.com/alergyonthestage/ytdl/internal/cli"
 	"github.com/alergyonthestage/ytdl/internal/config"
 	"github.com/alergyonthestage/ytdl/internal/update"
 )
@@ -187,5 +190,155 @@ func TestUpdaterRunningIsAboutThisProcess(t *testing.T) {
 	}
 	if u.Running() {
 		t.Error("a run record written by another process was adopted as ours")
+	}
+}
+
+// surfaceSandbox points the whole update surface at a private state dir and a
+// private bin dir, and returns the state dir. The screens read the marker and
+// resolve dependencies, so both have to be ours or the test reads the container.
+func surfaceSandbox(t *testing.T) string {
+	t.Helper()
+	base := t.TempDir()
+	state := filepath.Join(base, "ytdl")
+	bin := filepath.Join(base, "bin")
+	for _, d := range []string{state, bin} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("XDG_STATE_HOME", base)
+	t.Setenv(update.BinDirEnv, bin)
+	t.Setenv("PATH", bin)
+	return state
+}
+
+// fakeBinary writes an executable stand-in, so Resolve finds something real.
+func fakeBinary(t *testing.T, dir, name string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An unattested ffmpeg is UNCOMPARED, not stale (ADR-0016 §15).
+//
+// This was V2, and it was permanent: the CLI copied the marker's build id into
+// the field InstalledFrom deliberately empties, so every surface compared a copy
+// against a build that no longer exists. The notice then asked, after every
+// download, for ever, for a downgrade that applying could never deliver — the
+// installer would simply fall back again.
+func TestAnUnattestedFFmpegIsNeverComparedOnTheCLI(t *testing.T) {
+	state := surfaceSandbox(t)
+	fakeBinary(t, update.BinDir(), "ffmpeg")
+
+	old := buildinfo.Version
+	buildinfo.Version = "v2.1.0" // a release build; "dev" is never compared
+	t.Cleanup(func() { buildinfo.Version = old })
+
+	// The installer fell back: it installed the CURRENT build and recorded that
+	// this copy is not the attested one.
+	marker := "ffmpeg_build = 1799999999_9.1\nffmpeg_pinned = false\n"
+	if err := os.WriteFile(filepath.Join(state, update.MarkerName), []byte(marker), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := update.Save(state, update.Verdict{
+		CheckedAt:  timeFixture(),
+		LatestYtdl: "v2.1.0",
+		Pin:        update.Pin{YtDlp: "2026.07.04", FFmpeg: "1785863997_9.0"},
+		Installed:  update.InstalledFrom(update.Dependencies(state, true)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both costs, because the cheap path is the one that prints after a download.
+	for _, versions := range []bool{false, true} {
+		view := updateSurface(true, versions)
+		if view.Verdict.Available() {
+			t.Errorf("versions=%v: phantom update: %+v", versions, view.Verdict.Changes())
+		}
+		if notice := cli.RenderUpdateNotice(view); notice != "" {
+			t.Errorf("versions=%v: phantom notice after a download:\n%s", versions, notice)
+		}
+		// The copy is still SHOWN, and shown as what it is — uncompared is not
+		// unmentioned (ADR-0016 §15, ux-principles.md §5).
+		if len(view.Verdict.Installed.Unattested) != 1 {
+			t.Errorf("versions=%v: the unverified copy is not reported at all: %+v",
+				versions, view.Verdict.Installed)
+		}
+	}
+}
+
+// The marker records what OUR installer put down, so it says nothing about a
+// copy somebody else installed. Attributing it anyway made `ytdl --version`
+// print our recorded version beside a Homebrew path (V2, second half).
+func TestAForeignFFmpegBorrowsNoVersionFromOurMarker(t *testing.T) {
+	state := surfaceSandbox(t)
+	// Not in our bin dir: on $PATH, and therefore not ours.
+	foreign := filepath.Join(t.TempDir(), "brew")
+	fakeBinary(t, foreign, "ffmpeg")
+	t.Setenv("PATH", foreign)
+
+	marker := "ffmpeg_build = 1785863997_9.0\nffmpeg_pinned = true\n"
+	if err := os.WriteFile(filepath.Join(state, update.MarkerName), []byte(marker), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	view := updateSurface(true, true)
+	for _, d := range view.Deps {
+		if d.Name != update.ComponentFFmpeg {
+			continue
+		}
+		if d.Ours {
+			t.Fatalf("the harness resolved our own copy, not a foreign one: %+v", d)
+		}
+		if d.Version != "" {
+			t.Errorf("a foreign ffmpeg was given our recorded build %q", d.Version)
+		}
+		if !d.Attested {
+			t.Error("a foreign ffmpeg was marked unattested; the pin is not in force for it at all, which is what Foreign says")
+		}
+	}
+	if v := view.Verdict.Installed.FFmpeg; v != "" {
+		t.Errorf("Installed.FFmpeg = %q for a copy we did not install", v)
+	}
+	if len(view.Verdict.Installed.Unattested) != 0 {
+		t.Errorf("a foreign copy was reported as unverified rather than as foreign: %+v",
+			view.Verdict.Installed.Unattested)
+	}
+	// It is still called out — as the different problem it is.
+	if msg := cli.RenderForeignDependency(view); !strings.Contains(msg, "ffmpeg") {
+		t.Errorf("the foreign ffmpeg is not reported at all:\n%s", msg)
+	}
+}
+
+// The cheap path does not ask yt-dlp its version, so it must keep what the last
+// round recorded rather than blanking a side that WAS answered — otherwise the
+// notice would go quiet about a genuinely stale yt-dlp.
+func TestTheCheapPathKeepsTheCachedYtDlpVersion(t *testing.T) {
+	state := surfaceSandbox(t)
+	fakeBinary(t, update.BinDir(), "yt-dlp")
+
+	old := buildinfo.Version
+	buildinfo.Version = "v2.1.0"
+	t.Cleanup(func() { buildinfo.Version = old })
+
+	if err := update.Save(state, update.Verdict{
+		CheckedAt:  timeFixture(),
+		LatestYtdl: "v2.1.0",
+		Pin:        update.Pin{YtDlp: "2026.08.02", FFmpeg: "1785863997_9.0"},
+		Installed:  update.Installed{Ytdl: "v2.1.0", YtDlp: "2026.07.04"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	view := updateSurface(true, false)
+	if view.Verdict.Installed.YtDlp != "2026.07.04" {
+		t.Errorf("Installed.YtDlp = %q, want the cached 2026.07.04", view.Verdict.Installed.YtDlp)
+	}
+	if !view.Verdict.Available() {
+		t.Error("a genuinely stale yt-dlp went unreported on the path that prints after a download")
 	}
 }
