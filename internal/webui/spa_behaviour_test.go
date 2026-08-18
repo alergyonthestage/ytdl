@@ -758,9 +758,12 @@ console.log("off:" + updateStateText({ enabled: false }));
 	}
 }
 
-// The panel's four outcomes, each distinct. done-with-restart and
+// The panel's five outcomes, each distinct. done-with-restart and
 // done-without-restart are the ones that must not be confused: after the
 // installer became idempotent, most updates cost no restart at all (design §5).
+// "abandoned" is the fifth: the process watching the installer died first, so
+// the panel says it does not know how it went rather than guessing at one of the
+// other four (design §7.3, V1).
 func TestUpdatePanelRendersEveryOutcome(t *testing.T) {
 	out := runNode(t, updateHarness+`
 for (const st of [
@@ -768,6 +771,7 @@ for (const st of [
   { state: "done", changed: false },
   { state: "done", changed: true },
   { state: "failed", exitCode: 3, logTail: "boom" },
+  { state: "abandoned", logTail: "got as far as ffmpeg" },
 ]) {
   showUpdatePanel(st);
   console.log(st.state + "/" + !!st.changed + ":" + $("updatePanelText").textContent +
@@ -779,6 +783,7 @@ for (const st of [
 		{"done/false:", "Non serve riavviare"},
 		{"done/true:", "Riapro l'interfaccia"},
 		{"failed/false:", "non è riuscito"},
+		{"abandoned/false:", "come sia andato"},
 	}
 	for _, w := range want {
 		found := false
@@ -800,6 +805,21 @@ for (const st of [
 	for _, l := range strings.Split(out, "\n") {
 		if strings.HasPrefix(l, "done/false:") && strings.Contains(l, "Riapro") {
 			t.Errorf("a dependency-only update promised a restart: %q", l)
+		}
+	}
+	// An abandoned run must not be rounded up to either certainty: neither
+	// "riuscito" nor "non è riuscito" is something anyone here knows.
+	for _, l := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(l, "abandoned/") {
+			continue
+		}
+		for _, claim := range []string{"non è riuscito", "Aggiornato"} {
+			if strings.Contains(l, claim) {
+				t.Errorf("an abandoned run claimed %q, which nobody here knows: %q", claim, l)
+			}
+		}
+		if !strings.Contains(l, "Vedi il dettaglio") || !strings.Contains(l, "Riprova") {
+			t.Errorf("an abandoned run offers neither the log nor a retry: %q", l)
 		}
 	}
 }

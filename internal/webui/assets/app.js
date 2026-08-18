@@ -1197,8 +1197,9 @@ async function pollUpdate() {
         "Riaprila con  ytdl gui  dal Terminale.";
       return;
     }
-  } else if (st && (st.state === "done" || st.state === "failed")) {
-    // Done without a restart, or failed: nothing more to wait for.
+  } else if (st && (st.state === "done" || st.state === "failed" || st.state === "abandoned")) {
+    // Done without a restart, failed, or abandoned: nothing more to wait for.
+    // Abandoned belongs here or the page polls a run nobody will ever finish.
     loadState().catch(() => {});
     return;
   }
@@ -1236,10 +1237,18 @@ function showUpdatePanel(st) {
     text.textContent = "Aggiornamento in corso…";
     return;
   }
-  if (st.state === "failed") {
+  if (st.state === "failed" || st.state === "abandoned") {
     // A partial failure is never summarised: what is offered is the exit code's
     // consequence in words, the log, and a retry that reinstalls everything.
-    text.textContent = "L'aggiornamento non è riuscito. ytdl è rimasto quello di prima.";
+    //
+    // "abandoned" is the case where nobody was left to read the exit code at all:
+    // the process watching the installer died first (the machine was restarted
+    // mid-install, say). The installer was detached and very probably finished —
+    // but that is exactly the guess a surface may not make, so this says what is
+    // actually known and points at the same log (design §7.3).
+    text.textContent = st.state === "abandoned"
+      ? "Non so come sia andato questo aggiornamento: ytdl si è chiuso prima che finisse."
+      : "L'aggiornamento non è riuscito. ytdl è rimasto quello di prima.";
     const detail = button("Vedi il dettaglio", "secondary", () => {
       log.hidden = !log.hidden;
       log.textContent = st.logTail || "(nessun output)";

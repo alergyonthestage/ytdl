@@ -392,3 +392,66 @@ func TestStateCarriesForeignDependencies(t *testing.T) {
 		t.Error("a foreign dependency was reported as an available update")
 	}
 }
+
+// A run record left at "running" by a process that died before it could finish it
+// must NOT block the update path.
+//
+// This was V1's blocking half: the record blocked, the banner hid, the action
+// slot emptied and POST answered 409 — permanently, and with no reason the user
+// could see or act on (ux-principles.md §4). The engine reports such a record as
+// abandoned, and the seam must treat that as "no run in flight".
+func TestAnAbandonedRunDoesNotBlockTheUpdatePath(t *testing.T) {
+	v := upToDateVerdict()
+	v.LatestYtdl = "v2.2.0"
+	f := &fakeUpdater{
+		verdict: v, have: true, enabled: true,
+		progress: update.Progress{
+			Run:     update.Run{State: update.StateAbandoned, ExitCode: 0},
+			LogTail: "installing ffmpeg…",
+		},
+	}
+	srv, _ := serverWithUpdater(t, f)
+
+	state := decode(t, call(t, srv, http.MethodGet, "/api/state", ""))
+	u := state["update"].(map[string]any)
+	if u["busy"] != false {
+		t.Error("an abandoned run still reports the machine as busy")
+	}
+	if b, ok := u["blocked"]; ok {
+		t.Errorf("an abandoned run still blocks the action: %v", b)
+	}
+	if u["available"] != true {
+		t.Error("the news was withheld as well")
+	}
+
+	// And the action actually works, rather than merely looking enabled.
+	w := call(t, srv, http.MethodPost, "/api/update", "")
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202: an abandoned run refused a new one", w.Code)
+	}
+	if f.started != 1 {
+		t.Errorf("the installer was launched %d times, want 1", f.started)
+	}
+}
+
+// The status endpoint carries the abandoned state and the log with it, because
+// what the page can honestly say is "I could not follow this to the end — here is
+// the output" (design §7.3).
+func TestUpdateStatusCarriesAnAbandonedRun(t *testing.T) {
+	f := &fakeUpdater{
+		verdict: upToDateVerdict(), have: true, enabled: true,
+		progress: update.Progress{
+			Run:     update.Run{State: update.StateAbandoned},
+			LogTail: "got as far as ffmpeg",
+		},
+	}
+	srv, _ := serverWithUpdater(t, f)
+
+	body := decode(t, call(t, srv, http.MethodGet, "/api/update/status", ""))
+	if body["state"] != update.StateAbandoned {
+		t.Errorf("state = %v, want %q", body["state"], update.StateAbandoned)
+	}
+	if body["logTail"] != "got as far as ffmpeg" {
+		t.Errorf("logTail = %v; the log is the only honest answer here", body["logTail"])
+	}
+}

@@ -292,3 +292,116 @@ func TestLogTailIsBoundedAndStartsAtALineBoundary(t *testing.T) {
 		t.Errorf("the tail starts mid-line: %q", tail[:40])
 	}
 }
+
+// The abandoned rule, as a rule. A record that says "running" while nothing is
+// running it must not refuse every later update for ever: that is a failure the
+// user can neither see nor act on, and a reboot mid-install produces it (V1,
+// design §7.3).
+func TestAbandonedIsARuleAboutTheRecord(t *testing.T) {
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	live := func(int) bool { return true }
+	gone := func(int) bool { return false }
+
+	cases := []struct {
+		name  string
+		run   Run
+		alive func(int) bool
+		want  bool
+	}{
+		{"a live installer, started a minute ago",
+			Run{State: StateRunning, StartedAt: now.Add(-time.Minute), PID: 4242}, live, false},
+		{"its process is gone",
+			Run{State: StateRunning, StartedAt: now.Add(-time.Minute), PID: 4242}, gone, true},
+		{"no pid recorded, still inside the backstop",
+			Run{State: StateRunning, StartedAt: now.Add(-time.Minute)}, gone, false},
+		{"no pid recorded, past the backstop",
+			Run{State: StateRunning, StartedAt: now.Add(-StaleAfter)}, gone, true},
+		{"a pid that answers past the backstop is a number handed to somebody else",
+			Run{State: StateRunning, StartedAt: now.Add(-StaleAfter), PID: 4242}, live, true},
+		{"no start time at all gets no benefit of the doubt",
+			Run{State: StateRunning, PID: 4242}, live, true},
+		{"a finished run is not abandoned", Run{State: StateDone, PID: 4242}, gone, false},
+		{"a failed run is not abandoned", Run{State: StateFailed}, gone, false},
+		{"an idle record is not abandoned", Run{State: StateIdle}, gone, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.run.Abandoned(now, tc.alive); got != tc.want {
+				t.Errorf("Abandoned(%+v) = %v, want %v", tc.run, got, tc.want)
+			}
+		})
+	}
+}
+
+// Progress DERIVES the abandoned state and never writes it: the record on disk is
+// the installer's, and a reader that rewrote it would be recording an outcome it
+// does not know.
+func TestProgressReportsAnAbandonedRunWithoutRewritingIt(t *testing.T) {
+	dir := t.TempDir()
+	r := NewRunner(dir)
+	// Past the backstop, so the assertion does not depend on which pids this
+	// machine happens to have free.
+	stale := Run{State: StateRunning, StartedAt: time.Now().Add(-StaleAfter - time.Minute), PID: 4242}
+	if err := SaveRun(dir, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	if p := r.Progress(); p.State != StateAbandoned {
+		t.Errorf("state = %q, want %q; a record nobody is left to finish would block every later update",
+			p.State, StateAbandoned)
+	}
+	run, ok := LoadRun(dir)
+	if !ok || run.State != StateRunning {
+		t.Errorf("the record on disk was rewritten: %+v (ok=%v)", run, ok)
+	}
+}
+
+// The in-memory half outranks the record: an installer THIS process launched is
+// running, whatever the record's timestamps look like from here. Getting this
+// backwards would unblock a second installer over a live one, and install.sh
+// replaces binaries with mv.
+func TestOurOwnRunIsNeverCalledAbandoned(t *testing.T) {
+	h := newHub(t)
+	h.setInstaller("#!/bin/bash\nsleep 2\nexit 0\n")
+
+	dir := t.TempDir()
+	r := NewRunner(dir)
+	if err := r.Start(false); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// Forge a record that every clock-based test would call stale, while our own
+	// installer is genuinely still going.
+	if err := SaveRun(dir, Run{
+		State: StateRunning, StartedAt: time.Now().Add(-StaleAfter - time.Hour), PID: 4242,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if p := r.Progress(); p.State != StateRunning {
+		t.Errorf("state = %q while our own installer is running, want %q", p.State, StateRunning)
+	}
+	settle(t, r)
+}
+
+// The pid goes on the record so a process that did not launch the installer can
+// still tell a run in flight from one nobody is left to finish.
+func TestTheRunRecordCarriesTheInstallerPID(t *testing.T) {
+	h := newHub(t)
+	h.setInstaller("#!/bin/bash\nsleep 1\nexit 0\n")
+
+	dir := t.TempDir()
+	r := NewRunner(dir)
+	if err := r.Start(false); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	run, ok := LoadRun(dir)
+	if !ok {
+		t.Fatal("no run record was written")
+	}
+	if run.PID <= 0 {
+		t.Errorf("PID = %d; without it a later reader has only the clock", run.PID)
+	}
+	if !processAlive(run.PID) {
+		t.Errorf("processAlive(%d) = false for an installer that is still running", run.PID)
+	}
+	settle(t, r)
+}
