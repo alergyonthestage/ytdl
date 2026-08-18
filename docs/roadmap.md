@@ -707,7 +707,7 @@ two findings, **G27** and **G28**, which land in this cycle. What remains is the
   which scope decided it; no per-download control is sticky by accident; the same
   rule is stated once in `ux-principles.md` §8 and holds in both channels.
 
-#### Cycle 6-plus — the update path (`F`) — **implementation COMPLETE; review next (2026-08-13)**
+#### Cycle 6-plus — the update path (`F`) — **reviewed; nine findings to fix before gate C (2026-08-18)**
 
 Not a gate-C finding: raised by the maintainer on 2026-08-09, immediately after
 installing v2.1.0 by hand. **Pulled ahead of Cycle 6 on 2026-08-12**, when ytdl
@@ -721,16 +721,44 @@ every one of those references.
 **Its rulings are [ADR-0016](decisions/0016-cycle6plus-update-path.md) and its
 design is [design-cycle6plus-update.md](design-cycle6plus-update.md)** — read
 those first: they answer all four questions below. The design was **approved at
-gate B on 2026-08-13** and **built the same day**; the review session starts from
-[handoff-cycle6plus-review.md](handoff-cycle6plus-review.md), which is deleted at
+gate B on 2026-08-13** and **built the same day**; it was **reviewed on
+2026-08-18**, and the session that fixes what the review found starts from
+[handoff-cycle6plus-fixes.md](handoff-cycle6plus-fixes.md), which is deleted at
 the cycle's close.
 
-**Where it stands (2026-08-13).** All eleven implementation steps are done on
-`feat/update-path/implementation`, **not yet merged**. The
-suite is green under `-race`, `go vet` and `gofmt` are clean, and the parity gate
-(`git diff main -- internal/core/ internal/daemon/`) is **empty at every commit**.
-`tests/test-installer.sh` grew from 21 assertions to 92. What remains is review →
-gate C → the documentation phase.
+**Where it stands (2026-08-18).** All eleven implementation steps are done on
+`feat/update-path/implementation`, **not yet merged**, and the **review is done**.
+The baseline holds and was re-verified without the test cache: the suite is green
+under `-race`, `go vet` and `gofmt` are clean, `tests/test-installer.sh` passes
+92/92, and the parity gate (`git diff main -- internal/core/ internal/daemon/`) is
+**empty**. What remains is **the fix session → gate C → the documentation phase**.
+
+**The review found nine defects, two of them blocking**, registered as `V1`–`V9`
+in [improvements.md](improvements.md#cycle6plus-review). They get **their own
+session before gate C**, because two of them make a surface state something
+untrue and one of those kills the cycle's own acceptance test:
+
+- **V1 (blocker)** — an installer run whose daemon dies leaves the run record at
+  `running` for ever, and nothing ages it out. From then on the GUI offers no
+  update control at all, with no reason shown. Closing the browser tab mid-update
+  is enough to cause it.
+- **V2 (blocker)** — the CLI compares an ffmpeg that ADR-0016 §15 requires to be
+  left **uncompared**, so a machine that fell back to an unattested build is told
+  after every download that an update is available, for ever, and applying it
+  can never converge. The GUI does not have the defect, so the two channels
+  disagree.
+- **V3 (major)** — a skipped ffmpeg is recorded as attested, so a copy whose bytes
+  were never checksummed reads as "verificata" the moment the maintainer re-pins
+  to the build the fallback installed.
+- **V4–V9** are minors and nits: a doc comment that says the opposite of its code,
+  a full zip downloaded to read one URL, a version recorded for a failed run, a
+  doubled file read on the page's load path, and two leftovers.
+
+The two `blocker` reproductions were **executed, not argued**, and both scripts
+are carried verbatim in the fix handoff so the session starts by watching them
+fail. Neither the handover, nor the installer against the real network, nor the
+withdrawn-build fallback, nor the canary has ever run — the review did not change
+that, and the handoff says so rather than letting "reviewed" read as "exercised".
 
 Three things the implementation learned that the design could not have known, all
 carried back into [ADR-0016](decisions/0016-cycle6plus-update-path.md) §14:
