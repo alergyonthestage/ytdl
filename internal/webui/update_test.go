@@ -29,6 +29,10 @@ type fakeUpdater struct {
 	started    int
 	lastForce  bool
 	checkDelay time.Duration
+
+	// progressed counts Progress calls. The real one opens the run file and tails
+	// up to 8 KB of update.log, and /api/state is on the page's load path.
+	progressed int
 }
 
 func (f *fakeUpdater) Verdict() (update.Verdict, bool) { return f.verdict, f.have }
@@ -55,7 +59,7 @@ func (f *fakeUpdater) Start(force bool) error {
 	return nil
 }
 
-func (f *fakeUpdater) Progress() update.Progress { return f.progress }
+func (f *fakeUpdater) Progress() update.Progress { f.progressed++; return f.progress }
 func (f *fakeUpdater) Enabled() bool             { return f.enabled }
 
 const testBuild = "1785863997_9.0"
@@ -453,5 +457,20 @@ func TestUpdateStatusCarriesAnAbandonedRun(t *testing.T) {
 	}
 	if body["logTail"] != "got as far as ffmpeg" {
 		t.Errorf("logTail = %v; the log is the only honest answer here", body["logTail"])
+	}
+}
+
+// /api/state reads the run record ONCE. Progress opens the run file and tails up
+// to 8 KB of update.log, and this endpoint is on the page's load path — Busy and
+// the blocked reason used to pay for it separately (V7).
+func TestStateReadsTheRunRecordOnce(t *testing.T) {
+	f := &fakeUpdater{verdict: upToDateVerdict(), have: true, enabled: true}
+	srv, _ := serverWithUpdater(t, f)
+
+	if w := call(t, srv, http.MethodGet, "/api/state", ""); w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if f.progressed != 1 {
+		t.Errorf("Progress was called %d times for one /api/state, want 1", f.progressed)
 	}
 }

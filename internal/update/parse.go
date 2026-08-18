@@ -25,11 +25,23 @@ const (
 // is a comment, blank lines are skipped, and each remaining line splits on its
 // FIRST '=' with both sides trimmed.
 //
-// strict decides what an unknown key means. deps.conf is strict — it fails closed,
-// because a key ytdl does not understand means the pin is not the one this binary
-// was built to read, and guessing there is how a silent fallback to "latest"
-// creeps back in. The marker is not strict: it is ytdl's own note to itself, and
-// a newer installer's extra key must not cost this binary the values it does know.
+// strict decides what an unknown key means. No reader in this package passes true
+// — the only caller that does is the test which parses the repository's OWN
+// deps.conf the way install.sh will. install.sh is the strict reader, and rightly:
+// it is fetched from the same commit as deps.conf, so a key it does not know is
+// genuinely a typo in the pin and refusing costs nothing.
+//
+// A deployed ytdl binary is in the opposite position — it is arbitrarily older
+// than the deps.conf it reads, so a key added by a later cycle would make the pin
+// unreadable for every existing installation, dropping the whole fleet to "non
+// verificato" and stopping it seeing the very update that teaches it the new key.
+// The probe therefore fails only on what it actually needs and cannot get
+// (ADR-0016 §14.2, argued at length at probe.go's deps keys).
+//
+// The marker is tolerant for a different reason: it is ytdl's own note to itself,
+// and a newer installer's extra key must not cost this binary the values it does
+// know. The parameter stays because "unknown key" is a real decision either way,
+// and a reader should have to see which one is in force.
 func parseKeyValue(r io.Reader, allowed map[string]bool, strict bool) (map[string]string, error) {
 	out := make(map[string]string)
 	sc := bufio.NewScanner(io.LimitReader(r, maxLineLen*maxKeys))

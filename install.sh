@@ -540,9 +540,16 @@ ffmpeg_fallback_url_for() {
 # ffmpeg_current_build asks the redirect which build "latest" now means, so the
 # marker still records WHAT was installed even when it is not what was attested.
 # Empty when it cannot be worked out; the marker then simply says less.
+#
+# It asks for the FIRST BYTE, not the file. The question is only "where does this
+# redirect land", and downloading the whole zip to answer it made a slow link time
+# out at --max-time 30 — after which FFMPEG_TARGET was empty, the marker recorded
+# no ffmpeg build at all, and every surface showed ffmpeg with no version. A range
+# request is a plain GET that every server understands: one that honours it
+# answers 206 with a byte, and one that ignores it behaves exactly as before.
 ffmpeg_current_build() {
   local eff
-  eff="$(curl -sL --max-time 30 -o /dev/null -w '%{url_effective}' \
+  eff="$(curl -sL --max-time 30 -r 0-0 -o /dev/null -w '%{url_effective}' \
          "$(ffmpeg_fallback_url_for ffmpeg)" 2>/dev/null)" || return 0
   case "$eff" in
     */download/macos/*/*/ffmpeg.zip)

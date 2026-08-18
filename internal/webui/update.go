@@ -85,11 +85,15 @@ func (s *Server) buildUpdateDTO() *updateDTO {
 		return nil
 	}
 	v, have := u.Verdict()
+	// One Progress call for the whole object. It opens the run file and reads up
+	// to 8 KB of update.log, and /api/state is on the page's load path — so Busy
+	// and the blocked reason share the answer rather than each paying for it (V7).
+	runState := u.Progress().State
 	dto := &updateDTO{
 		Enabled:   u.Enabled(),
 		Known:     have && v.Known(),
 		Available: have && v.Available(),
-		Busy:      u.Progress().State == update.StateRunning,
+		Busy:      runState == update.StateRunning,
 		Installed: installedDTO{
 			Ytdl:   v.Installed.Ytdl,
 			YtDlp:  v.Installed.YtDlp,
@@ -111,7 +115,7 @@ func (s *Server) buildUpdateDTO() *updateDTO {
 			})
 		}
 	}
-	dto.Blocked = s.updateBlocked()
+	dto.Blocked = s.updateBlocked(runState)
 	return dto
 }
 
@@ -130,8 +134,13 @@ func displayVersion(component, value string) string {
 // there is an update, and told what to do about it. Emptiness gating the notice
 // too would hide exactly the information that explains the disabled button
 // (ADR-0016 §9).
-func (s *Server) updateBlocked() *blockedDTO {
-	if u := s.deps.Updater; u != nil && u.Progress().State == update.StateRunning {
+//
+// The run state is a parameter rather than something read here: reading it costs
+// a file open and a log tail, and the caller on the page's load path already has
+// the answer. Only StateRunning blocks — an abandoned record is a run nobody is
+// left to finish, and it must not refuse the next one (V1).
+func (s *Server) updateBlocked(runState string) *blockedDTO {
+	if runState == update.StateRunning {
 		return &blockedDTO{Reason: "running"}
 	}
 	if s.deps.Spool == nil {
@@ -199,7 +208,7 @@ func (s *Server) handleUpdateStart(w http.ResponseWriter, r *http.Request) {
 	// An absent or empty body simply means force=false; only Retry sends one.
 	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&body)
 
-	if b := s.updateBlocked(); b != nil {
+	if b := s.updateBlocked(u.Progress().State); b != nil {
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"error":   blockedMessage(b),
 			"blocked": b,

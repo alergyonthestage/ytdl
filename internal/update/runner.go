@@ -263,8 +263,9 @@ func (r *Runner) Start(force bool) error {
 // finish records how the run went.
 //
 // If this process dies before it gets here the installer still completes — it is
-// setsid'd — but the record stays "running", and the surface says it cannot tell
-// how it went and points at the log. It never guesses (design §7.3).
+// setsid'd — but the record stays "running". A later reader recognises it as
+// StateAbandoned, and the surface then says it cannot tell how it went and points
+// at the log. It never guesses (design §7.3).
 func (r *Runner) finish(started time.Time, curlErr, shErr error) {
 	r.mu.Lock()
 	r.running = false
@@ -280,14 +281,17 @@ func (r *Runner) finish(started time.Time, curlErr, shErr error) {
 	// THIS process is running is how we learn whether the binary on disk changed —
 	// buildinfo.Version cannot tell us, since it describes the running image and
 	// the installer replaced the file underneath it.
-	if m, ok := LoadMarker(r.StateDir); ok {
-		run.Version = m[markerYtdlVersion]
-	}
-	if run.State == StateDone && run.Version != "" && run.Version != buildinfo.Version {
-		run.Changed = true
-	}
-
+	//
+	// Read only for a run that SUCCEEDED. After a failure the marker still
+	// describes the previous install, and carrying it on this record would let a
+	// surface report a version for a run that installed nothing.
 	if run.State == StateDone {
+		if m, ok := LoadMarker(r.StateDir); ok {
+			run.Version = m[markerYtdlVersion]
+		}
+		if run.Version != "" && run.Version != buildinfo.Version {
+			run.Changed = true
+		}
 		// Whatever just changed, the cached verdict now describes a machine that no
 		// longer exists.
 		_ = Invalidate(r.StateDir)

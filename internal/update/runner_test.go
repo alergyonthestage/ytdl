@@ -405,3 +405,38 @@ func TestTheRunRecordCarriesTheInstallerPID(t *testing.T) {
 	}
 	settle(t, r)
 }
+
+// A failed run installed nothing, so it has no version to report. The marker
+// still describes the PREVIOUS install, and carrying that onto this record would
+// let a surface attribute an install to a run that performed none (V6).
+func TestAFailedRunRecordsNoVersion(t *testing.T) {
+	old := buildinfo.Version
+	buildinfo.Version = "v2.1.0"
+	t.Cleanup(func() { buildinfo.Version = old })
+
+	dir := t.TempDir()
+	// The marker left by the install that is already on this machine.
+	if err := os.WriteFile(filepath.Join(dir, MarkerName),
+		[]byte("ytdl_version = v2.1.0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	h := newHub(t)
+	h.setInstaller("#!/bin/bash\necho 'could not reach the release'\nexit 4\n")
+	r := NewRunner(dir)
+	if err := r.Start(false); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	settle(t, r)
+
+	p := r.Progress()
+	if p.State != StateFailed {
+		t.Fatalf("state = %q, want %q", p.State, StateFailed)
+	}
+	if p.Version != "" {
+		t.Errorf("Version = %q for a run that installed nothing", p.Version)
+	}
+	if p.Changed {
+		t.Error("a failed run claimed the binary changed")
+	}
+}
