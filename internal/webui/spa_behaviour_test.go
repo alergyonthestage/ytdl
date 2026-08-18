@@ -683,6 +683,32 @@ console.log("action-disabled:" + ($("updateActionSlot").children[0] || {}).disab
 	}
 }
 
+// Every count reads the same way: "download" and "in corso" are both invariant
+// in Italian, so there is one form and no pluralisation to get wrong. And no
+// number ever appears without what it counts (ux-principles.md §5).
+func TestTheBlockedReasonNamesTheCountInEveryCase(t *testing.T) {
+	out := runNode(t, updateHarness+`
+for (const b of [
+  { reason: "queue", pending: 1 },
+  { reason: "queue", pending: 2 },
+  { reason: "queue" },
+  { reason: "running" },
+]) console.log("blocked:" + blockedText(b));
+console.log("blocked:" + blockedText(null));
+`)
+	for _, want := range []string{
+		"blocked:1 download in corso: l'aggiornamento parte a coda vuota.",
+		"blocked:2 download in corso: l'aggiornamento parte a coda vuota.",
+		"blocked:Non riesco a leggere la coda: l'aggiornamento parte a coda vuota.",
+		"blocked:Un aggiornamento è già in corso.",
+		"blocked:\n",
+	} {
+		if !strings.Contains(out+"\n", want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestBannerIsAbsentWhenNothingIsStale(t *testing.T) {
 	out := runNode(t, updateHarness+`
 applyUpdate(upToDate);

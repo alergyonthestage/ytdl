@@ -446,7 +446,6 @@ func TestSPAUsesTheSharedVocabulary(t *testing.T) {
 	// "Riprova" belongs to the queue (a spool job), never to history — see
 	// TestRiprovaStaysOffHistoryRows, which checks the region rather than the
 	// whole file.
-	_ = js
 }
 
 // assertOneReloadInTheHandover is the NARROWED form of the reload prohibition

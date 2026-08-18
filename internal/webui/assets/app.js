@@ -1082,9 +1082,9 @@ function blockedText(b) {
   if (!b) return "";
   if (b.reason === "running") return "Un aggiornamento è già in corso.";
   if (!b.pending) return "Non riesco a leggere la coda: l'aggiornamento parte a coda vuota.";
-  const n = b.pending;
-  return n + (n === 1 ? " download in corso" : " download in corso") +
-    ": l'aggiornamento parte a coda vuota.";
+  // No plural form: "download" and "in corso" are both invariant in Italian, so
+  // one count and one noun is the whole sentence.
+  return b.pending + " download in corso: l'aggiornamento parte a coda vuota.";
 }
 
 // The banner shows whenever an update is available, INCLUDING with a non-empty
