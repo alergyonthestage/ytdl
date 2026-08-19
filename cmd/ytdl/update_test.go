@@ -1,15 +1,20 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/alergyonthestage/ytdl/internal/buildinfo"
 	"github.com/alergyonthestage/ytdl/internal/cli"
 	"github.com/alergyonthestage/ytdl/internal/config"
+	"github.com/alergyonthestage/ytdl/internal/daemon"
+	"github.com/alergyonthestage/ytdl/internal/queue"
 	"github.com/alergyonthestage/ytdl/internal/update"
 )
 
@@ -340,5 +345,94 @@ func TestTheCheapPathKeepsTheCachedYtDlpVersion(t *testing.T) {
 	}
 	if !view.Verdict.Available() {
 		t.Error("a genuinely stale yt-dlp went unreported on the path that prints after a download")
+	}
+}
+
+// The lifetime rule reaches the daemon's config, not just a local variable.
+//
+// This is what V1's own fix lacked: reverting cmd/ytdl to the pre-V1
+// `cfg.LiveClients = srv.HasClients` left the entire suite green, because the
+// only test exercised a one-line `||` and nothing asserted it was connected to
+// anything (V14).
+func TestTheDaemonConfigCarriesTheUpdateClause(t *testing.T) {
+	noClients := func() bool { return false }
+	updating := func() bool { return true }
+
+	var cfg daemon.Config
+	alive := wireLifetime(&cfg, noClients, updating)
+
+	if cfg.LiveClients == nil {
+		t.Fatal("cfg.LiveClients was never set; the daemon falls back to the CLI-only idle-exit")
+	}
+	if !cfg.LiveClients() {
+		t.Error("cfg.LiveClients ignores an installer in flight: the daemon idle-exits mid-update and nobody records how it went")
+	}
+	if !alive() {
+		t.Error("serveGUI's copy of the rule ignores an installer in flight")
+	}
+	if cfg.FirstClientGrace != daemon.DefaultFirstClientGrace {
+		t.Errorf("FirstClientGrace = %v, want the package default: serveGUI reads it too", cfg.FirstClientGrace)
+	}
+	// And it is still the ADR-0008 rule when nothing is updating.
+	quiet := wireLifetime(&cfg, noClients, func() bool { return false })
+	if quiet() || cfg.LiveClients() {
+		t.Error("with no client and no update the daemon must be free to idle-exit (ADR-0008)")
+	}
+}
+
+// serveGUI is the OTHER place this process's lifetime is decided — the loop a GUI
+// daemon runs while a headless one owns the queue lock. It asked HasClients
+// directly, so closing the tab mid-update exited the process within a second and
+// the setsid'd installer ran on with nobody left to call finish (V13).
+func TestServeGUIStaysWhileAnUpdateRuns(t *testing.T) {
+	dir := t.TempDir()
+	sp := queue.Open(dir)
+	if err := sp.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Hold the queue lock, so daemon.Serve keeps answering ErrAlreadyRunning and
+	// serveGUI stays in its retry loop — the contended path this is about.
+	lf, err := os.OpenFile(sp.LockPath(), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lf.Close()
+	if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("could not hold the queue lock: %v", err)
+	}
+	defer syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
+
+	var updating atomic.Bool
+	updating.Store(true)
+	cfg := daemon.Config{
+		Spool: sp,
+		Run:   func(context.Context, queue.Claim) int { return 0 },
+		// Smallest non-zero grace: already past by the first iteration, so only the
+		// rule keeps this process alive. Zero would be replaced by the package
+		// default, which is two minutes.
+		FirstClientGrace: time.Nanosecond,
+	}
+	alive := wireLifetime(&cfg, func() bool { return false }, updating.Load)
+
+	returned := make(chan int, 1)
+	go func() { returned <- serveGUI(cfg, alive) }()
+
+	select {
+	case rc := <-returned:
+		t.Fatalf("serveGUI returned %d while an installer it launched is still running", rc)
+	case <-time.After(2500 * time.Millisecond):
+		// Still serving, which is the point: it retried the lock at least twice.
+	}
+
+	// The update finishes; nothing is left holding the process open.
+	updating.Store(false)
+	select {
+	case rc := <-returned:
+		if rc != 0 {
+			t.Errorf("serveGUI = %d, want 0 once nothing keeps it alive", rc)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("serveGUI never returned after the update finished; an unused GUI daemon must not linger (ADR-0008)")
 	}
 }

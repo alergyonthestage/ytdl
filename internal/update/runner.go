@@ -102,9 +102,14 @@ func (r Run) Abandoned(now time.Time, alive func(int) bool) bool {
 	if r.State != StateRunning {
 		return false
 	}
-	// A record with no start time can never age out on the clock, so it is the one
-	// shape that gets no benefit of the doubt.
-	if r.StartedAt.IsZero() || now.Sub(r.StartedAt) >= StaleAfter {
+	// Two shapes can never age out on the clock, and they get no benefit of the
+	// doubt for the same reason: no start time at all, and a start time in the
+	// FUTURE — for which now.Sub is negative and the backstop can never fire. A
+	// state dir restored from a backup, a clock corrected by NTP, or a VM resumed
+	// with a wrong RTC produces the second one, and a record written before the
+	// pid existed has nothing else to fall back on. Left standing, that is exactly
+	// the permanent block this rule exists to end (V15).
+	if r.StartedAt.IsZero() || now.Before(r.StartedAt) || now.Sub(r.StartedAt) >= StaleAfter {
 		return true
 	}
 	return r.PID > 0 && !alive(r.PID)

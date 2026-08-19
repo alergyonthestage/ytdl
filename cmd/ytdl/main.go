@@ -301,10 +301,12 @@ func runDaemon(daemonArgs []string) int {
 			Token:         token,
 			Updater:       upd,
 		})
-		cfg.LiveClients = daemonAlive(srv.HasClients, upd.Running)
-		// Set explicitly (Serve would only default its own copy) because serveGUI
-		// reads it too, to decide how long to keep retrying the queue lock.
-		cfg.FirstClientGrace = daemon.DefaultFirstClientGrace
+		// Built ONCE and used everywhere the lifetime is decided. There are two such
+		// places — daemon.drain reads it through cfg.LiveClients, and serveGUI tests
+		// it directly while another daemon owns the queue lock — and a rule written
+		// out twice is a rule that gets fixed once (V13).
+		alive := wireLifetime(&cfg, srv.HasClients, upd.Running)
+
 		cfg.Run = jobRunner(sp, srv)
 
 		// The user asked for the interface, so THIS process owns the port and
@@ -322,7 +324,7 @@ func runDaemon(daemonArgs []string) int {
 		upd.setWeb(hs)
 		defer stopWeb()
 
-		return serveGUI(cfg, srv)
+		return serveGUI(cfg, alive)
 	}
 
 	cfg.Run = jobRunner(sp, nil) // headless: no GUI, so no progress sink (title write-back still runs)
@@ -330,6 +332,22 @@ func runDaemon(daemonArgs []string) int {
 		return 1
 	}
 	return 0
+}
+
+// wireLifetime gives cfg this process's lifetime rule and returns the same
+// closure for serveGUI, which decides the same question in its own loop.
+//
+// One construction, two readers. Written out twice — as it was — a rule gets
+// fixed once (V13), and nothing in the suite notices (V14).
+func wireLifetime(cfg *daemon.Config, hasClients, updating func() bool) func() bool {
+	alive := daemonAlive(hasClients, updating)
+	cfg.LiveClients = alive
+	// Set explicitly (Serve would only default its own copy) because serveGUI
+	// reads it too, to decide how long to keep retrying the queue lock.
+	if cfg.FirstClientGrace == 0 {
+		cfg.FirstClientGrace = daemon.DefaultFirstClientGrace
+	}
+	return alive
 }
 
 // serveGUI runs the interface and takes over the queue when it can.
@@ -341,9 +359,16 @@ func runDaemon(daemonArgs []string) int {
 // shared spool and config; only live progress needs queue ownership) and retry
 // the lock until the incumbent idle-exits, then start draining ourselves.
 //
-// We stop retrying once no client is connected and the first-client grace has
-// passed, so an unused GUI daemon does not linger (ADR-0008: no idle process).
-func serveGUI(cfg daemon.Config, srv *webui.Server) int {
+// We stop retrying once nothing is keeping this process alive and the first-client
+// grace has passed, so an unused GUI daemon does not linger (ADR-0008: no idle
+// process).
+//
+// alive is the SAME closure daemon.Serve is given, not a second copy of the test.
+// This loop used to ask srv.HasClients() directly, which meant an installer this
+// process launched did not hold it open: with a headless daemon owning the queue,
+// clicking Aggiorna and closing the tab exited this process within a second, and
+// the setsid'd installer ran on with nobody left to record how it went (V13).
+func serveGUI(cfg daemon.Config, alive func() bool) int {
 	started := time.Now()
 	for {
 		err := daemon.Serve(cfg)
@@ -353,7 +378,7 @@ func serveGUI(cfg daemon.Config, srv *webui.Server) int {
 		if !errors.Is(err, daemon.ErrAlreadyRunning) {
 			return 1
 		}
-		if !srv.HasClients() && time.Since(started) > cfg.FirstClientGrace {
+		if !alive() && time.Since(started) > cfg.FirstClientGrace {
 			return 0
 		}
 		time.Sleep(time.Second)
