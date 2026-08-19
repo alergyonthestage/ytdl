@@ -1041,10 +1041,18 @@ function renderUpdateState() {
 function renderUpdateVersions() {
   const dl = $("updateVersions");
   const inst = updateInfo.installed || {};
+  const missing = updateInfo.missing || [];
   const rows = [];
   for (const [label, value] of [["ytdl", inst.ytdl], ["yt-dlp", inst.ytDlp], ["ffmpeg", inst.ffmpeg]]) {
     const dt = el("dt", "", label);
-    const dd = el("dd", "", value || "non installato");
+    // An absent version and an absent TOOL are different facts. The versions here
+    // come from the shape built for comparison, which deliberately carries none
+    // for a copy the pin cannot vouch for — a Homebrew ffmpeg, one whose attested
+    // build was withdrawn, one installed before the marker existed. Calling those
+    // "non installato" contradicted the warning printed directly underneath, and
+    // the CLI, about a binary ytdl was at that moment driving (V12).
+    const absent = missing.indexOf(label) !== -1;
+    const dd = el("dd", "", value || (absent ? "non installato" : "versione non registrata"));
     if (!value) dd.className = "muted";
     rows.push(dt, dd);
   }

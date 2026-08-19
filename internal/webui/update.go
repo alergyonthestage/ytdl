@@ -30,6 +30,11 @@ type Updater interface {
 	Start(force bool) error
 	// Progress is how the running or last-finished installer went.
 	Progress() update.Progress
+	// Deps is what this machine actually has, in the shape built for surfaces that
+	// SHOW it rather than the flattened one that gets COMPARED. The page needs
+	// both: an empty version means "nobody recorded one", which is not the same
+	// fact as the tool being absent.
+	Deps() []update.Dependency
 	// Enabled is the resolved update_check. It gates the automatic probe, never
 	// the manual one and never what is displayed (ADR-0016 §6).
 	Enabled() bool
@@ -50,6 +55,12 @@ type updateDTO struct {
 	Installed installedDTO `json:"installed"`
 	Changes   []changeDTO  `json:"changes,omitempty"`
 	Foreign   []string     `json:"foreign,omitempty"`
+	// Missing names the dependencies that are not on this machine at all. It is
+	// what lets the page tell "nobody recorded a version for this" from "this is
+	// not here": Installed is the COMPARISON shape, so a copy we cannot vouch for
+	// carries no version, and without this the page called an installed ffmpeg
+	// "non installato" (V12).
+	Missing []string `json:"missing,omitempty"`
 	// Unattested: installed by us, but not the build the pin vouches for, because
 	// that build was withdrawn upstream (ADR-0016 §15).
 	Unattested []string `json:"unattested,omitempty"`
@@ -101,6 +112,7 @@ func (s *Server) buildUpdateDTO() *updateDTO {
 		},
 		Foreign:    v.Installed.Foreign,
 		Unattested: v.Installed.Unattested,
+		Missing:    missingNames(u.Deps()),
 	}
 	if have && !v.CheckedAt.IsZero() {
 		at := v.CheckedAt
@@ -117,6 +129,19 @@ func (s *Server) buildUpdateDTO() *updateDTO {
 	}
 	dto.Blocked = s.updateBlocked(runState)
 	return dto
+}
+
+// missingNames lists the dependencies that are not on this machine at all —
+// a different state from one whose version simply was never written down, and the
+// only one the page may call "non installato".
+func missingNames(deps []update.Dependency) []string {
+	var out []string
+	for _, d := range deps {
+		if d.Missing() {
+			out = append(out, d.Name)
+		}
+	}
+	return out
 }
 
 // displayVersion shows ffmpeg by version rather than by build id: the build

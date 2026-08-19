@@ -40,12 +40,17 @@ type guiUpdater struct {
 	runner   *update.Runner
 	settings func() config.Settings
 
-	// installed is this machine's local facts, refreshed at the events that can
-	// change them — construction, an explicit check, and the end of an installer
-	// run — rather than on every /api/state. Asking yt-dlp its version costs the
-	// better part of a second, and the state endpoint is on the page's load path.
-	mu        sync.Mutex
-	installed update.Installed
+	// deps is this machine's local facts, refreshed at the events that can change
+	// them — construction, an explicit check, and the end of an installer run —
+	// rather than on every /api/state. Asking yt-dlp its version costs the better
+	// part of a second, and the state endpoint is on the page's load path.
+	//
+	// The DEPENDENCY list is what is held, not the flattened Installed: the page
+	// needs "present but no version recorded" and "not there at all" to stay
+	// different facts, and flattening loses that (V12). Installed is derived from
+	// it by the same InstalledFrom both channels use.
+	mu   sync.Mutex
+	deps []update.Dependency
 
 	// web is the HTTP server whose listener the handover closes. It is published
 	// after construction, because the Updater has to exist before the server it
@@ -55,24 +60,30 @@ type guiUpdater struct {
 
 func newGUIUpdater(stateDir string, settings func() config.Settings) *guiUpdater {
 	u := &guiUpdater{
-		stateDir:  stateDir,
-		runner:    update.NewRunner(stateDir),
-		settings:  settings,
-		installed: update.ReadInstalled(stateDir),
+		stateDir: stateDir,
+		runner:   update.NewRunner(stateDir),
+		settings: settings,
+		deps:     update.Dependencies(stateDir, true),
 	}
 	return u
 }
 
-func (u *guiUpdater) local() update.Installed {
+// Deps is the local facts as the surfaces that SHOW them need,
+// and local() is the same walk flattened for the ones that COMPARE.
+func (u *guiUpdater) Deps() []update.Dependency {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return u.installed
+	return u.deps
+}
+
+func (u *guiUpdater) local() update.Installed {
+	return update.InstalledFrom(u.Deps())
 }
 
 func (u *guiUpdater) refreshLocal() {
-	in := update.ReadInstalled(u.stateDir)
+	deps := update.Dependencies(u.stateDir, true)
 	u.mu.Lock()
-	u.installed = in
+	u.deps = deps
 	u.mu.Unlock()
 }
 
@@ -93,9 +104,9 @@ func (u *guiUpdater) Verdict() (update.Verdict, bool) {
 // the user's right to ask (ADR-0016 §6).
 func (u *guiUpdater) Check(ctx context.Context) (update.Verdict, error) {
 	v, err := update.Check(ctx, nil, u.stateDir, time.Now())
-	u.mu.Lock()
-	u.installed = v.Installed
-	u.mu.Unlock()
+	// The round already read the local facts; re-walk them so the SHOW shape and
+	// the COMPARE shape stay the same walk rather than two.
+	u.refreshLocal()
 	if v.Known() {
 		// Only a complete round is cached, so a source that stayed silent cannot
 		// destroy the last known result and its date.

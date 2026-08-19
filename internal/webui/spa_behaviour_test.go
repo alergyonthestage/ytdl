@@ -850,6 +850,53 @@ for (const st of [
 	}
 }
 
+// A tool that is THERE is never called "non installato", whatever the comparison
+// shape carries for it. A foreign ffmpeg, one whose attested build was withdrawn,
+// and one installed before the marker existed all arrive with no version — and
+// the page used to render all three as absent, directly above a warning that only
+// means anything if the thing IS installed (V12, ux-principles.md §5).
+func TestAnInstalledToolIsNeverCalledMissing(t *testing.T) {
+	out := runNode(t, updateHarness+`
+const base = { enabled: true, installed: { ytdl: "v2.1.0", ytDlp: "2026.07.04" } };
+applyUpdate(Object.assign({}, base, { foreign: ["ffmpeg"] }));
+console.log("foreign:" + labels("updateVersions"));
+applyUpdate(Object.assign({}, base, { unattested: ["ffmpeg"] }));
+console.log("unattested:" + labels("updateVersions"));
+applyUpdate(Object.assign({}, base, {}));
+console.log("no-marker:" + labels("updateVersions"));
+applyUpdate(Object.assign({}, base, { missing: ["ffmpeg"] }));
+console.log("absent:" + labels("updateVersions"));
+`)
+	// The cells are compared WHOLE. "non installato da ytdl: …" is the warning row
+	// underneath and legitimately starts with the same words, so a substring test
+	// here would agree with the bug.
+	cells := func(line string) []string { return strings.Split(line, "|") }
+	has := func(line, want string) bool {
+		for _, c := range cells(line) {
+			if c == want {
+				return true
+			}
+		}
+		return false
+	}
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "absent:"):
+			if !has(line, "non installato") {
+				t.Errorf("an ffmpeg that really is absent must say so: %q", line)
+			}
+		case strings.HasPrefix(line, "foreign:"), strings.HasPrefix(line, "unattested:"),
+			strings.HasPrefix(line, "no-marker:"):
+			if has(line, "non installato") {
+				t.Errorf("an installed ffmpeg was called absent: %q", line)
+			}
+			if !has(line, "versione non registrata") {
+				t.Errorf("no version and no explanation for an installed ffmpeg: %q", line)
+			}
+		}
+	}
+}
+
 // The installed versions are local facts and are shown whether or not any probe
 // succeeded (ADR-0016 §8); a dependency ytdl did not install is called out as
 // the different problem it is.

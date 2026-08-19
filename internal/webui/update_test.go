@@ -33,6 +33,10 @@ type fakeUpdater struct {
 	// progressed counts Progress calls. The real one opens the run file and tails
 	// up to 8 KB of update.log, and /api/state is on the page's load path.
 	progressed int
+
+	// deps is the SHOW shape of the same facts verdict carries flattened. Left
+	// empty it means "nothing is missing", which is what most of these tests want.
+	deps []update.Dependency
 }
 
 func (f *fakeUpdater) Verdict() (update.Verdict, bool) { return f.verdict, f.have }
@@ -60,6 +64,7 @@ func (f *fakeUpdater) Start(force bool) error {
 }
 
 func (f *fakeUpdater) Progress() update.Progress { f.progressed++; return f.progress }
+func (f *fakeUpdater) Deps() []update.Dependency { return f.deps }
 func (f *fakeUpdater) Enabled() bool             { return f.enabled }
 
 const testBuild = "1785863997_9.0"
@@ -472,5 +477,43 @@ func TestStateReadsTheRunRecordOnce(t *testing.T) {
 	}
 	if f.progressed != 1 {
 		t.Errorf("Progress was called %d times for one /api/state, want 1", f.progressed)
+	}
+}
+
+// The state distinguishes a tool that is ABSENT from one whose version nobody
+// recorded. Installed is the comparison shape and deliberately carries no version
+// for a copy the pin cannot vouch for, so without this the page had no way to
+// tell the two apart and called an installed ffmpeg "non installato" (V12).
+func TestStateNamesWhatIsActuallyMissing(t *testing.T) {
+	v := upToDateVerdict()
+	// A Homebrew ffmpeg: present, ours to neither compare nor vouch for.
+	v.Installed.FFmpeg = ""
+	v.Installed.Foreign = []string{"ffmpeg"}
+	f := &fakeUpdater{
+		verdict: v, have: true, enabled: true,
+		deps: []update.Dependency{
+			{Name: update.ComponentYtDlp, Version: "2026.07.04", Path: "/home/u/.local/bin/yt-dlp", Ours: true, Attested: true},
+			{Name: update.ComponentFFmpeg, Path: "/opt/homebrew/bin/ffmpeg", Attested: true},
+		},
+	}
+	srv, _ := serverWithUpdater(t, f)
+
+	u := decode(t, call(t, srv, http.MethodGet, "/api/state", ""))["update"].(map[string]any)
+	if _, ok := u["missing"]; ok {
+		t.Errorf("ffmpeg is on the machine and was reported missing: %v", u["missing"])
+	}
+	if fg, _ := u["foreign"].([]any); len(fg) != 1 {
+		t.Errorf("the foreign ffmpeg is not reported as foreign: %v", u["foreign"])
+	}
+
+	// And when it really is absent, it says so.
+	f.deps = []update.Dependency{
+		{Name: update.ComponentYtDlp, Version: "2026.07.04", Path: "/home/u/.local/bin/yt-dlp", Ours: true, Attested: true},
+		{Name: update.ComponentFFmpeg, Attested: true},
+	}
+	u = decode(t, call(t, srv, http.MethodGet, "/api/state", ""))["update"].(map[string]any)
+	miss, _ := u["missing"].([]any)
+	if len(miss) != 1 || miss[0] != update.ComponentFFmpeg {
+		t.Errorf("an absent ffmpeg is not reported missing: %v", u["missing"])
 	}
 }
