@@ -1011,6 +1011,22 @@ function applyUpdate(u) {
   renderUpdateState();
   renderUpdateChanges();
   renderUpdateAction();
+
+  // A run this tab did not start, but must show anyway. The panel had exactly two
+  // callers, both downstream of the button, so the two states that by definition
+  // outlive the click could never reach anyone: an update running while a second
+  // tab (or a reload) looks at it, which left the banner saying "È disponibile un
+  // aggiornamento" with no control and no reason (V17), and a run nobody was left
+  // to follow, whose whole point is that the tab was gone (V16).
+  if (u.run && (u.run.state === "running" || u.run.state === "abandoned")) {
+    showUpdatePanel(u.run);
+    if (u.run.state === "running") {
+      // Adopting a run in flight: remember the build we are on now, or
+      // newBuildIsServing would compare against "" and reload immediately.
+      if (!updateVersionBefore) updateVersionBefore = (u.installed && u.installed.ytdl) || "";
+      scheduleUpdatePoll();
+    }
+  }
 }
 
 // updateStateText is the three verdict states, kept distinct. "Non verificato"
@@ -1254,8 +1270,17 @@ function showUpdatePanel(st) {
     // mid-install, say). The installer was detached and very probably finished —
     // but that is exactly the guess a surface may not make, so this says what is
     // actually known and points at the same log (design §7.3).
+    // The abandoned sentence states only what is known. An earlier draft said
+    // "ytdl si è chiuso prima che finisse", which refuses to guess the outcome and
+    // then guesses the CAUSE: after a reboot the machine went down and took ytdl
+    // with it, after a kill it was killed, after a crash it did not close — and
+    // when the backstop fires the installer may still be running, so ytdl neither
+    // closed nor finished. It also stops at what went wrong, where the sibling
+    // below says where the user now stands, which is what makes its Riprova a
+    // decision rather than a gamble (V18, ux-principles.md §5).
     text.textContent = st.state === "abandoned"
-      ? "Non so come sia andato questo aggiornamento: ytdl si è chiuso prima che finisse."
+      ? "Non so come sia andato questo aggiornamento: nessuno l'ha seguito fino alla fine. " +
+        "Le versioni installate adesso sono qui sopra; riprovare è sicuro."
       : "L'aggiornamento non è riuscito. ytdl è rimasto quello di prima.";
     const detail = button("Vedi il dettaglio", "secondary", () => {
       log.hidden = !log.hidden;

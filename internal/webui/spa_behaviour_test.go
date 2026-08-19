@@ -629,6 +629,10 @@ eval(extract(/function hashForView\(name\) \{[\s\S]*?\n\}/));
 const location = { hash: "" };
 const whenText = (iso) => "il 12/08/2026";
 let updateInfo = null, updatePollTimer = 0, updateVersionBefore = "", updateDeadline = 0;
+// applyUpdate adopts a run in flight and asks for a poll; the harness counts the
+// asks rather than running timers.
+let scheduled = 0;
+function scheduleUpdatePoll() { scheduled++; }
 
 eval(extract(/function updateStateText\(u\) \{[\s\S]*?\n\}/));
 eval(extract(/function renderUpdateState\(\) \{[\s\S]*?\n\}/));
@@ -686,6 +690,13 @@ console.log("action-disabled:" + ($("updateActionSlot").children[0] || {}).disab
 // Every count reads the same way: "download" and "in corso" are both invariant
 // in Italian, so there is one form and no pluralisation to get wrong. And no
 // number ever appears without what it counts (ux-principles.md §5).
+//
+// The "running" reason is pinned here as the RENDERER's contract, not as a
+// string a user meets: banner and action are both hidden while an update runs,
+// and §4's obligation for that case is met by the panel instead — see
+// TestARunTheTabDidNotStartStillReachesTheUser. The branch stays because the
+// server computes and ships the reason, and a client that silently discarded it
+// would be the harder bug to find.
 func TestTheBlockedReasonNamesTheCountInEveryCase(t *testing.T) {
 	out := runNode(t, updateHarness+`
 for (const b of [
@@ -892,6 +903,61 @@ console.log("absent:" + labels("updateVersions"));
 			}
 			if !has(line, "versione non registrata") {
 				t.Errorf("no version and no explanation for an installed ffmpeg: %q", line)
+			}
+		}
+	}
+}
+
+// A run the tab did not start still reaches the user.
+//
+// showUpdatePanel had exactly two callers, both downstream of the Aggiorna
+// button, so the two states that by definition outlive the click were invisible:
+// an update running while another tab (or a reload) looks at it — which showed
+// the banner with no control and no reason, V1's own §4 sentence (V17) — and a
+// run nobody was left to follow, whose whole point is that the tab was gone
+// (V16, design §7.3).
+func TestARunTheTabDidNotStartStillReachesTheUser(t *testing.T) {
+	out := runNode(t, updateHarness+`
+const base = { enabled: true, installed: { ytdl: "v2.1.0", ytDlp: "2026.07.04" } };
+
+applyUpdate(Object.assign({}, base, { busy: true, blocked: { reason: "running" },
+  run: { state: "running" } }));
+console.log("running:hidden=" + $("updatePanel").hidden + " text=" + $("updatePanelText").textContent +
+  " scheduled=" + scheduled + " before=" + updateVersionBefore);
+
+updateVersionBefore = "";
+applyUpdate(Object.assign({}, base, { run: { state: "abandoned", logTail: "got as far as ffmpeg" } }));
+console.log("abandoned:hidden=" + $("updatePanel").hidden + " text=" + $("updatePanelText").textContent +
+  " [" + labels("updatePanelActions") + "]");
+
+$("updatePanel").hidden = true;
+applyUpdate(base);
+console.log("norun:hidden=" + $("updatePanel").hidden);
+`)
+	for _, want := range []string{
+		"running:hidden=false",
+		"scheduled=1",
+		// Adopting a run in flight must remember the build we are on, or the reload
+		// trigger compares against "" and fires at once.
+		"before=v2.1.0",
+		"abandoned:hidden=false",
+		"norun:hidden=true",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "in corso") {
+		t.Errorf("a running update shows no progress text:\n%s", out)
+	}
+	// The abandoned panel offers the log and a retry, and claims neither outcome.
+	if !strings.Contains(out, "Vedi il dettaglio") || !strings.Contains(out, "Riprova") {
+		t.Errorf("the abandoned panel offers neither the log nor a retry:\n%s", out)
+	}
+	for _, claim := range []string{"non è riuscito", "Aggiornato"} {
+		for _, line := range strings.Split(out, "\n") {
+			if strings.HasPrefix(line, "abandoned:") && strings.Contains(line, claim) {
+				t.Errorf("an abandoned run claimed %q: %q", claim, line)
 			}
 		}
 	}

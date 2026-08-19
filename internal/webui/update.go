@@ -69,6 +69,12 @@ type updateDTO struct {
 	// count, because an action that cannot work is disabled with a reason rather
 	// than rendered live and failed (ux-principles.md §4).
 	Blocked *blockedDTO `json:"blocked,omitempty"`
+
+	// Run is the installer run the page must show WITHOUT having been the tab that
+	// started it: one in flight, or one nobody was left to follow. Absent
+	// otherwise — a finished run from a previous session is not news, and carrying
+	// its log tail on every page load would be.
+	Run *updateStatusDTO `json:"run,omitempty"`
 }
 
 type installedDTO struct {
@@ -128,6 +134,10 @@ func (s *Server) buildUpdateDTO() *updateDTO {
 		}
 	}
 	dto.Blocked = s.updateBlocked(runState)
+	if runState == update.StateRunning || runState == update.StateAbandoned {
+		run := s.updateStatusDTO()
+		dto.Run = &run
+	}
 	return dto
 }
 

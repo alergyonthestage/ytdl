@@ -517,3 +517,40 @@ func TestStateNamesWhatIsActuallyMissing(t *testing.T) {
 		t.Errorf("an absent ffmpeg is not reported missing: %v", u["missing"])
 	}
 }
+
+// /api/state carries a run the page must act on without having started it —
+// one in flight, and one nobody was left to follow — and nothing else. A
+// finished run from a previous session is not news, and its log tail would ride
+// on every page load (V16, V17).
+func TestStateCarriesOnlyARunThePageMustActOn(t *testing.T) {
+	cases := []struct {
+		state string
+		want  bool
+	}{
+		{update.StateRunning, true},
+		{update.StateAbandoned, true},
+		{update.StateDone, false},
+		{update.StateFailed, false},
+		{update.StateIdle, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.state, func(t *testing.T) {
+			f := &fakeUpdater{
+				verdict: upToDateVerdict(), have: true, enabled: true,
+				progress: update.Progress{Run: update.Run{State: tc.state}, LogTail: "output"},
+			}
+			srv, _ := serverWithUpdater(t, f)
+			u := decode(t, call(t, srv, http.MethodGet, "/api/state", ""))["update"].(map[string]any)
+			run, present := u["run"]
+			if present != tc.want {
+				t.Fatalf("run present = %v for state %q, want %v (%v)", present, tc.state, tc.want, run)
+			}
+			if !tc.want {
+				return
+			}
+			if got := run.(map[string]any)["state"]; got != tc.state {
+				t.Errorf("run.state = %v, want %q", got, tc.state)
+			}
+		})
+	}
+}
