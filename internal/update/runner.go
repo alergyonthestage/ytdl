@@ -267,10 +267,6 @@ func (r *Runner) Start(force bool) error {
 // StateAbandoned, and the surface then says it cannot tell how it went and points
 // at the log. It never guesses (design §7.3).
 func (r *Runner) finish(started time.Time, curlErr, shErr error) {
-	r.mu.Lock()
-	r.running = false
-	r.mu.Unlock()
-
 	run := Run{State: StateDone, StartedAt: started, EndedAt: time.Now()}
 	if curlErr != nil || shErr != nil {
 		run.State = StateFailed
@@ -299,7 +295,20 @@ func (r *Runner) finish(started time.Time, curlErr, shErr error) {
 	// The record is written BEFORE the callback, so a handler that hands over and
 	// exits leaves the outcome on disk for the next process — and for the page,
 	// which polls the same file through whichever daemon is answering.
+	//
+	// It is also written before `running` is cleared, and that ordering is
+	// load-bearing. Clearing the flag first opened a window — every run, ~200 µs
+	// wide, because LoadMarker and Invalidate sit inside it — in which the record
+	// still said "running", Running() already said false, and the installer's pid
+	// had been reaped: every branch of Abandoned was then satisfied for a run that
+	// had just SUCCEEDED. The invariant is "the record says running" ⇒ "the flag
+	// was true", which is what Start already establishes by holding the mutex
+	// across its own SaveRun (V10).
 	_ = SaveRun(r.StateDir, run)
+	r.mu.Lock()
+	r.running = false
+	r.mu.Unlock()
+
 	if r.OnFinish != nil {
 		r.OnFinish(run)
 	}
@@ -342,6 +351,11 @@ func (r *Runner) Running() bool {
 // the log, because the installer is the only thing that knows how far it got
 // (design §7.3).
 func (r *Runner) Progress() Progress {
+	// Running() is read BEFORE the record, and finish writes the record BEFORE it
+	// clears the flag. Together those two orderings mean a "running" record read
+	// after a false flag really is somebody else's: if it were ours, the flag we
+	// already read would still have been true (V10).
+	ours := r.Running()
 	run, ok := LoadRun(r.StateDir)
 	if !ok {
 		return Progress{Run: Run{State: StateIdle}}
@@ -349,7 +363,7 @@ func (r *Runner) Progress() Progress {
 	// The in-memory half outranks the record when it has an answer: an installer
 	// THIS process launched is running, whatever its pid looks like from here.
 	// Otherwise the record is somebody else's, and it has to earn "running".
-	if !r.Running() && run.Abandoned(time.Now(), processAlive) {
+	if !ours && run.Abandoned(time.Now(), processAlive) {
 		run.State = StateAbandoned
 	}
 	return Progress{Run: run, LogTail: r.logTail()}

@@ -440,3 +440,87 @@ func TestAFailedRunRecordsNoVersion(t *testing.T) {
 		t.Error("a failed run claimed the binary changed")
 	}
 }
+
+// A run that SUCCEEDS is never, at any instant, reported as abandoned.
+//
+// finish used to clear the in-memory flag before writing the terminal record,
+// which left a window — every run, wide enough to contain a file read and two
+// file writes — where the record still said "running", Running() already said
+// false and the installer's pid had been reaped. Abandoned was then satisfied for
+// a run that had just succeeded: the page took its terminal branch, stopped
+// polling and printed something false, and a POST in the same window started a
+// SECOND installer over the first (V10).
+//
+// It polls rather than reasoning about the ordering, because the ordering is
+// exactly what a future refactor would change.
+func TestASuccessfulRunIsNeverSeenAsAbandoned(t *testing.T) {
+	h := newHub(t)
+	h.setInstaller("#!/bin/bash\nexit 0\n")
+
+	for run := 0; run < 5; run++ {
+		dir := t.TempDir()
+		r := NewRunner(dir)
+
+		stop := make(chan struct{})
+		bad := make(chan string, 1)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if st := r.Progress().State; st == StateAbandoned {
+					select {
+					case bad <- st:
+					default:
+					}
+					return
+				}
+			}
+		}()
+
+		if err := r.Start(false); err != nil {
+			close(stop)
+			<-done
+			t.Fatalf("Start: %v", err)
+		}
+		settle(t, r)
+		close(stop)
+		<-done
+
+		select {
+		case st := <-bad:
+			t.Fatalf("run %d: a successful run was reported as %q", run, st)
+		default:
+		}
+		if p := r.Progress(); p.State != StateDone {
+			t.Fatalf("run %d: final state = %q, want %q", run, p.State, StateDone)
+		}
+	}
+}
+
+// settle() returns when the flag clears, and callers then read the record. That
+// is only sound if the record is written FIRST — otherwise every
+// settle-then-Progress test in this file races the writer.
+func TestTheRecordIsTerminalAsSoonAsTheRunnerIsIdle(t *testing.T) {
+	h := newHub(t)
+	h.setInstaller("#!/bin/bash\nexit 0\n")
+
+	dir := t.TempDir()
+	r := NewRunner(dir)
+	if err := r.Start(false); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	settle(t, r)
+
+	run, ok := LoadRun(dir)
+	if !ok {
+		t.Fatal("the runner went idle with no record on disk")
+	}
+	if run.State != StateDone {
+		t.Errorf("record says %q the moment Running() went false, want %q", run.State, StateDone)
+	}
+}
