@@ -707,7 +707,7 @@ two findings, **G27** and **G28**, which land in this cycle. What remains is the
   which scope decided it; no per-download control is sticky by accident; the same
   rule is stated once in `ux-principles.md` §8 and holds in both channels.
 
-#### Cycle 6-plus — the update path (`F`) — **reviewed; nine findings to fix before gate C (2026-08-18)**
+#### Cycle 6-plus — the update path (`F`) — **built, reviewed twice, fixed twice; at the documentation phase (2026-08-19)**
 
 Not a gate-C finding: raised by the maintainer on 2026-08-09, immediately after
 installing v2.1.0 by hand. **Pulled ahead of Cycle 6 on 2026-08-12**, when ytdl
@@ -721,44 +721,63 @@ every one of those references.
 **Its rulings are [ADR-0016](decisions/0016-cycle6plus-update-path.md) and its
 design is [design-cycle6plus-update.md](design-cycle6plus-update.md)** — read
 those first: they answer all four questions below. The design was **approved at
-gate B on 2026-08-13** and **built the same day**; it was **reviewed on
-2026-08-18**, and the session that fixes what the review found starts from
-[handoff-cycle6plus-fixes.md](handoff-cycle6plus-fixes.md), which is deleted at
-the cycle's close.
+gate B on 2026-08-13** and **built the same day**. It was then **reviewed twice**,
+and the session that documents it starts from
+[handoff-cycle6plus-docs.md](handoff-cycle6plus-docs.md), which is deleted at the
+cycle's close.
 
-**Where it stands (2026-08-18).** All eleven implementation steps are done on
-`feat/update-path/implementation`, **not yet merged**, and the **review is done**.
-The baseline holds and was re-verified without the test cache: the suite is green
-under `-race`, `go vet` and `gofmt` are clean, `tests/test-installer.sh` passes
-92/92, and the parity gate (`git diff main -- internal/core/ internal/daemon/`) is
-**empty**. What remains is **the fix session → gate C → the documentation phase**.
+**Where it stands (2026-08-19).** All eleven implementation steps are done on
+`feat/update-path/implementation`, **not yet merged**, and **both review passes
+and both fix passes are done**. Re-verified without the test cache: the suite is
+green under `-race`, `go vet` and `gofmt` are clean,
+`tests/test-installer.sh` passes **101/101**, and the parity gate
+(`git diff main -- internal/core/ internal/daemon/`) is **empty**. What remains is
+**gate C → the documentation phase → merge `--no-ff`**.
 
-**The review found nine defects, two of them blocking**, registered as `V1`–`V9`
-in [improvements.md](improvements.md#cycle6plus-review). They get **their own
-session before gate C**, because two of them make a surface state something
-untrue and one of those kills the cycle's own acceptance test:
+**Two review passes, eighteen findings, all fixed.** The first reviewed the
+implementation and found nine (`V1`–`V9`,
+[register](improvements.md#cycle6plus-review)); the second reviewed **the fix
+session itself** and found nine more (`V10`–`V18`,
+[register](improvements.md#cycle6plus-fixreview)). Every finding in both was
+reproduced by execution, and every fix was run against the code *before* it to
+prove the test fails there.
 
-- **V1 (blocker)** — an installer run whose daemon dies leaves the run record at
-  `running` for ever, and nothing ages it out. From then on the GUI offers no
-  update control at all, with no reason shown. Closing the browser tab mid-update
-  is enough to cause it.
-- **V2 (blocker)** — the CLI compares an ffmpeg that ADR-0016 §15 requires to be
-  left **uncompared**, so a machine that fell back to an unattested build is told
-  after every download that an update is available, for ever, and applying it
-  can never converge. The GUI does not have the defect, so the two channels
-  disagree.
-- **V3 (major)** — a skipped ffmpeg is recorded as attested, so a copy whose bytes
-  were never checksummed reads as "verificata" the moment the maintainer re-pins
-  to the build the fallback installed.
-- **V4–V9** are minors and nits: a doc comment that says the opposite of its code,
-  a full zip downloaded to read one URL, a version recorded for a failed run, a
-  doubled file read on the page's load path, and two leftovers.
+The second pass is the one worth remembering, because four of its findings were
+**regressions the first pass introduced** — including a race that made a
+successful update read as abandoned on every run, and a GUI that told a Homebrew
+user ffmpeg was not installed. Two of them had been asserted as impossible, in
+writing, in the commit messages that caused them. The lesson the register records:
+a property claimed in a commit has to be verified by executing, not by re-reading
+the diff.
 
-The two `blocker` reproductions were **executed, not argued**, and both scripts
-are carried verbatim in the fix handoff so the session starts by watching them
-fail. Neither the handover, nor the installer against the real network, nor the
-withdrawn-build fallback, nor the canary has ever run — the review did not change
-that, and the handoff says so rather than letting "reviewed" read as "exercised".
+Seven further findings were **deliberately deferred**, each with its reason, in
+the second register's "Deferred to a later cycle" section. None is a regression
+and none is reachable without an unusual precondition.
+
+Neither the handover, nor the installer against the real network, nor the
+withdrawn-build fallback, nor the canary has ever run, and **no browser has ever
+rendered this GUI** — neither review changed that, and both handoffs say so rather
+than letting "reviewed" read as "exercised".
+
+**Four ratified decisions the documentation phase must record** (maintainer,
+2026-08-18, after the second review supplied the evidence): an abandoned run is
+recognised by **PID with a clock backstop**, never by the clock alone — a
+clock-only rule would declare a live installer abandoned, which the review
+reproduced as a second `install.sh` launched over one still doing `mv`; the GUI
+panel gains a **fifth state**, which design §7.3 had already promised and had no
+state to live in; the V3 fix **costs exactly one ffmpeg download** on machines
+carrying `ffmpeg_pinned = false`, proven to converge and therefore creating no
+recurring obligation; and the abandoned state is **GUI-only by right**, because
+`ytdl --update` is synchronous and never writes a run record.
+
+**Three normative documents are behind the code** and the documentation phase
+closes them: ADR-0008's lifetime rule is now a three-way union (the keep-alive
+clause is recorded nowhere), design §7.3 still says the run state "stays
+`running`", and `ux-principles.md` §7 requires the GUI-only asymmetry to be
+recorded in the cycle's ADR. **And the user-facing documentation does not exist
+yet**: `update_check`, `deps.conf` and `internal/update` appear zero times across
+`guida-uso.md`, `guida-installazione.md`, `cli-reference.md`, `go-engine.md` and
+`README.md`, and `CHANGELOG.md` has no `[Unreleased]` section at all.
 
 Three things the implementation learned that the design could not have known, all
 carried back into [ADR-0016](decisions/0016-cycle6plus-update-path.md) §14:

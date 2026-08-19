@@ -328,9 +328,10 @@ Cycle 6-plus (the update path) was built on 2026-08-13 and **reviewed on
 2026-08-18**, against `feat/update-path/implementation` at `0dedb13`. This
 section is that review's output: nine findings, verified against the code, three
 of them by **executing a reproduction** rather than by reading. Sequencing lives
-in [roadmap.md](roadmap.md); the session that fixes them starts from
-[handoff-cycle6plus-fixes.md](handoff-cycle6plus-fixes.md), which carries the
-reproductions verbatim.
+in [roadmap.md](roadmap.md). All nine were fixed on 2026-08-18, in six commits;
+what that cost is the second register below. The two blocking reproductions were
+carried verbatim in the fix session's handoff, which has since been consumed —
+the causes recorded here are what survives it.
 
 The baseline was verified before anything else, and held: `go build`, `go vet`
 and `gofmt -l .` clean, `go test -race -count=1 ./...` green on every package
