@@ -512,5 +512,47 @@ for a in arm64 amd64; do
   done
 done
 
+# ──────────────────────────────────────────────────────────────────
+#  The doubt has to outlive the run that incurred it
+# ──────────────────────────────────────────────────────────────────
+# write_marker runs only after every other step succeeds, while extract_binary
+# replaces the binaries in the middle. Everything above tests the READ side —
+# whether a recorded doubt is acted on. These test the WRITE side: that the doubt
+# is recorded the moment it is incurred, so an aborted run cannot leave
+# "verificata" standing over bytes nothing checksummed (ADR-0016 §15).
+printf '\nThe unattested mark is durable\n'
+
+mkdir -p "$(marker_dir)"
+cat > "$(marker_path)" <<'MARKER'
+ytdl_version = v2.1.0
+yt_dlp_version = 2026.07.04
+ffmpeg_build = 1785863997_9.0
+ffmpeg_pinned = true
+MARKER
+marker_mark_unattested
+check "the mark lands immediately"          "false"          "$(marker_get ffmpeg_pinned)"
+check "it keeps the rest of the marker"     "1785863997_9.0" "$(marker_get ffmpeg_build)"
+check "it keeps the ytdl version"           "v2.1.0"         "$(marker_get ytdl_version)"
+
+# Applied twice — the fallback arm runs once per tool — it must not accumulate.
+marker_mark_unattested
+check "marking twice writes one key"        "1" \
+  "$(grep -c '^ffmpeg_pinned' "$(marker_path)")"
+
+# With no marker at all it still has to say something, or the doubt is lost.
+rm -f "$(marker_path)"
+marker_mark_unattested
+check "it works with no marker to amend"    "false" "$(marker_get ffmpeg_pinned)"
+
+# And the read side then refuses to skip, which is what makes the mark worth
+# writing: the two halves only work together.
+fake_tool ffmpeg "9.0"
+fake_tool ffprobe "9.0"
+printf 'ffmpeg_build = 1785863997_9.0\n' > "$(marker_path)"
+marker_mark_unattested
+FORCE=0; FFMPEG_TARGET="1785863997_9.0"
+ffmpeg_is_current
+check "a marked copy is never already current" "1" "$?"
+
 printf '\n%d passed, %d failed\n\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

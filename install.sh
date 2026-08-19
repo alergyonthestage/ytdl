@@ -323,6 +323,37 @@ ytdl_is_current() {
   [ "$(ytdl_version "$INSTALL_DIR/ytdl")" = "$YTDL_TARGET" ]
 }
 
+# marker_mark_unattested records, RIGHT NOW, that the ffmpeg about to be written
+# is not the attested one.
+#
+# write_marker runs only after every other step has succeeded, while
+# extract_binary replaces the binaries in the MIDDLE of the run. Anything that
+# aborts in between — the ytdl asset 404s, verify_install fails, the disk fills,
+# Ctrl-C — would otherwise leave a marker still saying "true" over bytes nothing
+# checksummed. And because the recorded build id would still equal the pin, every
+# later run would skip ffmpeg and re-assert that "true": unlike the skip door
+# ffmpeg_is_current closes, this one CONVERGES on the lie instead of healing.
+#
+# So the doubt is made durable the moment it is incurred, not when the run ends
+# (ADR-0016 §15, "the degradation is stated, never silent"). A run that goes on to
+# succeed overwrites this with the full truth; one that dies leaves the doubt
+# standing, which is the honest direction and the one ffmpeg_is_current already
+# knows how to act on.
+marker_mark_unattested() {
+  local dir path tmp
+  dir="$(marker_dir)"; path="$(marker_path)"
+  mkdir -p "$dir" || return 0
+  tmp="$path.tmp.$$"
+  {
+    if [ -f "$path" ]; then
+      # grep exits 1 when it filters everything out, which is not an error here.
+      grep -v '^[[:space:]]*ffmpeg_pinned[[:space:]]*=' "$path" || true
+    fi
+    printf 'ffmpeg_pinned = false\n'
+  } > "$tmp" && mv "$tmp" "$path"
+  return 0
+}
+
 # write_marker records what is on this machine now, so the next run can answer
 # "do I need to?" without asking the network, and so ytdl can SHOW which ffmpeg it
 # has. Written atomically, like everything else in the state dir.
@@ -593,6 +624,9 @@ install_ffmpeg() {
         ;;
       fallback)
         FFMPEG_PINNED=0
+        # Persisted BEFORE the bytes land, so an abort between here and
+        # write_marker cannot leave "verificata" over them.
+        marker_mark_unattested
         warn "The ffmpeg build ytdl attests ($FFMPEG_TARGET) is no longer published."
         warn "Installing the current build instead — it CANNOT be checksum-verified."
         warn "ytdl will say so; nothing else changes."
