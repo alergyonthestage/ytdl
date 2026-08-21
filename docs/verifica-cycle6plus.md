@@ -216,6 +216,20 @@ listed with the exact words it must produce.
 **The failure to hunt for:** any path where a failed probe reads as
 `sei aggiornato`. That is the defect Cycle 5's gate C existed for.
 
+> **Four of these were confirmed by execution in the container on 2026-08-21**,
+> against a release-stamped build with a hand-written `update.json` and shimmed
+> dependencies — `disponibile un aggiornamento · ytdl --update`,
+> `controllo automatico disattivato`, `non verificati (mai controllato)` and
+> `non controllati (build locale)`, each byte-for-byte as documented. The
+> **two worth your time** are the ones that need a real machine:
+> `sei aggiornato · verificato il …` (does it carry a date?) and
+> `non verificati (l'ultimo tentativo non ha ricevuto risposta)` (does a dead
+> network really land there, and not on "sei aggiornato"?).
+>
+> Also confirmed by execution: the notice is byte-identical to the sample in
+> B3, and `ytdl <url> 2>/dev/null` carries **no** update line — the stdout
+> contract holds.
+
 Do the same in the GUI (*Impostazioni* → *Versione e aggiornamenti*), where the
 same five states must appear as sentences. Check that turning the checkbox off
 while a verdict exists produces **two sentences** — the verdict, and then
