@@ -208,7 +208,9 @@ Si apre una pagina web (sul tuo computer, non su internet) dove puoi:
 - **vedere la barra di avanzamento** dei download in corso, dal vivo;
 - consultare la **coda** e la **cronologia** recente;
 - **cambiare le impostazioni** (cartella predefinita, formato, e tutto il resto)
-  senza modificare file a mano.
+  senza modificare file a mano;
+- **vedere se c'è un aggiornamento e installarlo**, senza aprire il Terminale —
+  vedi [Tenere ytdl aggiornato](#tenere-ytdl-aggiornato).
 
 La pagina resta la tua finestra su ytdl finché la tieni aperta; quando la chiudi
 e non ci sono download in coda, il motore si spegne da solo. Se chiudi la pagina
@@ -236,6 +238,149 @@ Poi chiudi e riapri il Terminale.
 Un modo semplice per ottenere il percorso corretto: trascina la cartella dal
 Finder dentro la finestra del Terminale, e il percorso viene scritto da solo.
 
+## Tenere ytdl aggiornato
+
+YouTube cambia spesso, e quando succede lo strumento che scarica va aggiornato.
+Prima dovevi accorgertene da solo; adesso te lo dice ytdl.
+
+### Come fa a saperlo
+
+Quando lo usi, ytdl controlla per conto suo se esiste una versione più recente —
+**non più di una volta al giorno**, e solo mentre sta già facendo qualcosa. Non
+c'è nessun programma che resta acceso ad aspettare, e se spegni il computer nel
+frattempo non succede nulla.
+
+Il controllo può fallire: se sei senza rete, o dietro il wi-fi di un albergo che
+chiede di accettare qualcosa prima di navigare, ytdl non riesce a chiedere. In
+quel caso **non dice niente** — nessun errore, nessun avviso rosso — e ti dirà
+semplicemente che l'ultima verifica non è riuscita.
+
+Questa è la parte importante: **«non sono riuscito a controllare» non vuol dire
+«sei aggiornato»**. ytdl tiene le due risposte separate, sempre.
+
+### Dove lo vedi
+
+**Dopo un download**, se c'è un aggiornamento, compaiono due righe:
+
+```
+! Aggiornamento disponibile per ytdl v2.2.0 (hai v2.1.0), con yt-dlp 2026.08.01.
+  Aggiorna con:  ytdl --update   (per non controllare più: update_check = false)
+```
+
+Se non c'è niente da dire, non compare niente.
+
+**Quando vuoi chiederlo tu**, con `ytdl --version`:
+
+```
+ytdl v2.1.0
+yt-dlp 2026.07.04   (verificata con questo ytdl)
+ffmpeg 9.0   (verificata con questo ytdl)
+Aggiornamenti: sei aggiornato · verificato il 21/08/2026
+```
+
+L'ultima riga è una di queste:
+
+| Cosa leggi | Cosa significa |
+|---|---|
+| `sei aggiornato · verificato il …` | Tutto a posto, e ti dice **quando** l'ha verificato |
+| `disponibile un aggiornamento · ytdl --update` | C'è qualcosa di nuovo |
+| `non verificati (mai controllato)` | Non ha ancora fatto in tempo a chiedere |
+| `non verificati (l'ultimo tentativo non ha ricevuto risposta)` | Ci ha provato e non è riuscito: probabilmente eri senza rete |
+| `controllo automatico disattivato` | L'hai spento tu (più sotto come) |
+| `non controllati (build locale)` | Stai usando una copia compilata a mano, non una versione rilasciata |
+
+La stessa riga compare anche in fondo a `ytdl status`.
+
+### Aggiornare dal Terminale
+
+```
+ytdl --update
+```
+
+Funziona **sempre**, anche se hai spento il controllo automatico: quello riguarda
+solo il fatto che ytdl chieda da solo, non il tuo diritto di chiedere.
+
+Non devi preoccuparti di lanciarlo "a vuoto": se è già tutto a posto se ne
+accorge e non riscarica niente, dicendoti che cosa ha saltato.
+
+### Aggiornare dall'interfaccia grafica (senza Terminale)
+
+Se usi la pagina nel browser, non ti serve il Terminale per nulla di tutto questo.
+
+Quando c'è un aggiornamento compare una **striscia in alto**, su qualunque
+schermata tu sia, con il pulsante **Vedi** che ti porta al punto giusto. In
+**Impostazioni**, il riquadro *Versione e aggiornamenti* c'è sempre e mostra:
+
+- le versioni installate di ytdl, yt-dlp e ffmpeg;
+- la stessa frase di stato vista sopra;
+- **Controlla ora**, per chiedere subito invece di aspettare;
+- una tabella di che cosa cambierebbe, quando c'è qualcosa da cambiare;
+- il pulsante **Aggiorna**.
+
+Premendo *Aggiorna* ti viene prima detto che cosa sta per succedere, e devi
+confermare.
+
+**L'aggiornamento parte solo a coda vuota.** Se ci sono download in corso o in
+attesa il pulsante è spento e accanto c'è scritto perché — per esempio «2 download
+in corso: l'aggiornamento parte a coda vuota». La notizia però non ti viene
+nascosta: la striscia in alto la vedi lo stesso. Aspetta che la coda finisca, o
+annulla ciò che non ti serve, e il pulsante si riaccende.
+
+**Se è cambiato ytdl stesso, l'interfaccia si chiude e si riapre da sola.** È
+normale, dura qualche secondo e non devi fare niente: la pagina te lo dice
+(«Aggiornato. Riapro l'interfaccia…») e si ricarica da sola sulla versione nuova.
+Se invece è cambiato solo qualche componente interno, non si riavvia niente e
+leggerai «Aggiornato. Non serve riavviare nulla.»
+
+Nel raro caso in cui la pagina non torni entro un minuto, te lo dice e ti indica
+l'unico comando da dare: `ytdl gui`. È l'unico punto di tutta l'interfaccia in cui
+viene ancora nominato il Terminale.
+
+**Se l'aggiornamento non riesce**, la pagina non prova a riassumere che cosa è
+andato storto: ti offre **Vedi il dettaglio** (il resoconto vero di che cosa è
+successo) e **Riprova**, che rifà l'installazione da capo. Nel frattempo ytdl è
+rimasto quello di prima — un aggiornamento fallito non ti lascia a metà.
+
+**Se nessuno ha seguito l'aggiornamento fino in fondo** — hai chiuso il computer
+mentre era in corso, per esempio — al ritorno leggerai:
+
+> Non so come sia andato questo aggiornamento: nessuno l'ha seguito fino alla
+> fine. Le versioni installate adesso sono qui sopra; riprovare è sicuro.
+
+ytdl preferisce dirti che non lo sa piuttosto che indovinare. Guarda le versioni
+scritte lì sopra: se sono già quelle nuove è andato a buon fine, altrimenti premi
+*Riprova*.
+
+### Tre scritte che potresti incontrare
+
+| Scritta | Che cosa vuol dire | Che cosa fare |
+|---|---|---|
+| **non verificata: la versione attestata non è più disponibile** | ytdl installa versioni esatte, controllate una per una. Ogni tanto chi le pubblica ritira quella vecchia quando ne esce una nuova: in quel caso ytdl installa la corrente e **te lo dice**, invece di lasciarti senza programma | Niente. Funziona lo stesso. Sparirà da sé al prossimo aggiornamento |
+| **non installata da ytdl** | Sul computer c'è un'altra copia di quel programma (spesso installata con Homebrew) e viene usata quella, non la nostra. Non è "vecchia": semplicemente non è quella con cui ytdl è stato provato | Se qualcosa non va, `ytdl --update` rimette al suo posto la copia di ytdl |
+| **versione non registrata** | Il programma c'è, ma ytdl non ha annotato quale versione sia — di solito perché è stato installato prima che ytdl tenesse questo registro | Niente. Si sistema al primo aggiornamento |
+
+### Spegnere il controllo automatico
+
+È una richiesta che ytdl manda su internet dal tuo computer, quindi puoi vietarla.
+
+Dall'interfaccia grafica: in *Impostazioni*, togli la spunta a **«Controlla da
+solo se c'è un aggiornamento»**.
+
+Dal Terminale, scrivi questa riga nel file `~/.config/ytdl/config`:
+
+```
+update_check = false
+```
+
+Da quel momento ytdl non chiede più niente da solo. Restano funzionanti
+`ytdl --update`, il pulsante *Controlla ora* dell'interfaccia, e tutto ciò che
+riguarda le versioni che hai già installato.
+
+È acceso di partenza per una ragione precisa: chi ha più bisogno di sapere che
+qualcosa è cambiato è proprio chi non andrebbe mai a cercare l'interruttore per
+accenderlo. Per questo l'avviso, ogni volta che compare, dice anche come farlo
+smettere.
+
 ## Quando qualcosa non funziona
 
 ### I download hanno smesso di funzionare
@@ -247,7 +392,16 @@ qualcosa e lo strumento che scarica va aggiornato. Succede ogni pochi mesi.
 ytdl --update
 ```
 
-Prova **sempre** questo prima di ogni altra cosa.
+Prova **sempre** questo prima di ogni altra cosa. Vale anche se ytdl ti ha appena
+detto che sei aggiornato: la versione nuova può essere uscita da poche ore, e
+`ytdl --update` prende comunque l'ultima disponibile.
+
+Dall'interfaccia grafica: *Impostazioni* → *Versione e aggiornamenti* →
+**Controlla ora**, e poi **Aggiorna**. Vedi
+[Tenere ytdl aggiornato](#tenere-ytdl-aggiornato).
+
+Quando un download fallisce proprio per questo motivo, ytdl te lo suggerisce da
+solo insieme all'errore: non devi ricordartelo.
 
 ### «Nessun file scaricato»
 
@@ -289,7 +443,7 @@ ytdl --help
 | `-b` | Scarica in background e restituisce subito il controllo |
 | `-v` | Mostra tutti i dettagli tecnici (utile per capire un errore) |
 | `--update` | Aggiorna ytdl e i suoi componenti |
-| `--version` | Mostra le versioni installate |
+| `--version` | Versioni installate, com'è messa ciascuna, e se c'è un aggiornamento |
 | `--help` | Elenco completo delle opzioni |
 
 ### Comandi della coda

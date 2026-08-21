@@ -95,8 +95,37 @@ Ogni errore dell'installatore dice cosa fare. Il più comune è:
 
 ### «Checksum mismatch»
 
-Il download si è corrotto. Rilancia il comando del Passo 2. Se compare di nuovo,
-fermati e scrivimi invece di insistere.
+Ogni pezzo che l'installatore scarica viene controllato prima di essere messo al
+suo posto. Questo messaggio vuol dire che il controllo non è tornato, e
+**l'installazione si ferma senza toccare niente**: meglio nessuna installazione
+che una installazione di cui non ci si fida.
+
+Quasi sempre è un download corrotto a metà. Rilancia il comando del Passo 2. Se
+compare di nuovo, **fermati e scrivimi** invece di insistere.
+
+Da non confondere con il messaggio qui sotto, che è un'altra cosa e non ferma
+niente.
+
+### «The ffmpeg build ytdl attests … is no longer published»
+
+Non è un errore e non devi fare nulla: l'installazione prosegue.
+
+ytdl installa versioni esatte, controllate una per una da chi lo sviluppa. Chi
+pubblica ffmpeg però tiene online solo la versione corrente, e quando ne esce una
+nuova ritira la precedente. Quando capita, ytdl ha due possibilità: fermarsi —
+lasciandoti senza programma per una cosa che non ti riguarda — oppure installare
+la versione corrente e **dirti chiaramente** che quella non ha potuto
+controllarla.
+
+Fa la seconda. Da quel momento, in `ytdl --version` e nell'interfaccia, quel
+componente risulta *non verificata: la versione attestata non è più disponibile*.
+Funziona esattamente come prima; la scritta sparisce da sé a un aggiornamento
+successivo.
+
+Una precisazione che conta: **questo succede solo se chi pubblica risponde "quel
+file non esiste più"**. Se invece la rete non va, o la connessione cade a metà,
+l'installatore **si ferma** — non si accontenta mai di qualcosa che non ha potuto
+verificare solo perché il collegamento era ballerino.
 
 ### Non trovo il Terminale
 
@@ -105,13 +134,49 @@ Puoi aprirlo anche da **Finder** → **Applicazioni** → **Utility** → **Term
 ## Come aggiornare
 
 Ogni tanto YouTube cambia qualcosa e i download smettono di funzionare. Non è un
-guasto del tuo Mac: succede a tutti e si risolve in trenta secondi con
+guasto del tuo Mac: succede a tutti e si risolve in trenta secondi.
+
+**Non devi più accorgertene da solo.** ytdl controlla per conto suo — al massimo
+una volta al giorno, mentre lo stai già usando — e quando c'è qualcosa di nuovo te
+lo dice: dopo un download nel Terminale, e con una striscia in alto se usi
+l'interfaccia nel browser.
+
+Dal Terminale:
 
 ```
 ytdl --update
 ```
 
-Vale la pena provare questo comando **prima** di segnalare qualsiasi problema.
+Dall'interfaccia, senza Terminale: *Impostazioni* → *Versione e aggiornamenti* →
+**Aggiorna**. Se ha cambiato ytdl stesso, la pagina si chiude e si riapre da sola;
+non devi fare niente.
+
+Rilanciarlo quando è già tutto a posto non costa nulla: se ne accorge e non
+riscarica niente.
+
+Il capitolo completo — che cosa significa ogni scritta, e come spegnere il
+controllo automatico se preferisci — è in
+[guida-uso.md](guida-uso.md#tenere-ytdl-aggiornato).
+
+## Quali versioni installa (e perché non le scegli tu)
+
+Non serve saperlo per usare ytdl; è qui perché prima o poi qualcuno se lo chiede.
+
+ytdl costruisce un comando molto preciso per il programma che scarica davvero
+(`yt-dlp`) e per quello che converte l'audio (`ffmpeg`). Quali versioni di quei
+due funzionano con quel comando è quindi una caratteristica **di ytdl**, non una
+tua preferenza — un po' come i pezzi di ricambio di un'auto: non li scegli allo
+sportello.
+
+Per questo la scelta è scritta una volta sola, in un file del progetto chiamato
+`deps.conf`, che l'installatore legge ogni volta. Ha due conseguenze pratiche per
+te:
+
+- **non c'è niente da configurare**, e non puoi installare per sbaglio una
+  combinazione mai provata;
+- se salta fuori un problema, **si risolve per tutti insieme**, senza aspettare
+  una nuova versione di ytdl: chi lo sviluppa cambia quella riga, e il tuo Mac se
+  ne accorge al controllo successivo.
 
 ## Come disinstallare
 
