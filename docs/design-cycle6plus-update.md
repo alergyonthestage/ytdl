@@ -503,7 +503,7 @@ because it was **asked to**.
 | `deps.conf` unreadable | the installer aborts before touching anything; the page reports it as a failed update with the log. Never a silent fall back to `latest` |
 | the interface does not return within 60 s | «L'aggiornamento è riuscito, ma non sono riuscito a riaprire l'interfaccia da solo.» + how to reopen it. The one place a Terminal is named — and Cycle 6-launch removes even that |
 | the probe fails | nothing. Silence, and the last known verdict keeps its date |
-| the daemon dies mid-install | the installer is setsid'd and finishes anyway; the run state stays `running` and the page says it cannot tell how it went, pointing at the log. It never guesses |
+| the daemon dies mid-install | the installer is setsid'd and finishes anyway; the run is read back as **`abandoned`** and the page says it cannot tell how it went, pointing at the log. It never guesses. **Corrected 2026-08-21** — this row said "the run state stays `running`", which is what the implementation first did and what review finding `V1` showed to be a permanent lock-out: a `running` record refuses every later update. The state is now **derived at read time and never written** (ADR-0016 §16.1), the panel has a fifth state for it (§16.2), and the page adopts such a run from `applyUpdate` on load rather than only downstream of the button (`V16`) |
 
 A partial installer failure is **never** summarised: what is reported is the exit
 code and the log, because the installer is the only thing that knows how far it

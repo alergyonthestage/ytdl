@@ -8,13 +8,17 @@
   ruling that the ffmpeg pin must create no standing obligation**, §15). These are
   *rulings*, not a design:
   the interfaces, endpoints, DOM and tests they imply are produced by this cycle's
-  design phase, which this document constrains.
+  design phase, which this document constrains. **Amended a fifth time on
+  2026-08-21 by what reviewing it twice corrected**, §16 — four rulings ratified
+  by the maintainer on 2026-08-18.
 - **Context:** the Cycle 6-plus analysis (2026-08-12), which the roadmap required
   to settle the probe, when it runs, consent, and where it lives — before any of
   it was built; plus the maintainer's ruling of 2026-08-13 that yt-dlp's version
   is ytdl's decision and never the user's.
 - **Amends:** [ADR-0008](0008-daemon-lifecycle.md) — the daemon gains a third
-  exit cause (§9). [ADR-0005](0005-macos-floor-and-single-engine.md) — what the
+  exit cause (§9) and, from §16.1's review, a third **keep-alive** clause; that
+  ADR states the amended lifetime rule.
+  [ADR-0005](0005-macos-floor-and-single-engine.md) — what the
   installer fetches is now declared by ytdl rather than by upstream's `latest`
   (§2), and the installer becomes idempotent (§11); it remains the single
   provisioning path.
@@ -448,6 +452,93 @@ The durable fix, if withdrawals turn out to be common, is **not** to make the
 fallback quieter: it is to mirror the four zips as ytdl release assets, which
 puts availability *and* provenance in the maintainer's hands. That is a cycle of
 its own, recorded here so nobody reaches for a silent fallback instead.
+
+### 16. What reviewing it corrected (amendment, 2026-08-21)
+
+The implementation was reviewed twice — once against the design (`V1`–`V9`), then
+**the fix session itself** was reviewed and found nine more (`V10`–`V18`), four of
+them regressions the first pass had introduced. Both registers are in
+[improvements.md](../improvements.md#cycle6plus-review). Four rulings came out of
+that and were **ratified by the maintainer on 2026-08-18**; they are recorded here
+because each is a decision, not an implementation detail, and §7 of
+[ux-principles.md](../ux-principles.md) positively requires the fourth.
+
+**16.1 An abandoned run is recognised by its PID, with the clock only as a
+backstop.** A record can say `running` while nothing is running it: the process
+that would have written the outcome died first, and `install.sh` — being
+`setsid`'d — finished anyway with nobody left to notice. Left standing, that
+record refuses every later update, permanently and with a reason the user can
+neither see nor act on (`V1`).
+
+The rule is a pure function of the record (`update.Run.Abandoned`), and its order
+is deliberate:
+
+1. A start time that is absent, or **in the future**, is abandoned at once. Both
+   shapes can never age out — `now.Sub` is negative for the second — so giving
+   them the benefit of the doubt recreates the permanent block. A state dir
+   restored from a backup, a clock corrected by NTP, or a VM resumed with a wrong
+   RTC produces the second (`V15`).
+2. Past `StaleAfter` (**two hours**) it is abandoned regardless of the pid, because
+   a pid handed on to some *other* process would otherwise block for ever.
+3. Within that window the **pid decides**, because it is exact. `kill(pid, 0)`
+   answering `EPERM` counts as alive — the pid is taken, by a process this user
+   may not signal — which is the conservative direction, and the backstop is what
+   stops it lasting.
+
+Two properties make it cheap. The state is **derived at read time and never
+written**, the same discipline the history record's id follows, so a machine
+recovers by being asked and there is nothing to repair and nothing to migrate. And
+`pid` is `omitempty` like every other field, so a record written before it existed
+simply has none and falls back to the clock.
+
+Why not the clock alone, which is simpler: it would declare a **live** installer
+abandoned, and the second review reproduced what that costs — a second
+`install.sh` launched over one still replacing binaries with `mv`. Two hours is
+generous on purpose, and it is the backstop rather than the test.
+
+**16.2 The GUI panel gains a fifth state.** Not new scope: §7.3 of the design
+already promised the user would be told when nothing followed the run to the end,
+and there was no state for that answer to live in. It claims **neither success nor
+failure** — a test enforces that — and it states only what is known: what the
+installed versions are now, and that retrying is safe. An earlier draft named a
+*cause* ("ytdl si è chiuso prima che finisse"), which refuses to guess the outcome
+and then guesses the reason: after a reboot the machine went down and took ytdl
+with it, after a kill it was killed, and when the backstop fires the installer may
+still be running, so ytdl neither closed nor finished (`V18`).
+
+It also had to be reachable **without having been the tab that started the run**,
+which is the whole point of it — so the page adopts a `running` or `abandoned` run
+from `applyUpdate` on load, not only downstream of the button (`V16`, `V17`).
+
+**16.3 The `V3` fix costs exactly one ffmpeg download, and terminates.** On a
+machine whose marker carries `ffmpeg_pinned = false`, the fix re-fetches ffmpeg
+once. Ratified **with proof**: the review walked all four branches and showed the
+fix bites only when the marker's build equals the pin *and* records `false` — in
+every other branch the pre-existing build-id comparison already forced a re-fetch —
+so it converges in a single download.
+
+Weighed against §15's promise that *the maintainer takes on no recurring
+obligation*, it strengthens it rather than eroding it: before the fix, a machine
+that fell back stayed unattested even after the maintainer re-pinned an available
+build. The maintainer's single action now **terminates** the degraded state
+instead of freezing it.
+
+**16.4 The `abandoned` state is GUI-only, and that is legitimate.** Required by
+[ux-principles.md](../ux-principles.md) §7: a capability lands in both channels,
+or the cycle's ADR records the asymmetry and its reason. The reason here is that
+**the CLI has no run it could fail to follow**.
+
+`ytdl --update` is `run.Update()`: synchronous, streaming `install.sh` straight to
+the terminal, and it never writes `update-run.json`. If the user closes that
+terminal, they closed the thing that was showing them the output — there is no
+record left behind claiming to be running, and nothing later to explain. The run
+record exists only for the **asynchronous** apply that §9 gives the GUI alone,
+precisely because the GUI's user walks away from a page while the work continues.
+
+So this is an asymmetry in the *state*, not in the *capability*: both channels can
+apply an update, and `cli-reference.md` already assigns the CLI "re-run
+installer". §7 accepts an asymmetry an ADR explains and refuses one that merely
+happened; this is the explanation.
 
 ## Consequences
 
