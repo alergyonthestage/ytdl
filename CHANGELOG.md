@@ -3,6 +3,100 @@
 Notable changes to ytdl. The format follows [Keep a Changelog](https://keepachangelog.com/),
 and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+**ytdl now notices its own updates, and the web interface can apply one without a
+Terminal.** Applying an update was never the gap — `ytdl --update` has existed
+since 1.0.0. The gap was that nothing *detected* one, and that the interface built
+for people who do not open a Terminal had no update surface at all, not even a
+version number. See
+[ADR-0016](docs/decisions/0016-cycle6plus-update-path.md).
+
+Additive: no command line changes meaning, and the yt-dlp argument vector is
+byte-identical (the golden parity tests are untouched). Two behaviour changes are
+observable, both listed under *Changed*.
+
+### Added
+
+- **Update detection.** ytdl checks whether a newer version exists — at **startup
+  only, never on a timer**, at most once every 24 h, and always off the critical
+  path: every surface reads a cached verdict, so no probe is ever on a path a user
+  is waiting on. A round that gets no answer never overwrites a complete one.
+- **Three verdict states that never collapse into two** — *an update is
+  available* · *up to date, stated with the date it was checked* · *not verified,
+  stated as such*. A machine behind a captive portal is not a machine that is up
+  to date. A failed probe is **silent**: no error, no red banner, nothing on
+  stderr the user did not ask for.
+- **The update notice** — two lines on stderr after a download, naming what would
+  move, how to apply it, and the key that turns the check off. Silent when there
+  is nothing to say.
+- **`update_check`** (config key, default `true`) — consent for the automatic
+  probe. It governs the machine phoning home *by itself*: with it off,
+  `ytdl --update` and the interface's *Controlla ora* keep working. Editable from
+  the interface.
+- **The web interface's update surface** — a banner above every view, and a
+  *Versione e aggiornamenti* block in Impostazioni with the installed versions,
+  the verdict, *Controlla ora*, a table of what would change, and **Aggiorna**.
+  The update starts only with an empty queue (re-checked server-side at the
+  click), but the **news is never withheld**: a user with a full queue is told
+  there is an update and told what to do about it.
+- **Applying an update from the interface, with no Terminal.** The old daemon
+  keeps its open inode and survives its own replacement, so it can report how the
+  install went; it then hands the session token to the new binary and exits, and
+  the page reloads **once** onto the new build. When the update did not replace
+  ytdl itself — the common case now that the installer is idempotent — nothing
+  restarts at all.
+- **`ytdl --version` reports the whole install**: ytdl, yt-dlp and ffmpeg, each
+  with its state (verified against this ytdl · a different version required · not
+  verified · not installed by ytdl · version not recorded · not installed),
+  followed by the update state. `ytdl status` gains the same state line.
+- **A failure hint that names updating**, fired only when a download fails with
+  the signature of an outdated extractor — so a stranded user gets the one thing
+  that helps without having to understand any of the above.
+- **`deps.conf`** — ytdl now declares which yt-dlp and which ffmpeg it drives.
+  Which versions work with the fixed argv ytdl builds is a property of ytdl, not a
+  user preference. One commit reaches every existing installation within a day,
+  with no release and no new binary.
+- **ffmpeg is checksum-verified**, which was not previously possible: pinning an
+  exact build gives an immutable URL to attest. The sums are the maintainer's
+  attestation of builds they fetched and tested — that guarantees *immutability*,
+  not provenance.
+- **The installer is idempotent.** It resolves what is required, compares each
+  component against it, and skips what already matches, recording what it actually
+  installed. The common update becomes seconds instead of minutes — which is what
+  makes it reasonable to ask a non-technical user to sit through one. `--force`
+  reinstalls regardless, which is what *Riprova* uses.
+
+### Changed
+
+- **The update notice and the foreign-dependency warning print on `stderr`**, after
+  the command's own output. A script parsing ytdl's **stdout** is unaffected.
+- **ffmpeg may now report itself as `non verificata`.** The pin is a *preference,
+  not a precondition*: upstream publishes only its current build, so when the
+  attested one has been withdrawn (**404/410 only**) the installer installs the
+  current one and says the copy could not be verified, rather than leaving the user
+  unable to install anything. Anything other than a withdrawal — including "could
+  not ask" — still **aborts**. An unattested copy is left **out of the update
+  comparison**, so it can never become a permanent phantom update.
+- **ytdl drives its own copies of its dependencies**, resolved by absolute path and
+  no longer subject to `$PATH` ordering. yt-dlp is now told where our ffmpeg is
+  (`--ffmpeg-location`, appended *after* the frozen argv builder, and only when the
+  copy is ours). A dependency resolved from `$PATH` is reported as *not installed by
+  ytdl* — a different problem from being out of date, with a different remedy.
+- **The daemon has one more reason to stay alive**: an installer it launched is
+  still running. Only the process that launched it can record how it went, so
+  closing the tab mid-update no longer leaves a run that blocks every later one.
+  ([ADR-0008](docs/decisions/0008-daemon-lifecycle.md), amended.)
+- **The "never reload the document" rule is narrowed, not dropped**: exactly one
+  reload, in the update handover, where the document is stale by definition
+  because the server that answers its next request is a different build.
+
+There is no *Fixed* section: this is new work, and no released version carried
+any of it. The eighteen defects two review passes found in this cycle's own
+implementation were fixed before it shipped, and are recorded in
+[improvements.md](docs/improvements.md) — a changelog documents what changed for
+users of a release, not what a branch did to itself.
+
 ## [2.1.0] — 2026-08-09
 
 Everything built on top of the 2.0.0 engine, released in one cut: a download queue
