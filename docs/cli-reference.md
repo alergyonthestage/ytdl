@@ -65,14 +65,14 @@ be rejected. `looksLikeURL`/`nearestCommand` live in `internal/cli/guess.go`;
 | `ytdl -b URL` | enqueue + ensure daemon | writes: spool `pending/` | `▸ Download accodato (N in coda)` |
 | `ytdl queue` | live queue snapshot | reads: spool `pending/`+`running/` | live list + live footer (no lifetime counts) |
 | `ytdl queue --watch` | live queue, in-place | reads: spool (loop) | region redraw; **auto-exit** on drain (§4) |
-| `ytdl status` | health summary | reads: spool (live) + log store (recent) | daemon (informational) + live + windowed recent |
+| `ytdl status` | health summary | reads: spool (live) + log store (recent) + cached verdict | daemon (informational) + live + windowed recent + the update state line (§8.2) |
 | `ytdl history [--failed] [--limit N]` | durable history | reads: log store `history.jsonl` | chronological list, title-first (§3.4) |
 | `ytdl cancel [<n>\|<id>\|--all]` | stop live work | writes: spool `cancel/` marker; deletes `pending/` | numbered list (no arg), or a per-target `▸ Annullato/Annullamento richiesto` line; exit 1 if any target failed |
 | `ytdl retry [<n>\|<id>\|--all]` | re-queue failed | moves `failed/`→`pending/`; resumes daemon | numbered failed list (no arg), or `▸ Rimesso in coda`; exit 1 if any re-queue failed |
 | `ytdl gui` | open the web interface | spawns a GUI daemon (`__daemon --gui`) if none is listening, then opens the browser | `▸ Interfaccia ytdl su http://127.0.0.1:8765/` |
-| `ytdl -V` / `--version` | version | — | `ytdl X` + `yt-dlp Y` |
+| `ytdl -V` / `--version` | version | reads: marker + cached verdict; execs each tool for its version | **all three components**, each with its state, then the update state line (§8.2) |
 | `ytdl -h` / `--help` | help | — | usage |
-| `ytdl --update` | re-run installer | network | streamed installer output |
+| `ytdl --update` | re-run installer | network; discards the cached verdict on success | streamed installer output (synchronous — §8.4) |
 
 **Flags** (download actions): `-o/--output DIR`, `-f/--format FMT` (validated,
 fail-fast), `-p/--playlist`, and the mode flags `-n/-s/-b/-v` (priority: dry-run >
@@ -190,6 +190,21 @@ remedy for it until Cycle 9.
 Never a blank or a bare zero — give the next action:
 `(coda vuota) · accoda con ytdl -b <url>`.
 
+### 3.7 Advisories, and why they are on stderr
+
+An **advisory** is something ytdl says that the user did not ask for: the update
+notice and the foreign-dependency warning (§8). Both carry the `!` mark of §3.1
+and both go to **stderr**, never stdout.
+
+That is a compatibility rule, not a stylistic one. `ytdl <url>` prints the saved
+path on stdout, and a script may be reading it; an advisory that appeared there
+would corrupt output that was correct before Cycle 6-plus. On a terminal the user
+sees both interleaved and nothing changes for them.
+
+They print **after** the command's own output, never before it — including when
+the command failed. A stale dependency is *more* relevant after a failed
+download, and the notice still never claims to be the cause.
+
 ## 4. The `--watch` redraw contract
 
 1. **TTY check first.** Not a TTY → print one snapshot and return (no loop, no
@@ -281,3 +296,144 @@ When adding a command or flag:
    `Usage` help text. Record a non-trivial design decision as an ADR.
 7. **Parity:** if the change touches `internal/core`, it must keep the goldens
    byte-identical — CLI/UX work should not need to.
+
+## 8. Updates on the CLI (Cycle 6-plus)
+
+Rulings: [ADR-0016](decisions/0016-cycle6plus-update-path.md). Design:
+[design-cycle6plus-update.md](design-cycle6plus-update.md). What the GUI does with
+the same facts is in [guida-uso.md](guida-uso.md) § *Aggiornamenti*.
+
+The CLI has **one axis**: *is there a newer ytdl for me?* Whatever moved — the
+ytdl binary, the pinned yt-dlp, or both — the answer is one verdict with one
+action. Dependency versions are attributes of the install, never a second thing to
+decide.
+
+### 8.1 Where the verdict comes from
+
+Every surface reads a **cached verdict** (a file read in the state dir). No probe
+is ever on a path a user waits on. The cache is refreshed off the critical path,
+for the *next* invocation, at two startup sites (`update.RefreshAsync`):
+
+- the foreground download path — which covers the plain `ytdl <url>` the installer
+  itself tells people to type;
+- the daemon path — which covers `-b`, `gui`, `again` and `retry`, and, unlike the
+  foreground one, runs in a process still alive when the probe answers.
+
+A refresh runs only when `update_check` is on, the build is not `dev`, and the
+cache is older than `update.DefaultTTL` (**24 h**). A round is bounded by
+`RefreshBudget` (**30 s**) and writes nothing if the process exits first — the
+goroutine simply dies with it, which is intended and not a leak.
+
+A round that got no answer from a source **never overwrites a complete one**: that
+would destroy the last known result and its date, which the not-verified state is
+required to carry.
+
+### 8.2 The state line — three states that never collapse into two
+
+Printed as the last line of `ytdl -V` and, indented, by `ytdl status`
+(`cli.RenderUpdateState`). This is the clause Cycle 5's gate C existed for: a
+machine behind a captive portal is **not** a machine that is up to date.
+
+| condition | line |
+|---|---|
+| local build | `non controllati (build locale)` |
+| `update_check = false` | `controllo automatico disattivato` |
+| no round ever completed | `non verificati (mai controllato)` |
+| a source stayed silent | `non verificati (l'ultimo tentativo non ha ricevuto risposta)` |
+| something differs | `disponibile un aggiornamento · ytdl --update` |
+| everything matches | `sei aggiornato · verificato il GG/MM/AAAA` |
+
+Only the last one carries a date, and it always carries one: the claim is about a
+moment, not about now.
+
+### 8.3 `ytdl -V` — every component with its state
+
+One line per component, then the state line of §8.2. The local facts print
+**whether or not any probe ever succeeded**. Per dependency
+(`cli.dependencyLine`), the states stay distinct:
+
+| what is true | line |
+|---|---|
+| not on this machine at all | `yt-dlp non installato` |
+| ours, matching the pin | `yt-dlp 2026.07.04   (verificata con questo ytdl)` |
+| ours, but the pin names another | `yt-dlp 2026.06.01   (questo ytdl richiede la 2026.07.04)` |
+| ours, but its attested build was withdrawn (ADR-0016 §15) | `ffmpeg 9.0   (non verificata: la versione attestata non è più disponibile)` |
+| resolved outside our bin dir | `ffmpeg 8.1   (da /opt/homebrew/bin/ffmpeg — non installata da ytdl)` |
+| present, but nothing recorded a version | `ffmpeg (versione non registrata)` |
+| pin unknown (no round completed) | `yt-dlp 2026.07.04` — bare, because there is nothing to compare against |
+
+ffmpeg is **compared** by build id (`1785863997_9.0`) and **shown** by version
+(`9.0`): the build number is the only exact answer and means nothing to a reader.
+
+This screen was opened deliberately, so it pays to exec each tool for its version.
+The advisories of §3.7 do not: `yt-dlp --version` is a Python zipapp and costs the
+better part of a second, so they read the versions from the cached verdict.
+
+### 8.4 The two advisories
+
+**The update notice** (`cli.RenderUpdateNotice`) — at most two lines on stderr
+after a download:
+
+```
+! Aggiornamento disponibile per ytdl v2.2.0 (hai v2.1.0), con yt-dlp 2026.08.01.
+  Aggiorna con:  ytdl --update   (per non controllare più: update_check = false)
+```
+
+It is **silent** when the sources agree, when `update_check` is off, on a local
+build, and when no round ever completed. A failed probe says nothing at all: never
+an error, never a red line about something the user did not ask for.
+
+The wording stays true in **both directions**. A pin may legitimately name an
+*older* yt-dlp — that is the rollback lever — so when ytdl itself is not moving the
+sentence becomes `richiede X (hai Y)` rather than "è disponibile una versione più
+recente", which would then be a lie.
+
+`ytdl status` prints the **state line, not the notice**: its state line already
+reads `disponibile un aggiornamento · ytdl --update`, so the notice beside it would
+say the same thing twice.
+
+**The foreign-dependency warning** (`cli.RenderForeignDependency`) — a different
+problem with a different remedy, so a different message: nothing is out of date,
+but the pin is **not in force**, because `$PATH` resolved a copy ytdl did not
+install (a Homebrew yt-dlp winning over `~/.local/bin`).
+
+```
+! ytdl sta usando yt-dlp da /opt/homebrew/bin/yt-dlp, che non ha installato lui.
+  La versione verificata con questo ytdl è 2026.07.04.  Ripristinala con:  ytdl --update
+```
+
+It is **never gated on `update_check`**: where a binary came from is a local fact,
+and consent to phone home has nothing to do with it. When no round ever completed
+there is no pin to quote, and the message says what it knows and stops.
+
+### 8.5 `ytdl --update`
+
+`run.Update()`: streams `curl … | bash` of `install.sh` straight to the terminal
+and **waits for it** (`sh.Wait()`). It writes no run record, which is why the
+`abandoned` state of the GUI has no CLI counterpart — the CLI has no run it could
+fail to follow (ADR-0016 §16.4).
+
+It works with `update_check = false`: that key is consent for the machine to phone
+home *by itself*, never a restriction on the user's right to ask.
+
+On success the cached verdict is **discarded**, best-effort. Keeping it would have
+the notice tell the user, for up to a day, to do the thing they have just done.
+
+The installer is idempotent (ADR-0016 §11), so re-running it when nothing changed
+is cheap and safe — it reports what it skipped.
+
+### 8.6 `update_check`
+
+`update_check = true|false` in `${XDG_CONFIG_HOME:-~/.config}/ytdl/config`,
+**default `true`**. A value that is neither warns and falls back to the default,
+like every other key.
+
+It governs the **automatic probe only**. With it off: no outbound call is made on
+its own, the state line reads `controllo automatico disattivato`, the notice never
+prints — and `ytdl --update`, the GUI's *Controlla ora*, and every local fact keep
+working.
+
+The default is on because the person this cycle exists for will never open a
+settings screen to switch it on. The honesty cost of that default is paid by the
+notice, which names the key every time it prints (§8.4) — that is how a user who
+never went looking learns the check exists.
