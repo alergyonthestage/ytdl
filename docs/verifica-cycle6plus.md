@@ -89,43 +89,19 @@ under `~/.ytdl-dev` — so **A2 and A3 no longer destroy your installed ytdl**
 `uname -m` says which architecture: `arm64` → `darwin/arm64`, `x86_64` →
 `darwin/amd64`.
 
-#### Doing it by hand instead
-
-You do **not** need Go on the Mac. `CGO_ENABLED=0` makes the binary static, so
-the container builds a real Mach-O for macOS, and the repo is a shared mount —
-what is built in the container appears in the repo folder on the Mac.
-
-First, your architecture (the answer changes the `GOARCH`):
+#### Without the script
 
 ```bash
-uname -m          # arm64 = Apple Silicon · x86_64 = Intel
-```
-
-Then, **in the container**, from `/workspace/yt-download`:
-
-```bash
-export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory \
-       GIT_CONFIG_VALUE_0=/workspace/yt-download
-
 CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
   go build -ldflags "-X github.com/alergyonthestage/ytdl/internal/buildinfo.Version=v2.1.0-test" \
-  -o ytdl ./cmd/ytdl
+  -o tmp/dev/ytdl-darwin-arm64 ./cmd/ytdl
 ```
 
-Use `GOARCH=amd64` on an Intel Mac. The output lands at `./ytdl` in the repo
-root, which is **already in `.gitignore`** — it will not be committed.
-
-On the Mac, in the repo folder:
-
-```bash
-xattr -d com.apple.quarantine ./ytdl 2>/dev/null   # only if Gatekeeper objects
-./ytdl --version
-```
-
-**Run it by path (`./ytdl`) for the whole of Part B.** That is non-destructive:
-it leaves your installed v2.1.0 alone, and dependency resolution still finds
-`~/.local/bin` because `update.BinDir()` is fixed, not relative to the binary.
-Only Part A needs it *installed* — see P4.
+…and then export the six sandbox variables by hand. **Set them all**: the
+installer writes to `YTDL_INSTALL_DIR` and the engine reads `YTDL_BIN_DIR`, which
+are the same directory under two names — `hack/ytdl-dev.sh env` prints the full
+set. Getting one wrong produces a sandbox that half works, which is worse than
+none.
 
 ### P2. The version stamp decides whether anything happens at all
 
@@ -258,27 +234,25 @@ cp -a ~/.local/state/ytdl ~/ytdl-state-backup-$(date +%F)
 cp -a ~/.local/bin        ~/ytdl-bin-backup-$(date +%F)
 ```
 
-### The order matters now
+### Suggested order
 
-Because every installer run overwrites the binary under test (P5), do the
-non-destructive work first and batch the destructive work at the end:
+Inside the sandbox almost nothing is destructive any more, so the order is about
+gathering the one-shot observation first and leaving the release for last:
 
 ```mermaid
 flowchart TD
-  P["prerequisites<br/>P0–P5"] --> S["P4 · the pre-marker specimen<br/>read it before anything changes it"]
-  S --> B["Part B, run as ./ytdl<br/>nothing installed, nothing lost"]
-  B --> A1a["A1a · up to the confirmation<br/>then press Annulla"]
-  A1a --> D{"willing to publish<br/>a scratch release?"}
-  D -->|no| REC["record A1 as NOT exercised"]
-  D -->|yes| A1b["A1b · the real handover"]
-  REC --> INST["A2 · A3 — installer runs<br/>re-place ./ytdl after each"]
-  A1b --> INST
-  INST --> A4["A4 · the browser pass"] --> C["Part C"]
+  P["prerequisites P0–P5<br/>build · seed"] --> S["P4 · the pre-marker specimen<br/>read it before anything changes it"]
+  S --> B["Part B<br/>the honesty gate"]
+  B --> INST["A2 · A3<br/>installer runs, sandboxed"]
+  INST --> A1a["A1a · up to the confirmation"]
+  A1a --> A1b["A1b · the pre-release handover"]
+  A1b --> A4["A4 · the browser pass"] --> C["Part C"] --> CL["cleanup"]
 ```
 
-`ytdl --version` must show **four lines** whenever you resume: two means an
-installer run has put v2.1.0 back and whatever you measured after that point was
-measuring the wrong build.
+Only two things still reach outside the sandbox, and both are in Part A: the
+pre-release in **A1b** (which is public until you delete it) and the throwaway
+branch in **A3** (which is invisible to anyone who has not opted in). Both have a
+cleanup step.
 
 ---
 
@@ -314,7 +288,7 @@ With the branch build stamped **older than the latest release** (P2) and
 `YTDL_BRANCH` set (P3), everything up to the moment of handover works and is
 worth checking:
 
-1. `./ytdl gui`, then *Impostazioni* → *Versione e aggiornamenti* → **Controlla
+1. `ydev gui` (browse it at `http://localhost:8790/`), then *Impostazioni* → *Versione e aggiornamenti* → **Controlla
    ora**. The banner appears; the changes table lists `ytdl` with your stamp on
    the left and the real latest tag on the right.
 2. Press **Aggiorna**. The confirmation **must** say «L'interfaccia si chiude e
@@ -412,13 +386,19 @@ mock every fetch.
 would tell you nothing about this cycle; and the new one aborts immediately
 without a reachable `deps.conf`, which `main` does not have.
 
-**Costs you the test binary (P5).** The installer will put v2.1.0 at
-`~/.local/bin/ytdl`. Re-place it afterwards with `cp ./ytdl ~/.local/bin/ytdl`.
+**Sandboxed, so it costs you nothing.** `YTDL_INSTALL_DIR` sends the installer
+into `~/.ytdl-dev/bin`, and the marker into `~/.ytdl-dev/state/ytdl` — your real
+install is not touched. Rebuild the dev binary afterwards, since the installer
+will have replaced the sandbox copy with v2.1.0.
 
 ```bash
+eval "$(hack/ytdl-dev.sh env)"     # the six variables, in this shell
 export YTDL_BRANCH=feat/update-path/implementation
 curl -fsSL "https://raw.githubusercontent.com/alergyonthestage/ytdl/$YTDL_BRANCH/install.sh" | bash
 ```
+
+`eval` is needed here because the installer is `bash`, not the dev script — it
+has to inherit the variables rather than be launched by it.
 
 Then, the property this cycle added — **idempotence**:
 
@@ -431,21 +411,26 @@ nothing. Time it: the whole point of ADR-0016 §11 is that the common update is
 seconds, which is what makes it reasonable to ask a non-technical user to sit
 through one from the GUI.
 
-Then verify the marker matches reality:
+Then verify the marker matches reality — and note this is the **first** time
+`installed.conf` exists at all (P4):
 
 ```bash
-cat ~/.local/state/ytdl/installed.conf
-~/.local/bin/yt-dlp --version
-~/.local/bin/ffmpeg -version | head -1
+cat ~/.ytdl-dev/state/ytdl/installed.conf
+~/.ytdl-dev/bin/yt-dlp --version
+~/.ytdl-dev/bin/ffmpeg -version | head -1
 ```
+
+With a marker present, `ydev --version` should stop saying *versione non
+registrata* for ffmpeg and start naming its build — that is the pre-marker
+specimen of P4 turning into a marked install, and it is worth seeing once.
 
 ### A3. The withdrawn-build fallback
 
 **Has never fired** — no build has been withdrawn yet. Force it.
 
-Same two costs as A2: it needs the throwaway branch **pushed**, and it replaces
-`~/.local/bin/ytdl` with v2.1.0 (P5). Branch this one off the implementation
-branch, so it carries the new `install.sh` as well as the doctored `deps.conf`.
+It needs the throwaway branch **pushed**, and it must be branched off the
+implementation branch so it carries the new `install.sh` as well as the doctored
+`deps.conf`. Sandboxed like A2, so nothing real is at risk.
 
 On a throwaway branch, set an ffmpeg build id that does not exist:
 
@@ -466,14 +451,15 @@ curl -fsSL "https://raw.githubusercontent.com/alergyonthestage/ytdl/$YTDL_BRANCH
 
 **`unset YTDL_BRANCH` when you are done**, and remember it also steers
 `ytdl --update` and the probe — leaving it set in your shell profile would point
-your own machine at a test branch indefinitely.
+your own machine at a test branch indefinitely. The throwaway branch itself is
+deleted in the cleanup below.
 
 | Must happen | Must **not** happen |
 |---|---|
 | three warnings: the attested build is no longer published · installing the current one · it cannot be checksum-verified | a silent success |
 | the install **completes** | an abort |
 | `installed.conf` gains `ffmpeg_pinned = false` | the marker claiming it is pinned |
-| `ytdl --version` shows ffmpeg as **`non verificata: la versione attestata non è più disponibile`** | ffmpeg reading «verificata con questo ytdl» |
+| `ydev --version` shows ffmpeg as **`non verificata: la versione attestata non è più disponibile`** | ffmpeg reading «verificata con questo ytdl» |
 | the GUI's versions block shows the same, as a warning row | the GUI calling it «non installato» (that was `V12`) |
 | the update verdict does **not** report an ffmpeg change | a phantom ffmpeg update that reappears on every check |
 
@@ -507,19 +493,36 @@ the page, and the disabled **Aggiorna** button shows its reason on hover.
 
 ## Part B — the honesty gate
 
+**Run all of it in the sandbox.** These commands assume:
+
+```bash
+alias ydev='hack/ytdl-dev.sh run --'
+export YTDL_BRANCH=feat/update-path/implementation
+```
+
+so `ydev --version` is the dev build with its own state dir at
+`~/.ytdl-dev/state/ytdl`. Nothing in this Part touches the installed ytdl.
+
+> **Already found here, 2026-08-21: [`V20`](improvements.md#cycle6plus-gatec) —
+> blocking.** On a Mac where `yt-dlp --version` takes longer than 3 s (measured:
+> 7.4 s), ytdl reports «sei aggiornato» while unable to compare yt-dlp at all,
+> and renders the timeout as «versione non registrata». Until it is fixed, treat
+> every yt-dlp version and every `sei aggiornato` on this page as unreliable, and
+> check `ydev --version` really shows a yt-dlp version before trusting B1 or B3.
+
 Gate C's question is exactly one: **does any surface state something untrue?**
 This cycle failed that question twice before catching it, so each state is
 listed with the exact words it must produce.
 
 ### B1. The three verdict states must never collapse into two
 
-| To produce | Do this | `ytdl --version` last line must read |
+| To produce | Do this | `ydev --version` last line must read |
 |---|---|---|
 | **up to date** | normal machine, after a check | `sei aggiornato · verificato il GG/MM/AAAA` — **with a date** |
-| **not verified, never checked** | `rm ~/.local/state/ytdl/update.json`, then run `ytdl --version` immediately | `non verificati (mai controllato)` |
-| **not verified, probe failed** | wi-fi off, `rm update.json`, run a download, wait, then `ytdl --version` | `non verificati (l'ultimo tentativo non ha ricevuto risposta)` |
+| **not verified, never checked** | `rm ~/.ytdl-dev/state/ytdl/update.json`, then `ydev --version` immediately | `non verificati (mai controllato)` |
+| **not verified, probe failed** | wi-fi off, `rm ~/.ytdl-dev/state/ytdl/update.json`, run a download, wait, then `ydev --version` | `non verificati (l'ultimo tentativo non ha ricevuto risposta)` |
 | **available** | recipe B3 | `disponibile un aggiornamento · ytdl --update` |
-| **consent off** | `update_check = false` in `~/.config/ytdl/config` | `controllo automatico disattivato` |
+| **consent off** | `update_check = false` in `~/.ytdl-dev/config/ytdl/config` | `controllo automatico disattivato` |
 
 **The failure to hunt for:** any path where a failed probe reads as
 `sei aggiornato`. That is the defect Cycle 5's gate C existed for.
@@ -570,20 +573,20 @@ download, then run another.
 | two lines on **stderr** after the download's own output | anything on stdout |
 | the wording is «Aggiornamento disponibile per ytdl: richiede yt-dlp X (hai Y).» | «è disponibile una versione più recente» — that would be a **lie** for a rollback |
 | the second line names `update_check` | a notice that never says how to stop it |
-| `ytdl status` prints the **state line**, not the two-line notice | the same news twice on one screen |
+| `ydev status` prints the **state line**, not the two-line notice | the same news twice on one screen |
 
 **Verify the stdout contract explicitly** — this is the compatibility promise:
 
 ```bash
-ytdl "https://youtu.be/XXXX" 2>/dev/null    # stdout alone: NO update lines
-ytdl "https://youtu.be/XXXX" 1>/dev/null    # stderr alone: the notice
+ydev "https://youtu.be/XXXX" 2>/dev/null    # stdout alone: NO update lines
+ydev "https://youtu.be/XXXX" 1>/dev/null    # stderr alone: the notice
 ```
 
 Then delete the branch and `unset YTDL_BRANCH`.
 
 ### B4. The empty-queue gate blocks the action, never the news
 
-1. Enqueue something long: `ytdl -b "<a long playlist>"`.
+1. Enqueue something long: `ydev -b "<a long playlist>"`.
 2. With the update available (B3's branch still set), open the GUI.
 
 | Must happen | Must **not** happen |
@@ -607,7 +610,7 @@ This is ratified decision §16.2 and finding `V18`. Force it:
 pkill -f 'ytdl __daemon'      # kill the daemon, NOT the installer
 ```
 
-`install.sh` is `setsid`'d and finishes anyway. Reopen `ytdl gui`.
+`install.sh` is `setsid`'d and finishes anyway. Reopen with `ydev gui`.
 
 The panel must read, on load, without you pressing anything:
 
@@ -635,8 +638,8 @@ once, without waiting two hours.
 With a Homebrew yt-dlp present, move ours aside:
 
 ```bash
-mv ~/.local/bin/yt-dlp ~/.local/bin/yt-dlp.off
-ytdl --version
+mv ~/.ytdl-dev/bin/yt-dlp ~/.ytdl-dev/bin/yt-dlp.off   # the sandbox copy
+ydev --version                                          # now $PATH answers instead
 ```
 
 | Must happen | Must **not** happen |
@@ -646,7 +649,7 @@ ytdl --version
 | the warning appears **even with `update_check = false`** | consent gating a local fact |
 | the GUI shows a warning row, not «non installato» | `V12` again |
 
-Restore with `mv ~/.local/bin/yt-dlp.off ~/.local/bin/yt-dlp`.
+Restore with `mv ~/.ytdl-dev/bin/yt-dlp.off ~/.ytdl-dev/bin/yt-dlp`, or just `hack/ytdl-dev.sh seed` again.
 
 ### B7. Nothing offers what it cannot do
 
@@ -711,6 +714,52 @@ If a Terminal is needed at any point other than the 60-second-timeout fallback
 becomes an input to **Cycle 6-launch**, which removes even that one.
 
 ---
+
+## Cleanup — everything this pass created
+
+Run through this even if you stop half-way. Two items reach outside your machine.
+
+### Outside your machine
+
+```bash
+# 1. the pre-release from A1b — until this cycle ships properly,
+#    releases/latest must go back to v2.1.0
+gh release delete v2.2.0-rc1 --cleanup-tag        # on the Mac; gh is not authenticated in the container
+
+# 2. the throwaway branch from A3
+git push origin --delete test/withdrawn-ffmpeg
+```
+
+Then confirm the fleet-wide lever is untouched — **`deps.conf` must still not
+exist on `main`** until the merge:
+
+```bash
+curl -o /dev/null -sw '%{http_code}\n' \
+  https://raw.githubusercontent.com/alergyonthestage/ytdl/main/deps.conf     # expect 404
+curl -sI https://github.com/alergyonthestage/ytdl/releases/latest | \
+  awk 'tolower($1)=="location:"{print $2}'                                   # expect …/tag/v2.1.0
+```
+
+The implementation branch itself **stays** — it is what merges.
+
+### On your machine
+
+```bash
+unset YTDL_BRANCH YTDL_REPO YTDL_DEV_VERSION
+hack/ytdl-dev.sh reset          # deletes ~/.ytdl-dev; the real install is untouched
+rm -rf tmp/dev                  # the built binaries (gitignored anyway)
+```
+
+Your installed ytdl should be exactly as it started — **v2.1.0, two lines of
+`--version`, and still no `~/.local/state/ytdl/installed.conf`**:
+
+```bash
+ytdl --version
+ls ~/.local/state/ytdl
+```
+
+If either differs, something ran outside the sandbox. The backups from
+*Preparation* are what you restore from.
 
 ## Recording the result
 

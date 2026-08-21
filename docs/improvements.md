@@ -573,3 +573,112 @@ made the claim, so nothing normative needs amending.
   and [verifica-cycle6plus.md](verifica-cycle6plus.md) is the checklist written
   for it — including the recipes that force the states nothing has ever reached
   (the withdrawn build, the abandoned run, a failed probe).
+
+<a id="cycle6plus-gatec"></a>
+
+## Gate-C findings — Cycle 6-plus, by hand on real hardware (2026-08-21)
+
+The maintainer's by-hand pass, on a MacBook Pro (arm64) carrying an installation
+that predates the cycle. It found in its first ten minutes what two review passes,
+a green `-race` suite and 101 installer assertions did not — because the defect
+needs a real yt-dlp on a real filesystem, and the container has neither.
+
+### V20 — a slow `yt-dlp` silently disables half the update path, and the surface says «sei aggiornato» — **BLOCKING**
+
+**Reproduced by measurement and by execution, 2026-08-21.**
+
+`update.toolVersion` bounds `yt-dlp --version` with `versionTimeout = 3s`
+(`internal/update/install.go:26`). On the maintainer's Mac that call takes:
+
+```
+$ time ~/.local/bin/yt-dlp --version
+2026.07.04
+real 0m7.436s   user 0m0.611s   sys 0m0.252s   exit 0
+```
+
+**7.4 s, exit 0, stdout a clean `2026.07.04\n`, stderr empty** — and *every* run,
+not just the first: yt-dlp ships as a PyInstaller one-file bundle and re-extracts
+itself on each invocation. The parse is fine and the tool is fine; ytdl simply
+gives up before it answers.
+
+**Where the 3 s came from.** It was measured in this container — `yt-dlp
+--version` costs about 650 ms here — where the bundle was already extracted, and
+where the 11,442 leftover `/tmp/_MEI*` directories found on 2026-08-21 are the
+evidence of how many times that had happened. The measurement was real and the
+conclusion drawn from it was not: it did not describe the target platform.
+
+**It is a regression this cycle introduced.** `main`'s `run.ShowVersion` calls
+`exec.Command(ytDlp, "--version").Output()` with **no context and no timeout**,
+so the released v2.1.0 waits the 7.4 s and prints the version — which is exactly
+what the maintainer's terminal shows it doing, beside the branch build failing.
+
+#### Two harms, and the second is the blocking one
+
+**1. The surface states something untrue.** `toolVersion` returns `""` on any
+failure, and `""` already means "nobody recorded a version" — the legitimate
+state of an ffmpeg installed before the marker existed. So a timeout renders as:
+
+```
+yt-dlp (versione non registrata)
+```
+
+about a tool that is installed, working, and reports its version on demand.
+"Nobody wrote it down" and "I asked and gave up" are different facts with
+different remedies, and the surface cannot tell them apart.
+
+**2. The comparison hole.** `Installed.YtDlp` is empty, and `appendChange`
+deliberately skips a component with an empty side — "an empty side is a question
+nobody answered, never a licence to guess". But `Known()` tests the **pin**, not
+the installed facts, so it stays true. Executed:
+
+```
+Known()     = true
+Available() = false
+Changes()   = []
+=> the surface renders: "sei aggiornato"
+=> but the pin requires yt-dlp 2026.08.99 and nothing compared it
+```
+
+On every Mac where yt-dlp is slower than 3 s, **ytdl reports "sei aggiornato"
+while structurally unable to see its own yt-dlp version.** ADR-0016 §2's whole
+purpose — ytdl owns the versions it drives, and one commit to `deps.conf` reaches
+the fleet — is silently inert, and §8's rule that the three states never collapse
+is broken in the worst direction: a machine that cannot answer is reported as one
+that is current.
+
+#### Why nothing caught it
+
+- The suite injects shim dependencies that answer instantly.
+- `tests/test-installer.sh` is pure bash and never execs the real yt-dlp.
+- Both review passes read this code and found `V2`/`V12` around it — the empty
+  `YtDlp` field was examined *as a flattening question* and its timeout origin
+  was never considered.
+- The container cannot reproduce it: the same binary prints `yt-dlp 2026.07.04`
+  here.
+
+This is the case for a by-hand gate C, and it is worth recording as such: the
+maintainer's stated reason for wanting one — "i test passano, ma voglio
+verificare a mano" — was correct.
+
+#### The shape of the fix
+
+Not applied here; the documentation phase writes no code, and this needs the
+maintainer's decision because part 3 changes what a verdict means.
+
+1. **Remove the regression.** 3 s does not describe real hardware. The budget has
+   to cover a PyInstaller bundle on a machine that may also be running antivirus,
+   while still bounding a genuine hang. Measure on macOS, not here.
+2. **Separate "asked and failed" from "never recorded".** A new, distinct state
+   on `Dependency`, rendered as what actually happened rather than borrowed from
+   the ffmpeg case.
+3. **A local fact that could not be obtained must not read as "sei aggiornato".**
+   Deliberately uncompared (an unattested ffmpeg, ADR-0016 §15) and
+   *unobtainable* are different, and only the first may be silent. This is the
+   part that needs a ruling, and probably an ADR-0016 §16.5.
+
+An optimisation worth weighing at the same time, **not** as a substitute for the
+above: the installer already records `yt_dlp_version` in `installed.conf`, and
+nothing reads it. Using the marker as the fast answer for a copy that is ours,
+with the exec as the authority off the critical path, would remove the 7 s from
+`ytdl --version` entirely. It carries its own staleness question (a user running
+`yt-dlp -U` behind ytdl's back), which is why it is a separate decision.
