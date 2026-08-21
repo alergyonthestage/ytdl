@@ -707,7 +707,7 @@ two findings, **G27** and **G28**, which land in this cycle. What remains is the
   which scope decided it; no per-download control is sticky by accident; the same
   rule is stated once in `ux-principles.md` §8 and holds in both channels.
 
-#### Cycle 6-plus — the update path (`F`) — **built, reviewed twice, fixed twice; at the documentation phase (2026-08-19)**
+#### Cycle 6-plus — the update path (`F`) — **built, reviewed twice, fixed twice, documented; awaiting the maintainer's by-hand gate C (2026-08-21)**
 
 Not a gate-C finding: raised by the maintainer on 2026-08-09, immediately after
 installing v2.1.0 by hand. **Pulled ahead of Cycle 6 on 2026-08-12**, when ytdl
@@ -731,8 +731,26 @@ cycle's close.
 and both fix passes are done**. Re-verified without the test cache: the suite is
 green under `-race`, `go vet` and `gofmt` are clean,
 `tests/test-installer.sh` passes **101/101**, and the parity gate
-(`git diff main -- internal/core/ internal/daemon/`) is **empty**. What remains is
-**gate C → the documentation phase → merge `--no-ff`**.
+(`git diff main -- internal/core/ internal/daemon/`) is **empty**.
+
+**The documentation phase is done** (2026-08-21). The three normative documents
+that contradicted the code are realigned, the four ratified decisions are
+[ADR-0016](decisions/0016-cycle6plus-update-path.md) §16, and the user- and
+reference-facing documentation — which did not exist — is written: `guida-uso.md`
+§ *Tenere ytdl aggiornato*, `guida-installazione.md`, `README.md`,
+`cli-reference.md` §8, `go-engine.md`, and the `[Unreleased]` changelog entry the
+file had no section for. The register records what was discharged and one new
+finding, `V19` (a package comment claims an import the package does not have;
+cosmetic, deliberately unfixed — the docs phase writes no code).
+
+**What remains is gate C, and it is the maintainer's by hand.** The tests pass,
+but this cycle failed the honesty question twice before catching it, and the parts
+that matter most are unreachable from a Linux container with no ffmpeg, no browser
+and no network. The checklist written for that pass is
+[verifica-cycle6plus.md](verifica-cycle6plus.md): the four things nothing has ever
+exercised, the honesty gate state by state with the exact words each must
+produce, and the two things only the maintainer can close. **Then** merge
+`--no-ff`.
 
 **Two review passes, eighteen findings, all fixed.** The first reviewed the
 implementation and found nine (`V1`–`V9`,
@@ -770,14 +788,15 @@ carrying `ffmpeg_pinned = false`, proven to converge and therefore creating no
 recurring obligation; and the abandoned state is **GUI-only by right**, because
 `ytdl --update` is synchronous and never writes a run record.
 
-**Three normative documents are behind the code** and the documentation phase
-closes them: ADR-0008's lifetime rule is now a three-way union (the keep-alive
-clause is recorded nowhere), design §7.3 still says the run state "stays
-`running`", and `ux-principles.md` §7 requires the GUI-only asymmetry to be
-recorded in the cycle's ADR. **And the user-facing documentation does not exist
-yet**: `update_check`, `deps.conf` and `internal/update` appear zero times across
-`guida-uso.md`, `guida-installazione.md`, `cli-reference.md`, `go-engine.md` and
-`README.md`, and `CHANGELOG.md` has no `[Unreleased]` section at all.
+**Three normative documents were behind the code, and are no longer** (closed
+2026-08-21): ADR-0008's lifetime rule is stated as the three-way union it became,
+with the keep-alive clause separated from the exit cause; design §7.3 says
+`abandoned` instead of "stays `running`"; and the GUI-only asymmetry is recorded
+in ADR-0016 §16.4 and registered in `ux-principles.md` §7, as that section's own
+rule demands. The user-facing documentation, which did not exist at all, is
+written — along the way `cli-reference.md`'s description of `ytdl -V` turned out
+to be outright **false**, and the config leaf in `go-engine.md` still claimed the
+9-key `Settings` of Cycle 1 (it has 20).
 
 Three things the implementation learned that the design could not have known, all
 carried back into [ADR-0016](decisions/0016-cycle6plus-update-path.md) §14:
