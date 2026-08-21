@@ -711,8 +711,16 @@ two findings, **G27** and **G28**, which land in this cycle. What remains is the
 
 Not a gate-C finding: raised by the maintainer on 2026-08-09, immediately after
 installing v2.1.0 by hand. **Pulled ahead of Cycle 6 on 2026-08-12**, when ytdl
-was installed for a user who is not the maintainer: without it, every future
-release means physically returning to that machine. It keeps the name `-plus`
+was about to be installed for a user who is not the maintainer: without it, every
+future release means physically returning to that machine.
+
+**Clarified by the maintainer, 2026-08-21:** that installation was **deferred**
+rather than carried out, precisely because this cycle had not shipped. Two
+consequences, and both matter. There is currently **no installation anywhere that
+a release could reach**, which is why gate C's handover test may use a real
+pre-release (see [verifica-cycle6plus.md](verifica-cycle6plus.md) A1b). And this
+cycle is the **blocker** for that first install, not merely an improvement to
+it — which is the sharper reason it was pulled ahead. It keeps the name `-plus`
 rather than renumbered (the `2B-plus` precedent), because
 [improvements.md](improvements.md#gate-c) pins G19–G23 to Cycle 7, G24 to Cycle 8,
 G25 to Cycle 9 and the `S` group to Cycle 10 — taking a number here would falsify

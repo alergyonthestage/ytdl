@@ -39,8 +39,10 @@ nothing *detects* one, and that the GUI — the surface built for the audience t
 does not open a Terminal — has no update surface at all. It does not even display
 which version it is.
 
-That became urgent on 2026-08-12, when ytdl was installed for its first user who
-is not the maintainer, and it exposed a second, deeper gap on 2026-08-13: **ytdl
+That became urgent on 2026-08-12, when ytdl was to be installed for its first
+user who is not the maintainer (that install was **deferred pending this cycle** —
+clarified by the maintainer 2026-08-21, and the reason gate C could use a real
+pre-release), and it exposed a second, deeper gap on 2026-08-13: **ytdl
 does not control the versions of the tools it drives.** The installer fetches
 `yt-dlp/releases/latest` and an ffmpeg `latest` redirect, so what a user ends up
 running is decided by when they happened to install, and no combination is

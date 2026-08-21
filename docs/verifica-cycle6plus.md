@@ -69,7 +69,27 @@ marker is written only by the new installer.
 Use those two facts as your check at any point: if `--version` is two lines, you
 are testing the wrong binary.
 
-### P1. Build the branch binary — the container can cross-compile it
+### P1. Build the branch binary — and run it in a sandbox
+
+**Use [`hack/ytdl-dev.sh`](../hack/ytdl-dev.sh); the full reference is
+[dev-testing.md](dev-testing.md).** It sets every isolation variable together,
+which is the part that is easy to get half-right by hand:
+
+```bash
+hack/ytdl-dev.sh build darwin/arm64    # in the container; darwin/amd64 on Intel
+hack/ytdl-dev.sh seed                  # copy yt-dlp/ffmpeg into the sandbox
+hack/ytdl-dev.sh run -- --version      # on the Mac
+```
+
+**This changes the shape of gate C for the better.** With the sandbox, the state
+dir, the config, the dependency directory *and* the installer's target are all
+under `~/.ytdl-dev` — so **A2 and A3 no longer destroy your installed ytdl**
+(P5), and the whole of Part B runs without touching anything real.
+
+`uname -m` says which architecture: `arm64` → `darwin/arm64`, `x86_64` →
+`darwin/amd64`.
+
+#### Doing it by hand instead
 
 You do **not** need Go on the Mac. `CGO_ENABLED=0` makes the binary static, so
 the container builds a real Mach-O for macOS, and the repo is a shared mount —
@@ -127,13 +147,15 @@ like a version, and nothing orders it. It only has to *differ*.
 
 ### P3. The branch must be pushed, or the probe cannot answer at all
 
-**Verified 2026-08-21: `feat/update-path/implementation` is NOT on `origin`.**
-Only `main` and `fix/cycle1/consolidation` are.
+**Resolved 2026-08-21: the branch is now on `origin`** and
+`raw.githubusercontent.com/.../feat/update-path/implementation/deps.conf`
+answers `200`. This section is kept because the failure it describes is silent
+and would otherwise be diagnosed as a bug in the probe.
 
 That blocks more than the installer. The probe fetches the pin from
 `raw.githubusercontent.com/<slug>/<branch>/deps.conf`, `<branch>` defaults to
 `main`, and **`deps.conf` does not exist on `main`** — it is new in this cycle.
-So on your Mac today, the branch build will report:
+Point at a branch without a `deps.conf` and the build reports:
 
 ```
 Aggiornamenti: non verificati (l'ultimo tentativo non ha ricevuto risposta)
@@ -141,10 +163,10 @@ Aggiornamenti: non verificati (l'ultimo tentativo non ha ricevuto risposta)
 
 for ever, no matter what you do. That is the code behaving correctly on a
 question nobody can answer — and it makes B1, B3, B4 and all of Part A
-unreachable.
+unreachable. **It is the first thing to check when the update surface looks
+dead.**
 
-**Push the branch** (or a throwaway branch carrying `deps.conf` and
-`install.sh`), then point the machine at it:
+Point the machine at the branch that does carry it:
 
 ```bash
 export YTDL_BRANCH=feat/update-path/implementation
@@ -185,21 +207,26 @@ Back up what an installer run would overwrite:
 cp -a ~/.local/bin ~/.local/bin.backup-$(date +%F)
 ```
 
-### P5. Any installer run replaces the binary under test
+### P5. An installer run replaces the binary under test — unless you sandbox
 
 `install_ytdl` downloads from
 `https://github.com/<slug>/releases/latest/download` — **the latest release**.
-The installer cannot install an unreleased branch build, so **every** installer
-run (A2, A3, *Aggiorna*, `ytdl --update`) replaces `~/.local/bin/ytdl` with
-v2.1.0 and silently ends your test.
+The installer cannot install an unreleased branch build, so an installer run
+(A2, A3, *Aggiorna*, `ytdl --update`) replaces the ytdl binary with v2.1.0 and
+silently ends your test.
 
-Order the work accordingly, and re-place the branch build after each installer
-run:
+**Inside the sandbox this is harmless**: `YTDL_INSTALL_DIR` points at
+`~/.ytdl-dev/bin`, so the installer replaces the *sandbox* copy and your real
+`~/.local/bin/ytdl` is never touched. Restore the dev build with:
 
 ```bash
-cp ./ytdl ~/.local/bin/ytdl        # from the repo folder, after any installer run
-ytdl --version                     # must be 4 lines again, not 2
+hack/ytdl-dev.sh build darwin/arm64 && hack/ytdl-dev.sh run -- --version
 ```
+
+**Outside the sandbox it is not.** If you insist on testing against the real
+install, back it up first (see Preparation) and check `ytdl --version` prints
+four lines whenever you resume — two means an installer run put v2.1.0 back, and
+everything measured after that point measured the wrong build.
 
 ## Preparation
 
@@ -298,37 +325,50 @@ worth checking:
 Stop there unless you have set up A1b. Confirming is what launches an installer
 that will overwrite your test binary (P5).
 
-#### A1b. The full handover — what it actually costs
+#### A1b. The full handover — with a real pre-release
 
-Two builds that both carry the update path means **publishing one**. Do it in a
-**scratch repository**, not this one:
+Two builds that both carry the update path means **publishing one**.
+
+**Decided by the maintainer, 2026-08-21: publish it on the real repository.** The
+earlier draft of this step routed around a scratch repo to protect the first
+non-maintainer user; that install was **deferred precisely until this cycle
+ships**, so there is no installation anywhere that a release could reach. The
+risk that made a scratch repo worth its cost does not exist, and a real
+pre-release additionally exercises `release.yml`, which has never run for this
+cycle.
 
 ```bash
-# in a throwaway repo you own, e.g. <you>/ytdl-rc
-git push scratch feat/update-path/implementation:main
-git tag v2.2.0-rc1 && git push scratch v2.2.0-rc1     # release.yml builds it
+git tag v2.2.0-rc1 && git push origin v2.2.0-rc1
 ```
 
-Then on the Mac, point ytdl at the scratch repo and give it an older build:
+`release.yml` triggers on `v*`, builds both architectures, stamps
+`GITHUB_REF_NAME` and publishes with `gh release create --latest`. So
+`releases/latest` becomes the rc — which is exactly what the probe must see.
+
+Then, on the Mac, give the sandbox an **older** build to update *from*:
 
 ```bash
-export YTDL_REPO=<you>/ytdl-rc
-export YTDL_BRANCH=main
-cp ./ytdl ~/.local/bin/ytdl     # the branch build, stamped e.g. v2.0.9
-ytdl gui
+YTDL_DEV_VERSION=v2.0.9 hack/ytdl-dev.sh build darwin/arm64
+hack/ytdl-dev.sh seed
+export YTDL_BRANCH=feat/update-path/implementation
+hack/ytdl-dev.sh run -- gui        # opens on :8790
 ```
 
-`YTDL_REPO` exists for exactly this — a fork checks and installs from its own
-repository. Now `releases/latest` is the rc, which **has** the update path, and
-the handover has somewhere real to land.
+Browse it at **`http://localhost:8790/`**, not `127.0.0.1` — cookies ignore the
+port, so a dev GUI and a real GUI on `127.0.0.1` fight over one session cookie
+(see [dev-testing.md](dev-testing.md)). `localhost` is in `localHost`'s
+allowlist, so it is a different cookie domain and they coexist.
 
-> ### ⚠️ Why a scratch repo, and not a tag on this one
+> **Afterwards, delete the release and the tag.** Until this cycle merges and
+> ships properly, `releases/latest` should go back to v2.1.0:
 >
-> `release.yml` passes **`gh release create --latest`**. Any tag you push to the
-> real repository becomes the latest release **for everybody** — including the
-> user who is not you. Their `ytdl --update` would then install your release
-> candidate. A scratch repo has no users, and `YTDL_REPO` keeps it opt-in to the
-> one machine you set it on.
+> ```bash
+> gh release delete v2.2.0-rc1 --cleanup-tag     # on the Mac; gh is not authenticated in the container
+> ```
+>
+> And re-check that `deps.conf` on **`main`** is still absent: the fleet-wide
+> lever is that file on that branch, and nothing in this test should have put
+> one there.
 
 4. Watch, without touching anything.
 
@@ -337,18 +377,25 @@ the handover has somewhere real to land.
 | «Aggiornamento in corso…» | a `401` or any mention of reopening with `ytdl gui` |
 | «Aggiornato. Riapro l'interfaccia…» | the page hanging past 60 s |
 | the page reloads **once**, by itself | a second reload, or a reload loop |
-| after the reload, the versions block shows the **rc** version | the session asking you to authenticate again |
+| after the reload, the versions block shows **v2.2.0-rc1** | the session asking you to authenticate again |
 
 The token handover is what makes that work; if it were broken you would land on
 a page answering `401 … riapri l'interfaccia con ytdl gui` — a Terminal, i.e.
 exactly the acceptance test failing.
 
+**Note what the sandbox changes here.** The installer writes to
+`YTDL_INSTALL_DIR`, so the rc lands in `~/.ytdl-dev/bin/ytdl` and your real
+`~/.local/bin/ytdl` stays on v2.1.0 throughout. The handover self-execs
+`os.Executable()`, which is the sandbox copy — so the whole sequence happens
+inside the sandbox, which is the first time this cycle has had a way to run it
+without consequences.
+
 5. Repeat once **with a second tab open**. The second tab must also show the
    running panel (it adopts the run on load — `V17`), and must not start a second
    update.
 
-6. Afterwards: `unset YTDL_REPO YTDL_BRANCH`, and reinstall from the real
-   `main` when the cycle is merged and released.
+6. Afterwards: `unset YTDL_BRANCH`, delete the release and tag, and
+   `hack/ytdl-dev.sh reset` when you no longer need the sandbox.
 
 #### A1c. If you skip A1b
 
