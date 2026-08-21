@@ -44,30 +44,214 @@ flowchart TD
   D -->|a surface lies| R["record in improvements.md<br/>fix in a code session"]
 ```
 
-## Preparation
+## Prerequisites — five things that are NOT true by default
 
-On the Mac, in a Terminal:
+**Added 2026-08-21, after the first attempt on real hardware.** The original
+draft of this file assumed the `ytdl` on your `$PATH` was the thing under test.
+It is not, and four further assumptions were wrong with it. Nothing below is
+optional: skip one and most of Part A and Part B silently test the *released*
+v2.1.0, which has none of this cycle in it.
 
-```bash
-ytdl --version          # note what you are on BEFORE anything
-ls ~/.local/state/ytdl  # update.json · update-run.json · update.log · installed.conf
-cat ~/.local/state/ytdl/installed.conf
+### P0. What you are running now, and how to tell
+
+```
+$ ytdl --version
+ytdl v2.1.0
+yt-dlp 2026.07.04
 ```
 
-The four state files this cycle uses, all under `~/.local/state/ytdl/`:
+**Two lines and no `Aggiornamenti:` line is the released v2.1.0** — the build
+that predates this cycle. The branch build prints one line per component *plus*
+a state line (§8.3 of [cli-reference.md](cli-reference.md)). Likewise
+`~/.local/state/ytdl/installed.conf` is **absent**, and that is correct: the
+marker is written only by the new installer.
 
-| File | What it is | Safe to delete? |
-|---|---|---|
-| `update.json` | the cached verdict | **yes** — forces "mai controllato" |
-| `update-run.json` | the record of one installer run | **yes** — forgets the last run |
-| `update.log` | that run's output | yes |
-| `installed.conf` | what the installer actually put down | **no** — deleting it loses the ffmpeg build id, and ffmpeg then reads *versione non registrata* until the next install |
+Use those two facts as your check at any point: if `--version` is two lines, you
+are testing the wrong binary.
 
-Keep a copy before you start:
+### P1. Build the branch binary — the container can cross-compile it
+
+You do **not** need Go on the Mac. `CGO_ENABLED=0` makes the binary static, so
+the container builds a real Mach-O for macOS, and the repo is a shared mount —
+what is built in the container appears in the repo folder on the Mac.
+
+First, your architecture (the answer changes the `GOARCH`):
+
+```bash
+uname -m          # arm64 = Apple Silicon · x86_64 = Intel
+```
+
+Then, **in the container**, from `/workspace/yt-download`:
+
+```bash
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory \
+       GIT_CONFIG_VALUE_0=/workspace/yt-download
+
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+  go build -ldflags "-X github.com/alergyonthestage/ytdl/internal/buildinfo.Version=v2.1.0-test" \
+  -o ytdl ./cmd/ytdl
+```
+
+Use `GOARCH=amd64` on an Intel Mac. The output lands at `./ytdl` in the repo
+root, which is **already in `.gitignore`** — it will not be committed.
+
+On the Mac, in the repo folder:
+
+```bash
+xattr -d com.apple.quarantine ./ytdl 2>/dev/null   # only if Gatekeeper objects
+./ytdl --version
+```
+
+**Run it by path (`./ytdl`) for the whole of Part B.** That is non-destructive:
+it leaves your installed v2.1.0 alone, and dependency resolution still finds
+`~/.local/bin` because `update.BinDir()` is fixed, not relative to the binary.
+Only Part A needs it *installed* — see P4.
+
+### P2. The version stamp decides whether anything happens at all
+
+**A build with no `-ldflags` reports `dev`, and a `dev` build is never checked and
+never reported stale** (`update.DevVersion`). Every update surface goes inert:
+you would get `Aggiornamenti: non controllati (build locale)` and conclude,
+wrongly, that nothing works.
+
+So the stamp is not cosmetic — it is the switch:
+
+| Stamp | What it produces |
+|---|---|
+| *(none)* → `dev` | everything inert. **Never use this for gate C** |
+| `v2.1.0-test` | ytdl compares equal-ish to nothing; the *dependency* half still moves. Good default for Part B |
+| **a version OLDER than the latest release**, e.g. `v2.0.9` | the probe sees `releases/latest` = `v2.1.0` and reports **an update to ytdl itself**. This is how you make the banner, the changes table and the *Aggiorna* confirmation appear **without releasing anything** |
+
+The stamp is a string comparison, not a parse — nothing validates that it looks
+like a version, and nothing orders it. It only has to *differ*.
+
+### P3. The branch must be pushed, or the probe cannot answer at all
+
+**Verified 2026-08-21: `feat/update-path/implementation` is NOT on `origin`.**
+Only `main` and `fix/cycle1/consolidation` are.
+
+That blocks more than the installer. The probe fetches the pin from
+`raw.githubusercontent.com/<slug>/<branch>/deps.conf`, `<branch>` defaults to
+`main`, and **`deps.conf` does not exist on `main`** — it is new in this cycle.
+So on your Mac today, the branch build will report:
+
+```
+Aggiornamenti: non verificati (l'ultimo tentativo non ha ricevuto risposta)
+```
+
+for ever, no matter what you do. That is the code behaving correctly on a
+question nobody can answer — and it makes B1, B3, B4 and all of Part A
+unreachable.
+
+**Push the branch** (or a throwaway branch carrying `deps.conf` and
+`install.sh`), then point the machine at it:
+
+```bash
+export YTDL_BRANCH=feat/update-path/implementation
+```
+
+> **This is safe, and here is precisely why.** A `deps.conf` on `main` is the
+> fleet-wide lever — every installation reads `main` by default. A `deps.conf`
+> on a **branch** is read by nobody except a machine that has opted in with
+> `YTDL_BRANCH`. Pushing the branch changes nothing for any existing user.
+>
+> `unset YTDL_BRANCH` when you finish, and never put it in `~/.zprofile`: it
+> steers the probe, `ytdl --update` **and** the GUI's *Aggiorna* alike.
+
+### P4. Your current installation is a specimen — do not reinstall it yet
+
+**Answering "should I uninstall and reinstall?" — no, and it would gain you
+nothing.** `install.sh` on `main` is the *old* installer, and it installs
+`releases/latest`, which is v2.1.0: you would spend the download to arrive
+exactly where you already are.
+
+Worse, you would destroy something useful. A machine installed **before the
+marker existed** is a real specimen of a case the code handles deliberately and
+that no test covers on real hardware: `LoadMarker` finds nothing, ffmpeg has no
+recorded build, and an absent `ffmpeg_pinned` key is read as *attested* (because
+every install predating ADR-0016 §15 took the pinned path or no path at all).
+Your machine should therefore print, with the branch build:
+
+```
+ffmpeg (versione non registrata)
+```
+
+and **not** `ffmpeg non installato`, and not a false `non verificata`. Check that
+before you change anything — it is a free finding you can only make once.
+
+Back up what an installer run would overwrite:
+
+```bash
+cp -a ~/.local/bin ~/.local/bin.backup-$(date +%F)
+```
+
+### P5. Any installer run replaces the binary under test
+
+`install_ytdl` downloads from
+`https://github.com/<slug>/releases/latest/download` — **the latest release**.
+The installer cannot install an unreleased branch build, so **every** installer
+run (A2, A3, *Aggiorna*, `ytdl --update`) replaces `~/.local/bin/ytdl` with
+v2.1.0 and silently ends your test.
+
+Order the work accordingly, and re-place the branch build after each installer
+run:
+
+```bash
+cp ./ytdl ~/.local/bin/ytdl        # from the repo folder, after any installer run
+ytdl --version                     # must be 4 lines again, not 2
+```
+
+## Preparation
+
+Do the five prerequisites first. Then, on the Mac:
+
+```bash
+ls ~/.local/state/ytdl
+```
+
+**On a machine that predates this cycle you will see only `daemon.log`, `logs`
+and `queue`, and that is correct** — every file below is created on demand by the
+new binary or the new installer. An empty result is not a broken install; it is a
+machine that has never run any of this.
+
+The four state files this cycle adds, all under `~/.local/state/ytdl/`:
+
+| File | Written by | What it is | Safe to delete? |
+|---|---|---|---|
+| `update.json` | the branch binary, after a check | the cached verdict | **yes** — forces "mai controllato" |
+| `update-run.json` | the GUI's *Aggiorna* | the record of one installer run | **yes** — forgets the last run |
+| `update.log` | the installer, via the GUI | that run's output | yes |
+| `installed.conf` | the **new** `install.sh` only | what the installer actually put down | **no** — deleting it loses the ffmpeg build id, and ffmpeg then reads *versione non registrata* until the next install |
+
+Keep a copy of both directories before you start — the state dir, and the
+binaries an installer run would overwrite:
 
 ```bash
 cp -a ~/.local/state/ytdl ~/ytdl-state-backup-$(date +%F)
+cp -a ~/.local/bin        ~/ytdl-bin-backup-$(date +%F)
 ```
+
+### The order matters now
+
+Because every installer run overwrites the binary under test (P5), do the
+non-destructive work first and batch the destructive work at the end:
+
+```mermaid
+flowchart TD
+  P["prerequisites<br/>P0–P5"] --> S["P4 · the pre-marker specimen<br/>read it before anything changes it"]
+  S --> B["Part B, run as ./ytdl<br/>nothing installed, nothing lost"]
+  B --> A1a["A1a · up to the confirmation<br/>then press Annulla"]
+  A1a --> D{"willing to publish<br/>a scratch release?"}
+  D -->|no| REC["record A1 as NOT exercised"]
+  D -->|yes| A1b["A1b · the real handover"]
+  REC --> INST["A2 · A3 — installer runs<br/>re-place ./ytdl after each"]
+  A1b --> INST
+  INST --> A4["A4 · the browser pass"] --> C["Part C"]
+```
+
+`ytdl --version` must show **four lines** whenever you resume: two means an
+installer run has put v2.1.0 back and whatever you measured after that point was
+measuring the wrong build.
 
 ---
 
@@ -81,15 +265,71 @@ calls authenticate through the `SameSite=Strict` cookie, and
 `DefaultFirstClientGrace` (2 min) comfortably covers the page's 60 s
 `RESTART_TIMEOUT_MS`.
 
-It needs a **real ytdl version change**, so it is genuinely testable only around a
-release, or by installing an older ytdl first.
+> **Corrected 2026-08-21.** This step previously said "install the previous
+> release deliberately". **That does not work**, and the reason is worth stating
+> because it constrains when A1 can be done at all:
+>
+> `install_ytdl` fetches from `<slug>/releases/latest/download` — **the latest
+> release**. The installer cannot install an unreleased branch build. So a
+> handover today would replace the branch build with **v2.1.0**, which has no
+> update path in it: the page's `newBuildIsServing` polls `/api/state` for
+> `update.installed.ytdl`, v2.1.0 serves no `update` object at all, the check
+> never becomes true, and after 60 s you get the "non sono riuscito a riaprire
+> l'interfaccia" fallback. **You would be reading a failure that is an artefact of
+> the setup, not a defect.**
+>
+> The handover is only testable **between two builds that both carry the update
+> path**.
 
-1. Install the previous release deliberately, then open `ytdl gui`.
-2. *Impostazioni* → *Versione e aggiornamenti* → **Controlla ora**. The banner
-   should appear and the changes table should list `ytdl`.
-3. Press **Aggiorna**, confirm. The confirmation **must** say
-   «L'interfaccia si chiude e si riapre da sola» — it says that only when `ytdl`
-   is among the changes.
+#### A1a. What IS testable before any release
+
+With the branch build stamped **older than the latest release** (P2) and
+`YTDL_BRANCH` set (P3), everything up to the moment of handover works and is
+worth checking:
+
+1. `./ytdl gui`, then *Impostazioni* → *Versione e aggiornamenti* → **Controlla
+   ora**. The banner appears; the changes table lists `ytdl` with your stamp on
+   the left and the real latest tag on the right.
+2. Press **Aggiorna**. The confirmation **must** say «L'interfaccia si chiude e
+   si riapre da sola» — that clause appears only when `ytdl` is among the
+   changes, which is `confirmUpdate`'s whole point.
+3. Press **Annulla**. Nothing should have started.
+
+Stop there unless you have set up A1b. Confirming is what launches an installer
+that will overwrite your test binary (P5).
+
+#### A1b. The full handover — what it actually costs
+
+Two builds that both carry the update path means **publishing one**. Do it in a
+**scratch repository**, not this one:
+
+```bash
+# in a throwaway repo you own, e.g. <you>/ytdl-rc
+git push scratch feat/update-path/implementation:main
+git tag v2.2.0-rc1 && git push scratch v2.2.0-rc1     # release.yml builds it
+```
+
+Then on the Mac, point ytdl at the scratch repo and give it an older build:
+
+```bash
+export YTDL_REPO=<you>/ytdl-rc
+export YTDL_BRANCH=main
+cp ./ytdl ~/.local/bin/ytdl     # the branch build, stamped e.g. v2.0.9
+ytdl gui
+```
+
+`YTDL_REPO` exists for exactly this — a fork checks and installs from its own
+repository. Now `releases/latest` is the rc, which **has** the update path, and
+the handover has somewhere real to land.
+
+> ### ⚠️ Why a scratch repo, and not a tag on this one
+>
+> `release.yml` passes **`gh release create --latest`**. Any tag you push to the
+> real repository becomes the latest release **for everybody** — including the
+> user who is not you. Their `ytdl --update` would then install your release
+> candidate. A scratch repo has no users, and `YTDL_REPO` keeps it opt-in to the
+> one machine you set it on.
+
 4. Watch, without touching anything.
 
 | Must happen | Must **not** happen |
@@ -97,29 +337,46 @@ release, or by installing an older ytdl first.
 | «Aggiornamento in corso…» | a `401` or any mention of reopening with `ytdl gui` |
 | «Aggiornato. Riapro l'interfaccia…» | the page hanging past 60 s |
 | the page reloads **once**, by itself | a second reload, or a reload loop |
-| after the reload, the versions block shows the **new** ytdl | the session asking you to authenticate again |
+| after the reload, the versions block shows the **rc** version | the session asking you to authenticate again |
 
-The token handover is what makes step 4 work; if it were broken you would land on
-a page that answers `401 … riapri l'interfaccia con ytdl gui`, which is exactly
-the acceptance test failing.
+The token handover is what makes that work; if it were broken you would land on
+a page answering `401 … riapri l'interfaccia con ytdl gui` — a Terminal, i.e.
+exactly the acceptance test failing.
 
-5. Repeat once **with a second tab open** on the same interface. The second tab
-   must also show the running panel (it adopts the run on load — finding `V17`),
-   and must not start a second update.
+5. Repeat once **with a second tab open**. The second tab must also show the
+   running panel (it adopts the run on load — `V17`), and must not start a second
+   update.
+
+6. Afterwards: `unset YTDL_REPO YTDL_BRANCH`, and reinstall from the real
+   `main` when the cycle is merged and released.
+
+#### A1c. If you skip A1b
+
+Say so in the result. "The handover has never run end to end" then remains true
+after gate C, and it stays on the list in the roadmap and the ADR — it must not
+quietly become "verified" because A1a passed.
 
 ### A2. `install.sh` against the real network
 
 Never run against real hosts on a real Mac. The container tests are pure bash and
 mock every fetch.
 
+**Requires P3** — the branch pushed. The installer on `main` is the *old* one and
+would tell you nothing about this cycle; and the new one aborts immediately
+without a reachable `deps.conf`, which `main` does not have.
+
+**Costs you the test binary (P5).** The installer will put v2.1.0 at
+`~/.local/bin/ytdl`. Re-place it afterwards with `cp ./ytdl ~/.local/bin/ytdl`.
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alergyonthestage/ytdl/main/install.sh | bash
+export YTDL_BRANCH=feat/update-path/implementation
+curl -fsSL "https://raw.githubusercontent.com/alergyonthestage/ytdl/$YTDL_BRANCH/install.sh" | bash
 ```
 
 Then, the property this cycle added — **idempotence**:
 
 ```bash
-curl -fsSL .../install.sh | bash    # run it a second time, unchanged
+curl -fsSL "https://raw.githubusercontent.com/alergyonthestage/ytdl/$YTDL_BRANCH/install.sh" | bash
 ```
 
 The second run must report each component as **already current** and download
@@ -138,6 +395,10 @@ cat ~/.local/state/ytdl/installed.conf
 ### A3. The withdrawn-build fallback
 
 **Has never fired** — no build has been withdrawn yet. Force it.
+
+Same two costs as A2: it needs the throwaway branch **pushed**, and it replaces
+`~/.local/bin/ytdl` with v2.1.0 (P5). Branch this one off the implementation
+branch, so it carries the new `install.sh` as well as the doctored `deps.conf`.
 
 On a throwaway branch, set an ffmpeg build id that does not exist:
 
