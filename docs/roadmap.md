@@ -707,7 +707,7 @@ two findings, **G27** and **G28**, which land in this cycle. What remains is the
   which scope decided it; no per-download control is sticky by accident; the same
   rule is stated once in `ux-principles.md` §8 and holds in both channels.
 
-#### Cycle 6-plus — the update path (`F`) — **built, reviewed twice, fixed twice, documented; awaiting the maintainer's by-hand gate C (2026-08-21)**
+#### Cycle 6-plus — the update path (`F`) — **gate C running by hand; four findings, one blocking (2026-08-22)**
 
 Not a gate-C finding: raised by the maintainer on 2026-08-09, immediately after
 installing v2.1.0 by hand. **Pulled ahead of Cycle 6 on 2026-08-12**, when ytdl
@@ -731,7 +731,7 @@ design is [design-cycle6plus-update.md](design-cycle6plus-update.md)** — read
 those first: they answer all four questions below. The design was **approved at
 gate B on 2026-08-13** and **built the same day**. It was then **reviewed twice**,
 and the session that documents it starts from
-[handoff-cycle6plus-docs.md](handoff-cycle6plus-docs.md), which is deleted at the
+[handoff-cycle6plus-gatec.md](handoff-cycle6plus-gatec.md), which is deleted at the
 cycle's close.
 
 **Where it stands (2026-08-19).** All eleven implementation steps are done on
@@ -751,14 +751,36 @@ file had no section for. The register records what was discharged and one new
 finding, `V19` (a package comment claims an import the package does not have;
 cosmetic, deliberately unfixed — the docs phase writes no code).
 
-**What remains is gate C, and it is the maintainer's by hand.** The tests pass,
-but this cycle failed the honesty question twice before catching it, and the parts
-that matter most are unreachable from a Linux container with no ffmpeg, no browser
-and no network. The checklist written for that pass is
-[verifica-cycle6plus.md](verifica-cycle6plus.md): the four things nothing has ever
-exercised, the honesty gate state by state with the exact words each must
-produce, and the two things only the maintainer can close. **Then** merge
-`--no-ff`.
+**Gate C is running, by hand on macOS, and it has already justified itself.** The
+maintainer asked for it explicitly — "i test passano, ma voglio verificare a mano"
+— and in two sittings it produced **four findings the suite could not reach, two
+of them blocking**, registered as
+[`V19`–`V22`](improvements.md#cycle6plus-gatec):
+
+- **`V20` (fixed, `8b80b66`)** — a *cold* `yt-dlp --version` takes 7.4 s on stock
+  macOS against a 3-second budget. The surface then called a working tool
+  «versione non registrata» and, far worse, reported **«sei aggiornato» while
+  structurally unable to compare yt-dlp at all** — ADR-0016 §2's whole purpose,
+  silently inert. The budget came from a real 650 ms measurement taken in the
+  container, where the invocation was warm: the measurement was true and the
+  conclusion did not describe the target platform.
+- **`V21` (open, BLOCKING)** — the GUI applies an update, reports «Aggiornato. Non
+  serve riavviare nulla.», changes nothing, and offers the same update again for
+  ever. The handover has still never completed. Diagnosis is narrowed to two
+  candidate causes and needs four commands on the Mac to settle.
+- **`V22`** (open, minor) and **`V19`** (cosmetic, deliberately unfixed).
+
+The by-hand pass also rewrote its own instructions three times: the checklist
+assumed the released `ytdl` on `$PATH` was under test, then that a rebuild
+replaces a running daemon, then that the handover could work with the binary
+somewhere other than the installer's target. Those corrections produced
+`hack/ytdl-dev.sh` and [dev-testing.md](dev-testing.md), a **permanent** sandbox
+for running dev builds — the one artefact of this phase that outlives the cycle.
+
+**What remains**: settle `V21`, fix what it turns out to be, re-run the affected
+parts of the checklist, close the open cost the `V20` fix carries (`cmd/ytdl`'s
+test time went from ~13 s to 87 s), and **then** merge `--no-ff`. The session
+handoff is [handoff-cycle6plus-gatec.md](handoff-cycle6plus-gatec.md).
 
 **Two review passes, eighteen findings, all fixed.** The first reviewed the
 implementation and found nine (`V1`–`V9`,

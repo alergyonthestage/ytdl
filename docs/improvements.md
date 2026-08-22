@@ -738,3 +738,103 @@ small, while the shipped default stays generous. That was **not** done here
 because the container's filesystem went read-only mid-investigation — `/tmp`
 filled with yt-dlp's PyInstaller extractions again — and an unverified change is
 exactly what this cycle's register keeps warning about.
+
+### V21 — the GUI update loops: "Aggiornato. Non serve riavviare nulla." while nothing changed — **BLOCKING**
+
+**Observed on the Mac, 2026-08-22**, in the first A1b run that got far enough to
+press *Aggiorna*. The sandbox was correct: the page showed `ytdl v2.0.9` and
+*Cosa cambia* `v2.0.9 → v2.2.0-rc1`, so both builds were the intended pair.
+
+What happened instead of a handover:
+
+1. *Aggiorna* → the panel ends at **«Aggiornato. Non serve riavviare nulla.»**
+2. The versions block still reads `ytdl v2.0.9`, and the banner «È disponibile un
+   aggiornamento» never goes away.
+3. *Controlla ora* → the same update is offered again.
+4. Pressing *Aggiorna* again during the run answers «un aggiornamento è già in
+   corso»; afterwards it loops back to step 1.
+
+So the update can be applied indefinitely and never completes.
+
+#### What is established
+
+«Aggiornato. Non serve riavviare nulla.» is the page's rendering of
+`state == "done" && !changed`, so the installer **exited 0** and
+`Run.Changed` was **false**. `shouldHandOver` requires `Changed`, so no handover
+was attempted — which is consistent with everything else observed: the daemon
+kept its old inode, `Installed.Ytdl` is `buildinfo.Version` of the *running*
+build, and the banner is therefore correct rather than stuck.
+
+`Changed` is derived in `Runner.finish`:
+
+```go
+if m, ok := LoadMarker(r.StateDir); ok { run.Version = m[markerYtdlVersion] }
+if run.Version != "" && run.Version != buildinfo.Version { run.Changed = true }
+```
+
+Exercised, to enumerate the possibilities exhaustively:
+
+| marker `ytdl_version` | `Changed` | handover |
+|---|---|---|
+| same as the running build | false | **no** |
+| empty | false | **no** |
+| any other value | true | yes |
+
+So exactly two things can produce what was seen: **the installer skipped ytdl**
+(marker still records the old version), or **`write_marker` recorded no version at
+all**. `write_marker` fills that key with `$(ytdl_version "$INSTALL_DIR/ytdl")`,
+which execs the freshly installed binary — so a binary that was replaced but could
+not be run yields an empty marker value and a permanently "unchanged" update.
+
+#### The design fragility underneath, independent of which case bit
+
+**`Changed` is inferred from the marker rather than from what the installer did.**
+The marker is written by a separate process, at the end of a run, by exec'ing the
+new binary; every one of those steps can fail while the install itself succeeded.
+When it does, the failure mode is not an error — it is a silent, repeatable
+"nothing changed" that no surface can distinguish from a genuine no-op update.
+Whatever the immediate cause turns out to be, that inference is worth revisiting:
+the installer knows whether it replaced ytdl, and could say so directly.
+
+#### The diagnostic that settles it — needs the Mac
+
+Run **after** an *Aggiorna* that ends in «Non serve riavviare nulla», before
+pressing anything else:
+
+```bash
+cat ~/.ytdl-dev/state/ytdl/installed.conf      # what ytdl_version did the marker get?
+cat ~/.ytdl-dev/state/ytdl/update-run.json     # state, changed, version, pid
+~/.ytdl-dev/bin/ytdl --version                 # which build is actually ON DISK now?
+tail -60 ~/.ytdl-dev/state/ytdl/update.log     # did install_ytdl run, skip, or fail?
+```
+
+The four together decide it in one pass:
+
+- `ytdl --version` reporting **v2.2.0-rc1** ⇒ the binary WAS replaced, and the
+  fault is in the marker or in reading it.
+- reporting **v2.0.9** ⇒ the installer never replaced it; `update.log` says
+  whether it skipped (`ytdl … is already the newest`) or never reached that step.
+- `installed.conf` with an empty or absent `ytdl_version` is the second case
+  above, and points straight at `ytdl_version` failing on the new binary.
+
+### V22 — immediately after an update, the page says "nessun controllo ancora eseguito"
+
+Same session, lower severity, and possibly a consequence of `V21` rather than a
+defect of its own — recorded separately so it is not lost if `V21` is fixed.
+
+After *Aggiorna* the verdict line read:
+
+> Aggiornamenti non verificati: nessun controllo ancora eseguito.
+
+while the panel beside it said «Aggiornato.» That is `Runner.finish`'s
+`Invalidate(r.StateDir)` doing exactly what it says — the cached verdict now
+describes a machine that no longer exists, so it is discarded — but the *sequence*
+a user reads is "I updated" followed by "nothing has ever been checked", which
+invites precisely the conclusion the maintainer drew: that the update had not
+worked.
+
+Discarding the cache is right. What is missing is that nothing replaces it: no
+round is run, and the surface has no state for "the machine just changed and has
+not been re-examined". Either the finish should trigger a check, or the page
+should say what actually happened. Worth deciding with `V21`, since a successful
+handover reloads the page and may hide it.

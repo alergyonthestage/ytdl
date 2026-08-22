@@ -919,5 +919,5 @@ If either differs, something ran outside the sandbox. The backups from
   explicitly. "Reviewed twice" must never be read as "exercised", and neither
   must "verified by hand".
 - **Everything passes** → gate C passes, this file and
-  `handoff-cycle6plus-docs.md` are deleted, and the cycle merges with
+  `handoff-cycle6plus-gatec.md` are deleted, and the cycle merges with
   `--no-ff`. The release still waits on C1.
