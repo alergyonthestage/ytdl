@@ -839,7 +839,13 @@ not been re-examined". Either the finish should trigger a check, or the page
 should say what actually happened. Worth deciding with `V21`, since a successful
 handover reloads the page and may hide it.
 
-### V21 — RESOLVED: `install.sh` aborted on line 541 under macOS's bash 3.2
+### V21 — DIAGNOSED and fixed in the tree; **never once in force** — see [`V24`](#V24)
+
+> **Read [`V24`](#V24) before this entry.** The fix below is committed locally and
+> is correct. It was never pushed, and the update path fetches `install.sh` from
+> `origin` — so every run on the Mac after this entry was written still executed
+> the unfixed line. "Fixed" here means "fixed in the working tree", nothing more.
+
 
 **Diagnosed on the Mac, 2026-08-22**, by the four commands the register asked for.
 Neither of the two hypotheses above was right, which is why they were written as
@@ -875,7 +881,15 @@ followed by a non-ASCII byte now fails the suite. Verified both ways — 102/0 w
 the fix, 101/1 against the original line. It is a static check of the file
 deliberately, because that is the part testable without the other shell.
 
-### V23 — an installer that aborted was recorded as a successful run — **OPEN**
+### V23 — an installer that aborted was recorded as a successful run — **mechanism now proven**
+
+> **Superseded in part.** The experiment this entry asks for was run in the
+> container against a real bash 3.2 on 2026-08-22; the mechanism is established
+> and the hardening below turns out **not** to fix it. Read the resolution
+> entry two sections down before acting on anything here. The `curl.Wait()`
+> line of enquiry at the end is **ruled out** — the parent never reads the pipe,
+> so the ordering is harmless, and the status is lost inside bash, not in Go.
+
 
 Split out of `V21` because fixing `V21` does not fix this, and it is the more
 dangerous of the two.
@@ -923,3 +937,223 @@ could verify. `install.sh` writes `installed.conf` on every completed run, so a
 run that reports success without advancing the marker's `installed_at` did not
 finish — an invariant the runner could check instead of inferring, and one that
 would have caught this regardless of the shell.
+
+### V23 — RESOLVED as to mechanism, and the applied hardening does **not** fix it
+
+**Established in the container, 2026-08-22**, by building **GNU bash 3.2 from
+source** and running the reproduction under both shells. The experiment the
+register asked the maintainer to run on the Mac is no longer needed: it was run
+here, against the real shell, and it settles both halves.
+
+#### The mechanism
+
+**bash 3.2 enters the `EXIT` trap with `$? = 0` after a `set -u` abort.** bash 5
+enters it with `$? = 1`. That is the whole difference, and it is the only case
+that differs — measured:
+
+| how the script dies | `$?` seen by the trap, and the exit status | |
+|---|---|---|
+| | **bash 3.2** | **bash 5.2** |
+| `set -u` on an unbound variable | **0** | 1 |
+| `set -e` on a failing command | 1 | 1 |
+| explicit `exit 3` | 3 | 3 |
+| `command not found` | 127 | 127 |
+
+So `V21`'s abort — a `set -u` unbound variable — is the one shape that arrives at
+the trap looking like success, and it is exactly the shape this installer hit.
+
+#### The hardening is inert for precisely this case
+
+`cleanup` was changed to `local rc=$?; …; exit "$rc"`. Under bash 3.2 that `rc`
+**is 0**, so the script still exits 0. Run against the real 3.2:
+
+| trap | bash 3.2 | bash 5.2 |
+|---|---|---|
+| `cleanup(){ …; return 0; }` (before) | **exit 0** | exit 1 |
+| `cleanup(){ local rc=$?; …; exit "$rc"; }` (applied) | **exit 0** | exit 1 |
+
+The change is still correct and still costs nothing — it is simply not the fix,
+and the register must not carry it as one.
+
+**The test does not reach the case either.** `tests/test-installer.sh`'s "an
+aborted install exits non-zero through the EXIT trap" aborts through `fail()`,
+which is an explicit `exit 1` — the row bash 3.2 gets right. It passes under
+bash 3.2 today, over an installer that still loses the status.
+
+#### A fix that is proven, under both shells
+
+An explicit completion flag, because a zero from bash 3.2 is not evidence of
+anything:
+
+```bash
+COMPLETED=0                       # set to 1 as the last line of main()
+cleanup() {
+  local rc=$?
+  [ -n "$TMPDIR_YTDL" ] && rm -rf "$TMPDIR_YTDL"
+  # bash 3.2 enters this trap with $?=0 after a `set -u` abort, so a zero here
+  # is not evidence that anything succeeded. Reaching the end of main() is.
+  [ "$COMPLETED" -eq 1 ] || [ "$rc" -ne 0 ] || rc=1
+  exit "$rc"
+}
+```
+
+Measured: aborted run → **exit 1** under 3.2 **and** 5.2; completed run → exit 0
+under both. An `ERR` trap was tried as an alternative and **does not work**:
+bash 3.2 does not fire `ERR` for a `set -u` abort.
+
+**Still worth doing beside it**, unchanged from the original entry: the runner
+infers success from an exit status when it could verify it. `install.sh` writes
+`installed.conf` on every completed run, so a run reporting success without
+advancing `installed_at` did not finish — and that check holds even for an
+installer killed outright, where no trap runs at all.
+
+<a id="V24"></a>
+
+### V24 — the branch was never pushed, so **none of the fixes were ever under test** — **BLOCKING**
+
+**Established in the container, 2026-08-22**, and it explains every observation in
+the maintainer's 2026-08-22 session at once.
+
+The update runner does not run the installer from the working tree. It fetches it
+over the network (`internal/update/runner.go`):
+
+```go
+url := fmt.Sprintf("%s/%s/%s/install.sh", rawBase, r.slug(), r.branch())
+```
+
+— that is `raw.githubusercontent.com/<slug>/<branch>/install.sh`, i.e. **whatever
+is on `origin`**. And `origin` is eight commits behind:
+
+```
+local  HEAD                                   8d3a20e
+origin feat/update-path/implementation        0b33f33
+```
+
+Fetched, and compared against the working tree:
+
+```
+$ curl -fsSL .../feat/update-path/implementation/install.sh | sed -n '541p'
+  info "Downloading yt-dlp $YTDLP_TARGET…"          ← V21, unfixed
+$ … | grep -A1 '^cleanup'
+  cleanup() { [ -n "$TMPDIR_YTDL" ] && rm -rf "$TMPDIR_YTDL"; return 0; }
+                                                     ← V23 hardening, absent
+```
+
+**So every press of *Aggiorna* on the Mac downloaded and ran the pre-`V21`
+installer.** It aborted at line 541 under bash 3.2 exactly as diagnosed, its trap
+turned the status into 0 exactly as `V23` describes, and the GUI reported
+«Aggiornato. Non serve riavviare nulla.» for an install that installed nothing —
+three times in a row, with the banner never clearing, because nothing ever
+changed. The «un aggiornamento è già in corso» on the second press is the
+in-flight run of the press before it.
+
+`V21` and the `V23` hardening have **never been exercised on the Mac.** Neither
+has `V20`'s fix as branch code — though the `v2.2.0-rc1` release binary *does*
+carry it, because the tag was pushed and points at `8b80b66`. That asymmetry is
+worth naming: a **tag** was pushed from a local commit while the **branch** it
+came from was not, so the release and the branch describe different code.
+
+#### Why the existing check did not catch it
+
+Prerequisite `P3` of the verification checklist asks whether the branch is on
+`origin` and whether `deps.conf` answers `200` there. Both were true — at
+`0b33f33`, pushed 2026-08-21. The check verifies that the branch **resolves**, not
+that it **is current**, and eight commits landed after it was last run.
+
+**The check has to compare content, not existence.** What settles it in one line
+is whether the file the network serves is the file that is being tested:
+
+```bash
+diff <(curl -fsSL "https://raw.githubusercontent.com/alergyonthestage/ytdl/$YTDL_BRANCH/install.sh") install.sh \
+  && echo "the installer under test IS the one the update path will run"
+```
+
+#### The lesson, and it is a third instance of the same one
+
+Twice already this cycle the container answered a question truthfully while the
+question was the wrong one (`V20`'s warm measurement, `V21`'s bash 5 parse). This
+is the same shape once more, and the widest: **the working tree is not what the
+update path runs.** For anything reached over the network — `install.sh`,
+`deps.conf`, the release assets — the artefact under test is the published one,
+and a local commit is invisible to it.
+
+<a id="V25"></a>
+
+### V25 — one `go test -race ./...` leaves 91 GB in `/tmp`, and this is what took the container down
+
+**Measured in the container, 2026-08-22.** It also closes the open question in
+`V20` about where the `/tmp/_MEI*` directories come from.
+
+A single clean run of the suite:
+
+```
+go test -race -count=1 ./...     4 m 26 s   (cmd/ytdl alone: 252 s)
+/tmp/_MEI* directories left behind:   1715
+disk used:                             9.9 GB  →  100 GB
+```
+
+The mechanism, isolated:
+
+```
+yt-dlp --version, allowed to finish     → leaves 0 directories
+yt-dlp --version, killed after 0.4 s    → leaves 1 directory  (~50 MB)
+```
+
+yt-dlp is a PyInstaller one-file bundle: it unpacks itself into `/tmp/_MEI…` and
+removes it **on its own exit**. A process killed before that never cleans up, and
+`versionTimeout` — raised to 30 s by `V20`'s fix — is what makes `cmd/ytdl`'s
+tests exec and kill it in bulk.
+
+So the "open cost" carried from `V20` is worse than recorded, and it is not only
+about time:
+
+- the handoff recorded `cmd/ytdl` at ~87 s; under `-race` it is **252 s**, and the
+  whole suite **4 m 26 s** against the ~12 s `CLAUDE.md` advertises;
+- **each run costs ~91 GB of disk**, which is what filled the container twice —
+  once turning the filesystem read-only mid-edit, with `mktemp -d` failing and
+  `tests/test-installer.sh` dying on `line 159: /SHA2-256SUMS: Permission denied`.
+
+The remedy already identified stands and is now clearly blocking for the merge:
+**make the budget injectable** (a package variable, or a field beside
+`BinDirEnv`), so the tests set something small while the shipped default stays
+generous. Anything that stops the tests from *killing* yt-dlp fixes both symptoms
+at once. Until then, after any full suite run:
+
+```bash
+find /tmp -maxdepth 1 -name '_MEI*' -type d -print0 | xargs -0 -r rm -rf
+```
+
+<a id="bash32"></a>
+
+### The container can run bash 3.2 — and what that does and does not buy
+
+Built here on 2026-08-22, in about two minutes:
+
+```bash
+curl -fsSLO https://ftp.gnu.org/gnu/bash/bash-3.2.tar.gz && tar xzf bash-3.2.tar.gz && cd bash-3.2
+CFLAGS="-O1 -w -std=gnu89" ./configure --build=aarch64-unknown-linux-gnu \
+  --without-bash-malloc --disable-nls --disable-readline
+touch y.tab.c y.tab.h        # ship-provided parser; there is no yacc/bison here
+make -j4                     # -> ./bash, "GNU bash, version 3.2.0(2)-release"
+```
+
+Use `bash-3.2.57` and it will **not** build: its bundled `y.tab.c` predates the
+patched `parse.y` and there is no `yacc` in the image. The unpatched 3.2 release
+is self-consistent, and the semantics under test are the same.
+
+`tests/test-installer.sh` runs clean under it — **103 passed, 0 failed**, the same
+as under bash 5.
+
+**What it catches**: everything semantic. It is what proved `V23` and what proved
+the applied hardening does not fix it — neither of which any bash 5 test can show.
+
+**What it does NOT catch, and this matters**: `V21`. The reproduction was run here
+under bash 3.2 in `C`, `C.UTF-8` and `en_US.UTF-8`, and the ellipsis is parsed
+correctly in every one of them. The defect is not bash 3.2's version, it is
+**macOS's libc**: `legal_variable_char` is `isalpha()`, and macOS's `isalpha()`
+marks high bytes alphabetic in a UTF-8 locale where glibc never does. So the
+static shape check in `tests/test-installer.sh` remains the only guard for that
+class, and it is the right one.
+
+Worth making permanent in `.cco/Dockerfile` and running the installer suite under
+both shells — a decision for the fix pass, not for gate C.
