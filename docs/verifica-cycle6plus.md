@@ -10,6 +10,13 @@ Nothing here is normative. The rulings are in
 [ADR-0016](decisions/0016-cycle6plus-update-path.md); the two finding registers
 are in [improvements.md](improvements.md).
 
+> ### ▶ Resuming a pass already in progress?
+>
+> Go to **[Ripresa](#ripresa)** first. Three sittings have run and finding
+> [`V24`](improvements.md#V24) showed that none of them tested the code they were
+> meant to. That section has the corrected sequence and what is still live on the
+> machine and on GitHub; the prerequisites and Part A below are written for it.
+
 > ### ⚠️ Read this before touching `deps.conf`
 >
 > **A commit to `deps.conf` on `main` reaches every existing installation within
@@ -21,16 +28,25 @@ are in [improvements.md](improvements.md).
 
 ## 0. What the container already established
 
-Do **not** re-verify these by hand — they are green and were re-run without the
-test cache on 2026-08-19:
+Do **not** re-verify these by hand — re-run without the test cache on
+**2026-08-22**:
 
 | Check | State |
 |---|---|
 | `go build ./...` · `go vet ./...` · `gofmt -l .` | clean |
-| `go test -race -count=1 ./...` | green, every package |
-| `bash tests/test-installer.sh` | 101 assertions, 0 failed |
+| `go test -race -count=1 ./...` | green, every package — **4 m 26 s** |
+| `bash tests/test-installer.sh` | **103** assertions, 0 failed — also under a real bash 3.2 |
 | `git diff main -- internal/core/ internal/daemon/` | empty — the parity gate holds |
-| `internal/update` run five times cold under `-race` | no flakiness |
+
+> **A full suite run now costs 91 GB of `/tmp` (finding `V25`).** `cmd/ytdl`'s
+> tests exec and then kill the real `yt-dlp`, and a killed PyInstaller bundle
+> never removes its `/tmp/_MEI…` extraction — 1715 of them, ~50 MB each, per run.
+> That is what turned the container's filesystem read-only twice. **Sweep after
+> every run, in the container:**
+>
+> ```bash
+> find /tmp -maxdepth 1 -name '_MEI*' -type d -print0 | xargs -0 -r rm -rf
+> ```
 
 What follows is only what those cannot reach.
 
@@ -43,6 +59,105 @@ flowchart TD
   D -->|pass| M["merge --no-ff"]
   D -->|a surface lies| R["record in improvements.md<br/>fix in a code session"]
 ```
+
+<a id="ripresa"></a>
+
+## Ripresa — where this pass actually stands, 2026-08-22
+
+**Read this before anything else.** Three sittings of gate C have run, and the
+last one found that **none of them tested what they were meant to test**
+(finding [`V24`](improvements.md#V24)). Everything below is the corrected
+sequence, in the order to run it.
+
+### What went wrong, in one paragraph
+
+The update path does not run the installer from your working tree. It downloads
+it from `raw.githubusercontent.com/<slug>/<branch>/install.sh` — **from
+`origin`** — and `origin` is eight commits behind. So every *Aggiorna* ran the
+**pre-`V21`** installer: it aborted on line 541 under bash 3.2, the old `EXIT`
+trap turned the status into 0, and the page reported «Aggiornato. Non serve
+riavviare nulla.» for an install that installed nothing. The banner never
+cleared because nothing ever changed, and «un aggiornamento è già in corso» on
+the second press was the first press still running. Nothing you saw was a new
+defect: it was `V21` and `V23`, unfixed, because the fixes were never published.
+
+### What is settled, and needs nothing further from you
+
+| | |
+|---|---|
+| `V23`'s mechanism | **proven in the container** against a bash 3.2 built from source: it enters the `EXIT` trap with `$? = 0` after a `set -u` abort. The three-line experiment the old handoff asked you to run is **done** — do not run it. |
+| the applied `V23` hardening | **does not fix it.** `local rc=$?` is 0 under bash 3.2 for exactly this case. A proven fix exists (a completion flag); it is a code change, not a gate-C step. |
+| `curl.Wait()` before `sh.Wait()` | **ruled out.** The parent never reads the pipe, so the ordering is harmless. |
+| where the `/tmp/_MEI*` came from | **answered** — see `V25` in §0. |
+
+### The order to run things now
+
+```mermaid
+flowchart TD
+  F["1 · fix pass in the container<br/>V23 · V25 · then push"] --> P["2 · on the Mac: verify what<br/>the NETWORK serves = what you built"]
+  P --> R["3 · re-publish v2.2.0-rc1<br/>the tag must point at the new head"]
+  R --> A["4 · A1b from step 2<br/>the handover, for the first time"]
+  A --> B["5 · Part B · A2 · A3 · A4"]
+  B --> C["6 · Part C · cleanup"]
+```
+
+**1 — in the container, and this needs the maintainer's go-ahead.** `V23` and
+`V25` are code fixes and gate C does not make them. Approve the fix pass, then it
+happens there and the branch is committed.
+
+**2 — push, from the Mac.** The container has no credentials for `origin`; this
+is yours. From `~/Scripts/yt-download` — the same directory the container has
+mounted, so its `HEAD` is already the commit to push:
+
+```bash
+git push origin feat/update-path/implementation
+```
+
+**3 — prove that what the network serves is what you are testing.** This is the
+check `P3` was missing, and it is the one that would have saved three sittings:
+
+```bash
+export YTDL_BRANCH=feat/update-path/implementation
+diff <(curl -fsSL "https://raw.githubusercontent.com/alergyonthestage/ytdl/$YTDL_BRANCH/install.sh") install.sh   && echo "OK — the update path will run the installer you are testing"
+```
+
+Any output at all means **stop**: the branch is not up to date, or GitHub's raw
+CDN has not caught up yet (it can lag a few minutes — wait and repeat). Do not
+press *Aggiorna* before this line prints `OK`.
+
+**4 — the release must be rebuilt from the new head.** `v2.2.0-rc1` currently
+exists and points at `8b80b66`, which is **behind** the fixes. Delete it in the
+GitHub web UI (release *and* tag), then re-cut it — the full recipe is
+[A1b step 1](#a1b), rewritten.
+
+**5 — then A1b from its step 2**, and the rest of the checklist in the suggested
+order below. `A1b` is still the thing this cycle has never once completed.
+
+### What is already on your machine from the previous sittings
+
+Left in place deliberately; the cleanup section at the end removes all of it.
+
+| | |
+|---|---|
+| `~/.ytdl-dev/` | the sandbox, with a `v2.0.9` build installed and a stale `update-run.json` |
+| `~/.local/bin.backup-*`, `~/ytdl-bin-backup-*`, `~/ytdl-state-backup-*` | three backups you took; keep them until the end |
+| `v2.2.0-rc1` on GitHub | **live** — it must be deleted and re-cut, see step 4 |
+| `tmp/results-gate.md` | your transcript; it is gitignored scratch, and it is what this section was reconstructed from |
+
+**Worth doing before step 4, while the evidence is still there** — it costs four
+lines and confirms the diagnosis on the real machine rather than by inference:
+
+```bash
+tail -40 ~/.ytdl-dev/state/ytdl/update.log     # expect the line-541 unbound variable
+cat ~/.ytdl-dev/state/ytdl/update-run.json     # expect state=done, exit_code=0
+ls ~/.ytdl-dev/state/ytdl/installed.conf       # expect: No such file (nothing was installed)
+~/.ytdl-dev/bin/ytdl --version | head -1       # expect ytdl v2.0.9 (the binary was never replaced)
+```
+
+If `update.log` shows anything *other* than the line-541 abort, that is a new
+finding and it goes in the register before the fix pass starts.
+
+---
 
 ## Prerequisites — five things that are NOT true by default
 
@@ -110,40 +225,64 @@ So the stamp is not cosmetic — it is the switch:
 The stamp is a string comparison, not a parse — nothing validates that it looks
 like a version, and nothing orders it. It only has to *differ*.
 
-### P3. The branch must be pushed, or the probe cannot answer at all
+### P3. `origin` is what is under test — not your working tree — **this one cost three sittings**
 
-**Resolved 2026-08-21: the branch is now on `origin`** and
-`raw.githubusercontent.com/.../feat/update-path/implementation/deps.conf`
-answers `200`. This section is kept because the failure it describes is silent
-and would otherwise be diagnosed as a bug in the probe.
+**Rewritten 2026-08-22 after [`V24`](improvements.md#V24).** The earlier version
+of this prerequisite asked whether the branch *existed* on `origin` and whether
+`deps.conf` answered `200` there. Both were true, at a commit eight behind the
+one being tested, and every run afterwards silently exercised the old code.
 
-That blocks more than the installer. The probe fetches the pin from
-`raw.githubusercontent.com/<slug>/<branch>/deps.conf`, `<branch>` defaults to
-`main`, and **`deps.conf` does not exist on `main`** — it is new in this cycle.
-Point at a branch without a `deps.conf` and the build reports:
+**Nothing in the update path reads your working tree.** Three artefacts are
+fetched over the network, every time:
+
+| what | from where | used by |
+|---|---|---|
+| `install.sh` | `raw.githubusercontent.com/<slug>/<branch>/install.sh` | the GUI's *Aggiorna*, `ytdl --update` |
+| `deps.conf` | `raw.githubusercontent.com/<slug>/<branch>/deps.conf` | the probe **and** the installer |
+| the `ytdl` binary | `github.com/<slug>/releases/latest/download/…` | the installer |
+
+So a commit that is not on `origin` is invisible, and a release that is not
+re-cut still carries the old binary. The check has to compare **content**:
+
+```bash
+export YTDL_BRANCH=feat/update-path/implementation
+RAW="https://raw.githubusercontent.com/alergyonthestage/ytdl/$YTDL_BRANCH"
+
+diff <(curl -fsSL "$RAW/install.sh") install.sh && echo "install.sh OK"
+diff <(curl -fsSL "$RAW/deps.conf")  deps.conf  && echo "deps.conf OK"
+git status --short --branch | head -1        # must not say "ahead"
+```
+
+All three must be silent-and-OK before any *Aggiorna*, any `--update`, and any
+`A2`/`A3` run. Raw's CDN can lag a few minutes behind a push; wait and repeat
+rather than assuming.
+
+**Why `YTDL_BRANCH` is needed at all**, unchanged: the probe fetches the pin from
+`<branch>/deps.conf`, `<branch>` defaults to `main`, and **`deps.conf` does not
+exist on `main`** — it is new in this cycle. Point at a branch without one and
+the build reports
 
 ```
 Aggiornamenti: non verificati (l'ultimo tentativo non ha ricevuto risposta)
 ```
 
 for ever, no matter what you do. That is the code behaving correctly on a
-question nobody can answer — and it makes B1, B3, B4 and all of Part A
-unreachable. **It is the first thing to check when the update surface looks
-dead.**
+question nobody can answer, and it makes B1, B3, B4 and all of Part A
+unreachable.
 
-Point the machine at the branch that does carry it:
-
-```bash
-export YTDL_BRANCH=feat/update-path/implementation
-```
-
-> **This is safe, and here is precisely why.** A `deps.conf` on `main` is the
-> fleet-wide lever — every installation reads `main` by default. A `deps.conf`
-> on a **branch** is read by nobody except a machine that has opted in with
-> `YTDL_BRANCH`. Pushing the branch changes nothing for any existing user.
+> **Pushing this branch is safe, and here is precisely why.** A `deps.conf` on
+> `main` is the fleet-wide lever — every installation reads `main` by default. A
+> `deps.conf` on a **branch** is read by nobody except a machine that has opted in
+> with `YTDL_BRANCH`. Pushing the branch changes nothing for any existing user.
 >
 > `unset YTDL_BRANCH` when you finish, and never put it in `~/.zprofile`: it
 > steers the probe, `ytdl --update` **and** the GUI's *Aggiorna* alike.
+
+**The container cannot push.** It has no credentials for `origin` (`gh` is not
+authenticated there either), so `git push` is always yours to run on the Mac. The
+repository is the same directory on both sides — `~/Scripts/yt-download` is
+`/workspace/yt-download` — so there is nothing to transfer first: whatever the
+container committed is already your `HEAD`.
 
 ### P4. Your current installation is a specimen — do not reinstall it yet
 
@@ -271,6 +410,11 @@ Aggiornamenti: <one of the six states>
 | `Aggiornamenti: non controllati (build locale)` | the binary is stamped `dev` — rebuild with the script, which always stamps (P2) |
 | `Aggiornamenti: non verificati (l'ultimo tentativo…)`, always | `YTDL_BRANCH` is unset or points at a branch with no `deps.conf` (P3) |
 | `yt-dlp (non sono riuscito a leggerne la versione)` | a cold yt-dlp exceeded the read budget — finding `V20` |
+| everything looks right, but *Aggiorna* keeps ending in «Aggiornato. Non serve riavviare nulla.» with the version unchanged | `origin` is behind your working tree — run P3's three `diff` lines, finding `V24` |
+
+**`ydev --version` cannot detect the `V24` failure.** It reads only local facts
+and the cached verdict; nothing on this screen depends on what `origin` serves.
+Only P3's content check can tell you, and it has to be run after every push.
 
 ### When a *different* program needs the variables
 
@@ -340,6 +484,9 @@ cp -a ~/.local/bin        ~/ytdl-bin-backup-$(date +%F)
 ```
 
 ### Suggested order
+
+**Resuming rather than starting?** [Ripresa](#ripresa) has the order that applies
+to you; the one below is for a pass run from nothing.
 
 Inside the sandbox almost nothing is destructive any more, so the order is about
 gathering the one-shot observation first and leaving the release for last:
@@ -427,16 +574,47 @@ exercises `release.yml`, which has never run for this cycle.
 > with the code under test. `hack/ytdl-dev.sh install` makes the two the same
 > file, exactly as a real installation has them.
 
-**1. Publish the release candidate.**
+<a id="a1b"></a>
+
+**1. Push the branch, then publish the release candidate — in that order.**
+
+**Rewritten 2026-08-22 after [`V24`](improvements.md#V24).** The earlier version
+began at the tag. A tag can be pushed from a local commit while the branch it
+came from is not, which is exactly what happened: `v2.2.0-rc1` was cut from
+`8b80b66` while `origin`'s branch stayed at `0b33f33`, so the *release* carried
+some fixes and the *installer* carried none.
 
 ```bash
+# a. the branch first — this is what install.sh and deps.conf are served from
+git push origin feat/update-path/implementation
+
+# b. prove the network now serves what you are testing (prerequisite P3)
+export YTDL_BRANCH=feat/update-path/implementation
+RAW="https://raw.githubusercontent.com/alergyonthestage/ytdl/$YTDL_BRANCH"
+diff <(curl -fsSL "$RAW/install.sh") install.sh && echo "install.sh OK"
+diff <(curl -fsSL "$RAW/deps.conf")  deps.conf  && echo "deps.conf OK"
+
+# c. the tag must point at the head you just pushed
+git tag -d v2.2.0-rc1 2>/dev/null            # a stale local tag, if any
 git tag v2.2.0-rc1 && git push origin v2.2.0-rc1
+git log -1 --oneline v2.2.0-rc1              # must equal your HEAD
 ```
+
+**If `v2.2.0-rc1` already exists on GitHub, delete it first** — release *and*
+tag, in the web UI (`gh` is not installed on the Mac). Pushing a tag that the
+remote already has is a no-op: it does **not** re-run `release.yml`, and the
+release keeps the old binary. `git push` printing `[new tag]` is the confirmation
+that it really was gone.
 
 `release.yml` triggers on `v*`, builds both architectures, stamps
 `GITHUB_REF_NAME` and publishes with `gh release create --latest`, so
 `releases/latest` becomes the rc. **Wait for the Actions run to finish** before
-step 4 — a probe that runs first will simply not see it.
+step 4 — a probe that runs first will simply not see it. Confirm:
+
+```bash
+curl -sI https://github.com/alergyonthestage/ytdl/releases/latest | \
+  awk 'tolower($1)=="location:"{print $2}'      # expect …/tag/v2.2.0-rc1
+```
 
 **2. Stop anything still serving.** A rebuild does **not** replace a running
 daemon: `ytdl gui` reuses whatever is already listening, so the old binary keeps
@@ -475,6 +653,11 @@ warm. The page's address is printed either way.
 | `ytdl` **v2.0.9** | a daemon from an earlier build is still serving — go back to step 2 |
 | *Cosa cambia*: `ytdl` v2.0.9 → **v2.2.0-rc1** | the release has not published yet, or `releases/latest` is still v2.1.0 — wait, then press **Controlla ora** |
 
+**And one thing the page cannot tell you**: whether the installer it is about to
+download is the one you are testing. Re-run step 1b if you have pushed anything
+since — a page showing the correct pair of builds and then updating to nothing is
+precisely what `V24` looked like.
+
 Do not proceed until both rows are right. Everything after this measures nothing
 if the page is describing a different pair of builds.
 
@@ -495,6 +678,20 @@ if the page is describing a different pair of builds.
 The token handover is what makes that work; if it were broken you would land on
 a page answering `401 … riapri l'interfaccia con ytdl gui` — a Terminal, i.e.
 exactly the acceptance test failing.
+
+> **«Aggiornato. Non serve riavviare nulla.» is a FAILURE here.** That sentence is
+> `state == "done" && !changed`, and `changed` is false only when the installer
+> did not replace the ytdl binary. In A1b it always should. If you see it, the run
+> did not do what it says — stop, and read the log before pressing anything else:
+>
+> ```bash
+> tail -40 ~/.ytdl-dev/state/ytdl/update.log
+> cat ~/.ytdl-dev/state/ytdl/update-run.json
+> ~/.ytdl-dev/bin/ytdl --version | head -1     # is the binary on disk the rc?
+> ```
+>
+> Pressing *Aggiorna* again only starts a second run over the top of the first,
+> and answers «un aggiornamento è già in corso» while it does.
 
 **What the sandbox changes here.** The installer writes to `YTDL_INSTALL_DIR`, so
 the rc lands in `~/.ytdl-dev/bin/ytdl` and your real `~/.local/bin/ytdl` stays on
@@ -872,12 +1069,19 @@ Run through this even if you stop half-way. Two items reach outside your machine
 
 ```bash
 # 1. the pre-release from A1b — until this cycle ships properly,
-#    releases/latest must go back to v2.1.0
-gh release delete v2.2.0-rc1 --cleanup-tag        # on the Mac; gh is not authenticated in the container
+#    releases/latest must go back to v2.1.0.
+#    gh is NOT installed on the Mac and NOT authenticated in the container:
+#    delete the release AND its tag in the GitHub web UI, then locally:
+git tag -d v2.2.0-rc1
+git fetch --prune --prune-tags origin       # confirms the remote tag is gone
 
 # 2. the throwaway branch from A3
 git push origin --delete test/withdrawn-ffmpeg
 ```
+
+**The implementation branch stays on `origin`.** It is what merges, and after
+[`V24`](improvements.md#V24) leaving it pushed is the safer state, not the riskier
+one: a branch nobody has opted into with `YTDL_BRANCH` reaches no installation.
 
 Then confirm the fleet-wide lever is untouched — **`deps.conf` must still not
 exist on `main`** until the merge:
@@ -897,6 +1101,14 @@ The implementation branch itself **stays** — it is what merges.
 unset YTDL_BRANCH YTDL_REPO YTDL_DEV_VERSION
 hack/ytdl-dev.sh reset          # deletes ~/.ytdl-dev; the real install is untouched
 rm -rf tmp/dev                  # the built binaries (gitignored anyway)
+rm -f  tmp/results-gate.md      # the session transcript, once its findings are registered
+```
+
+And the three backups taken across the sittings, once `ytdl --version` below is
+confirmed correct:
+
+```bash
+rm -rf ~/.local/bin.backup-* ~/ytdl-bin-backup-* ~/ytdl-state-backup-*
 ```
 
 Your installed ytdl should be exactly as it started — **v2.1.0, two lines of
