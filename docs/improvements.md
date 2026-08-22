@@ -596,10 +596,28 @@ $ time ~/.local/bin/yt-dlp --version
 real 0m7.436s   user 0m0.611s   sys 0m0.252s   exit 0
 ```
 
-**7.4 s, exit 0, stdout a clean `2026.07.04\n`, stderr empty** — and *every* run,
-not just the first: yt-dlp ships as a PyInstaller one-file bundle and re-extracts
-itself on each invocation. The parse is fine and the tool is fine; ytdl simply
-gives up before it answers.
+**7.4 s, exit 0, stdout a clean `2026.07.04\n`, stderr empty.** The parse is fine
+and the tool is fine; ytdl simply gives up before it answers.
+
+**Corrected 2026-08-21, same day.** This entry first said the 7.4 s applied to
+*every* run. It does not, and the correction matters because it changes when the
+defect bites. Only `user`+`sys` = 0.86 s of that 7.4 s was work; the rest was
+waiting — a cold page cache and macOS's first-run Gatekeeper verification. Once
+warm, the same machine reads the version fine, which the maintainer's next
+`--version` demonstrated. Measured in this container for comparison: **~800 ms**
+warm, three runs in a row.
+
+So the defect is **intermittent, not permanent**, and its trigger is a *cold*
+invocation — the first after an install, a copy, a reboot, or cache eviction.
+That is not a mitigation: the first `ytdl --version` a new user ever runs is cold
+by definition, and so is the first startup probe after a machine is switched on.
+It does mean a warm machine can look fine and hide it, which is exactly how it
+survived to this point.
+
+(Also corrected: the 11,442 leftover `/tmp/_MEI*` directories found in the
+container are real, but this entry attributed them to `--version`, and that is not
+established — three `--version` runs here left **none**. Their origin is an open
+question for whoever looks at the container image.)
 
 **Where the 3 s came from.** It was measured in this container — `yt-dlp
 --version` costs about 650 ms here — where the bundle was already extracted, and
@@ -660,10 +678,13 @@ This is the case for a by-hand gate C, and it is worth recording as such: the
 maintainer's stated reason for wanting one — "i test passano, ma voglio
 verificare a mano" — was correct.
 
-#### The shape of the fix
+#### The fix — ratified and applied 2026-08-21, **not yet committed**
 
-Not applied here; the documentation phase writes no code, and this needs the
-maintainer's decision because part 3 changes what a verdict means.
+The maintainer authorised leaving the documentation phase to fix this, and
+ratified part 3 below (a separate clause; the three verdict states stay three).
+The change is in the working tree across `internal/update`, `internal/cli` and
+`internal/webui`; see "Open cost" at the end, which must be settled before it is
+committed.
 
 1. **Remove the regression.** 3 s does not describe real hardware. The budget has
    to cover a PyInstaller bundle on a machine that may also be running antivirus,
@@ -682,3 +703,38 @@ nothing reads it. Using the marker as the fast answer for a copy that is ours,
 with the exec as the authority off the critical path, would remove the 7 s from
 `ytdl --version` entirely. It carries its own staleness question (a user running
 `yt-dlp -U` behind ytdl's back), which is why it is a separate decision.
+Deliberately **not** taken as part of this fix: it would have answered the
+honesty question with a guess.
+
+#### What was verified before the container died
+
+Run and green, in this order:
+
+- `go build` · `go vet` · `gofmt -l` clean.
+- The new tests pass, and — the discipline this cycle exists for — they were
+  **run against the code before the fix and shown to fail there**, with exactly
+  the defect's own strings: `"yt-dlp (versione non registrata)\n"` and
+  `"  aggiornamenti: sei aggiornato · verificato il 21/08/2026\n"`.
+- `go test -race -count=1 ./...` **green, every package**.
+
+One earlier full-suite run reported `TestRunQueuedCancelKillsProcessGroup`
+failing. It is **not** a regression: it passes in isolation both with and without
+the fix, and the run that failed was contending with a `sleep 300` and a shim
+`yt-dlp` left behind by a `go test` the harness had killed on a timeout. Recorded
+because "a test failed once" must not be discovered later and mistaken for one.
+
+#### Open cost — settle before committing
+
+**`cmd/ytdl` went from ~13 s to 87 s**, and `TestRealMainStatusNoDaemon` alone
+accounts for ~49 s of it. The cause is this fix: that test runs `ytdl status`,
+which walks the dependencies **with versions**, and a tool that never answers now
+costs the full 30 s instead of 3 s. The suite is correct, just slow — but
+`CLAUDE.md` advertises "~12 s" for the whole suite, and CI pays this on every
+run.
+
+The fix is to stop tests paying a production timeout: make the budget injectable
+(a package variable, or a field beside `BinDirEnv`) so the suite sets something
+small, while the shipped default stays generous. That was **not** done here
+because the container's filesystem went read-only mid-investigation — `/tmp`
+filled with yt-dlp's PyInstaller extractions again — and an unverified change is
+exactly what this cycle's register keeps warning about.

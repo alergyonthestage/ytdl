@@ -21,9 +21,33 @@ const BinDirEnv = "YTDL_BIN_DIR"
 // comparison exact and what lets ytdl show which ffmpeg it has (design §5).
 const MarkerName = "installed.conf"
 
-// versionTimeout bounds asking a dependency for its own version. It is a local
-// exec, so it is fast or it is broken; waiting longer would only delay a surface.
-const versionTimeout = 3 * time.Second
+// versionTimeout bounds asking a dependency for its own version.
+//
+// It was 3 s, on the reasoning that a local exec "is fast or it is broken", and
+// on a measurement of ~650 ms taken in the development container. That
+// measurement was real; what it described was a WARM invocation (`V20`).
+//
+// yt-dlp ships as a PyInstaller one-file bundle that unpacks itself before it
+// can answer. Warm, that costs well under a second — ~800 ms measured in the
+// container. COLD, on a stock macOS machine, `yt-dlp --version` measured
+// **7.4 s**, of which only 0.86 s was CPU: the rest is a cold page cache and
+// Gatekeeper's first-run verification.
+//
+// A cold invocation is not the rare case it sounds like. The first `--version` a
+// new user ever runs is cold, and so is the first startup probe after the machine
+// is switched on.
+//
+// The failure was silent and expensive: the exec returned no answer, which
+// looked exactly like "nobody ever recorded a version", and left the installed
+// yt-dlp UNCOMPARED — so the surface reported "sei aggiornato" on a machine that
+// could not see its own dependency at all.
+//
+// 30 s is four times the measured worst case, leaving room for a slower disk or
+// an antivirus scanner, while still bounding a genuinely hung process. The
+// released Bash-era path had no timeout whatsoever, so this is not a regression
+// against it. Nothing here is on a hot path: only the screens a user opened
+// deliberately pay this cost (see Dependencies' withVersions).
+const versionTimeout = 30 * time.Second
 
 // BinDir is where install.sh puts the tools ytdl drives. It returns "" when the
 // home directory cannot be resolved, in which case resolution falls back to $PATH
@@ -101,7 +125,29 @@ type Dependency struct {
 	// withdrawn upstream (ADR-0016 §15): keeping ytdl installable outranks
 	// keeping it verifiable, but the surface must say which one it got.
 	Attested bool
+
+	// Probed reports that this tool was ASKED for its version. It is what keeps
+	// two different facts apart, which an empty Version alone cannot (`V20`):
+	//
+	//   Probed && Version == ""   we asked and got no usable answer
+	//   !Probed && Version == ""  nobody ever recorded one
+	//
+	// The second is legitimate and common — an ffmpeg installed before the marker
+	// existed has no build id anybody wrote down. The first is a failure, with a
+	// different remedy, and rendering it as the second told the user "versione non
+	// registrata" about a tool that was installed, working, and answering on
+	// demand.
+	Probed bool
 }
+
+// VersionUnreadable reports a tool that was asked for its version and did not
+// give a usable one — it timed out, exited non-zero, or answered something that
+// is not a version string.
+//
+// It is deliberately NOT a kind of staleness: nothing is out of date, we simply
+// failed to look. Like Foreign and Unattested it is its own fact with its own
+// sentence, never folded into the verdict (ADR-0016 §16.5).
+func (d Dependency) VersionUnreadable() bool { return d.Probed && d.Version == "" }
 
 // Missing reports a dependency that is not on this machine at all — a different
 // state from one whose version simply was never written down.
@@ -153,6 +199,10 @@ func Dependencies(stateDir string, withVersions bool) []Dependency {
 				d.Attested = ffmpegAttested
 			}
 		case withVersions:
+			// Probed regardless of the outcome: the point of the flag is that we
+			// tried, so an empty Version below reads as a failure rather than as an
+			// absence of record.
+			d.Probed = true
 			d.Version = toolVersion(path)
 		}
 		deps = append(deps, d)
@@ -193,6 +243,12 @@ func InstalledFrom(deps []Dependency) Installed {
 		// yt-dlp a warning about somebody else's.
 		if !d.Missing() && !d.Ours {
 			in.Foreign = append(in.Foreign, d.Name)
+		}
+		// Asked and unanswered. Recorded whatever else is true of the tool — a
+		// FOREIGN copy whose version we could not read is both facts at once, and
+		// each carries a different remedy.
+		if d.VersionUnreadable() {
+			in.Unreadable = append(in.Unreadable, d.Name)
 		}
 	}
 	return in

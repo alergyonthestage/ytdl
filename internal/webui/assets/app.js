@@ -1050,6 +1050,18 @@ function renderUpdateState() {
   if (!updateInfo.enabled && updateInfo.checkedAt) {
     p.textContent += " Il controllo automatico è disattivato.";
   }
+  // A dependency we could not ask is a SEPARATE sentence beside the verdict, not
+  // a modification of it (ADR-0016 §16.5). Folding it in would force a choice
+  // between two wrong answers: "sei aggiornato" is a certainty ytdl does not
+  // have when it could not compare everything (V20), and "non verificato" would
+  // withhold an update the probe HAS seen.
+  const unreadable = updateInfo.unreadable || [];
+  if (unreadable.length) {
+    // Phrased around the verb: naming the component first would force a gender
+    // onto a tool name and a plural that has to agree with it.
+    p.textContent += " Non ho potuto confrontare " + unreadable.join(" e ") +
+      ": non sono riuscito a leggerne la versione.";
+  }
 }
 
 // The installed versions are LOCAL facts and are always shown, whether or not
@@ -1058,6 +1070,7 @@ function renderUpdateVersions() {
   const dl = $("updateVersions");
   const inst = updateInfo.installed || {};
   const missing = updateInfo.missing || [];
+  const unreadable = updateInfo.unreadable || [];
   const rows = [];
   for (const [label, value] of [["ytdl", inst.ytdl], ["yt-dlp", inst.ytDlp], ["ffmpeg", inst.ffmpeg]]) {
     const dt = el("dt", "", label);
@@ -1068,8 +1081,15 @@ function renderUpdateVersions() {
     // "non installato" contradicted the warning printed directly underneath, and
     // the CLI, about a binary ytdl was at that moment driving (V12).
     const absent = missing.indexOf(label) !== -1;
-    const dd = el("dd", "", value || (absent ? "non installato" : "versione non registrata"));
-    if (!value) dd.className = "muted";
+    // Three ways a version can be missing, and each says something different.
+    // "versione non registrata" used to cover all of them, which called a
+    // working, installed tool unrecorded because ytdl gave up asking it (V20).
+    const unread = unreadable.indexOf(label) !== -1;
+    const why = absent ? "non installato"
+      : unread ? "non sono riuscito a leggerla"
+      : "versione non registrata";
+    const dd = el("dd", "", value || why);
+    if (!value) dd.className = unread ? "warn" : "muted";
     rows.push(dt, dd);
   }
   // A dependency ytdl did not install is a different problem with a different

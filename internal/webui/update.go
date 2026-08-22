@@ -64,6 +64,11 @@ type updateDTO struct {
 	// Unattested: installed by us, but not the build the pin vouches for, because
 	// that build was withdrawn upstream (ADR-0016 §15).
 	Unattested []string `json:"unattested,omitempty"`
+	// Unreadable: asked for a version and gave no usable answer, so it was not
+	// compared. Distinct from Missing (not there) and from a version nobody ever
+	// recorded — the page must not call any of the three by another's name
+	// (ADR-0016 §16.5, finding `V20`).
+	Unreadable []string `json:"unreadable,omitempty"`
 
 	// Blocked is absent when the update can start. It carries the REASON and the
 	// count, because an action that cannot work is disabled with a reason rather
@@ -118,6 +123,7 @@ func (s *Server) buildUpdateDTO() *updateDTO {
 		},
 		Foreign:    v.Installed.Foreign,
 		Unattested: v.Installed.Unattested,
+		Unreadable: v.Installed.Unreadable,
 		Missing:    missingNames(u.Deps()),
 	}
 	if have && !v.CheckedAt.IsZero() {

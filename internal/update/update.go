@@ -74,6 +74,21 @@ type Installed struct {
 	// the version of an unattested component is deliberately left out of the
 	// comparison above, so it can never become a permanent phantom update.
 	Unattested []string `json:"unattested,omitempty"`
+
+	// Unreadable names the dependencies we ASKED for a version and could not get
+	// one from. Their side of the comparison is empty, exactly like Unattested's —
+	// but for the opposite reason, and that difference is the whole point
+	// (ADR-0016 §16.5, finding `V20`).
+	//
+	// An unattested ffmpeg is uncompared BY DESIGN: nobody can answer, and saying
+	// nothing is correct. An unreadable yt-dlp is uncompared BY ACCIDENT: the
+	// answer exists and we failed to obtain it. Left indistinguishable, the second
+	// let a machine that could not see its own yt-dlp report "sei aggiornato".
+	//
+	// It is not a kind of staleness and never makes Known() false — withholding an
+	// update ytdl HAS seen would break the rule that the news is never withheld
+	// (ADR-0016 §9). The surfaces state it as its own sentence beside the verdict.
+	Unreadable []string `json:"unreadable,omitempty"`
 }
 
 // Verdict is one check round, as cached. Everything a surface asks of it is

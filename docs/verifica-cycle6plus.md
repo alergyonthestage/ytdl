@@ -71,37 +71,26 @@ are testing the wrong binary.
 
 ### P1. Build the branch binary — and run it in a sandbox
 
-**Use [`hack/ytdl-dev.sh`](../hack/ytdl-dev.sh); the full reference is
-[dev-testing.md](dev-testing.md).** It sets every isolation variable together,
-which is the part that is easy to get half-right by hand:
+The commands are in [Setup](#setup); this
+section is *why* they are what they are. The tool is
+[`hack/ytdl-dev.sh`](../hack/ytdl-dev.sh), and the full reference — including
+what the sandbox does **not** isolate — is [dev-testing.md](dev-testing.md).
 
-```bash
-hack/ytdl-dev.sh build darwin/arm64    # in the container; darwin/amd64 on Intel
-hack/ytdl-dev.sh seed                  # copy yt-dlp/ffmpeg into the sandbox
-hack/ytdl-dev.sh run -- --version      # on the Mac
-```
+Two things it does that a hand-rolled export list gets wrong:
+
+- **It sets all six variables together.** `YTDL_INSTALL_DIR` (where `install.sh`
+  writes) and `YTDL_BIN_DIR` (where the engine reads) are the same directory under
+  two different names. Set one and you get a sandbox that half works — the
+  installer writing where nothing reads, or the engine reading the real
+  `~/.local/bin` while the installer replaces it. `hack/ytdl-dev.sh env` prints
+  the exact set if you want to see it.
+- **It always stamps the version**, and refuses to produce a build stamped `dev`
+  (P2).
 
 **This changes the shape of gate C for the better.** With the sandbox, the state
 dir, the config, the dependency directory *and* the installer's target are all
 under `~/.ytdl-dev` — so **A2 and A3 no longer destroy your installed ytdl**
 (P5), and the whole of Part B runs without touching anything real.
-
-`uname -m` says which architecture: `arm64` → `darwin/arm64`, `x86_64` →
-`darwin/amd64`.
-
-#### Without the script
-
-```bash
-CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
-  go build -ldflags "-X github.com/alergyonthestage/ytdl/internal/buildinfo.Version=v2.1.0-test" \
-  -o tmp/dev/ytdl-darwin-arm64 ./cmd/ytdl
-```
-
-…and then export the six sandbox variables by hand. **Set them all**: the
-installer writes to `YTDL_INSTALL_DIR` and the engine reads `YTDL_BIN_DIR`, which
-are the same directory under two names — `hack/ytdl-dev.sh env` prints the full
-set. Getting one wrong produces a sandbox that half works, which is worse than
-none.
 
 ### P2. The version stamp decides whether anything happens at all
 
@@ -196,13 +185,108 @@ silently ends your test.
 `~/.local/bin/ytdl` is never touched. Restore the dev build with:
 
 ```bash
-hack/ytdl-dev.sh build darwin/arm64 && hack/ytdl-dev.sh run -- --version
+hack/ytdl-dev.sh build darwin/arm64 && ydev --version
 ```
 
 **Outside the sandbox it is not.** If you insist on testing against the real
 install, back it up first (see Preparation) and check `ytdl --version` prints
 four lines whenever you resume — two means an installer run put v2.1.0 back, and
 everything measured after that point measured the wrong build.
+
+<a id="setup"></a>
+
+## Setup — do this once, and once per new terminal
+
+**Added 2026-08-21, because the first attempt got here and could not proceed.**
+The earlier draft assumed an environment it never told you to build, used a `ydev`
+shortcut it only defined halfway down, and in two places said "export the
+variables" without saying which or how. All of that is here now, in one place,
+before anything needs it.
+
+### 1. In the container — build
+
+```bash
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory \
+       GIT_CONFIG_VALUE_0=/workspace/yt-download
+hack/ytdl-dev.sh build darwin/arm64          # darwin/amd64 on an Intel Mac
+```
+
+### 2. On the Mac — seed, point at the branch, and define the shortcut
+
+```bash
+cd ~/Scripts/yt-download
+
+hack/ytdl-dev.sh seed                        # copies yt-dlp/ffmpeg into the sandbox
+export YTDL_BRANCH=feat/update-path/implementation
+alias ydev='hack/ytdl-dev.sh run'
+```
+
+**`ydev` is a shell alias, not a command.** It exists only in the terminal where
+you typed that line. If you ever see:
+
+```
+bash: ydev: command not found
+```
+
+you are in a terminal that never ran this section — re-run the three lines above.
+`export YTDL_BRANCH=…` is lost the same way, and losing *that* one is quieter:
+everything still runs, and every check just reads `non verificati`.
+
+Anywhere below, `ydev <args>` and `hack/ytdl-dev.sh run <args>` are the same
+thing. So `ydev gui` is `hack/ytdl-dev.sh run gui`, and there is no
+`hack/ytdl-dev.sh gui` — the script's own commands are only `build`, `seed`,
+`run`, `env`, `status` and `reset`.
+
+### 3. Check the setup before trusting anything
+
+```bash
+ydev --version
+```
+
+Expected — **four** lines, a stamp that is not `dev`, and a state line:
+
+```
+ytdl v0.0.0-dev.<sha>
+yt-dlp 2026.07.04
+ffmpeg (versione non registrata)          ← correct on a pre-marker machine (P4)
+Aggiornamenti: <one of the six states>
+```
+
+| What you see instead | What it means |
+|---|---|
+| two lines, `ytdl v2.1.0` | you ran the installed build, not `ydev` |
+| `Aggiornamenti: non controllati (build locale)` | the binary is stamped `dev` — rebuild with the script, which always stamps (P2) |
+| `Aggiornamenti: non verificati (l'ultimo tentativo…)`, always | `YTDL_BRANCH` is unset or points at a branch with no `deps.conf` (P3) |
+| `yt-dlp (non sono riuscito a leggerne la versione)` | a cold yt-dlp exceeded the read budget — finding `V20` |
+
+### When a *different* program needs the variables
+
+`ydev` sets the sandbox for the binary **it** launches. `install.sh` is launched
+by `bash`, not by the script, so it has to inherit the variables instead:
+
+```bash
+eval "$(hack/ytdl-dev.sh env)"     # exports the six into THIS shell
+```
+
+That is needed exactly twice, in A2 and A3. `hack/ytdl-dev.sh env` prints them
+rather than setting them, so you can see what you are getting; `hack/ytdl-dev.sh
+status` shows where the sandbox is and what is in it.
+
+### Opening the dev GUI — use `localhost`, not `127.0.0.1`
+
+`ydev gui` prints and opens `http://127.0.0.1:8790/?t=<token>`, because the host
+is hardcoded. That works, but cookies **ignore the port** (RFC 6265), so a dev GUI
+and the real GUI on `127.0.0.1` overwrite each other's session cookie and one of
+them starts answering `401`.
+
+If you have both open, load the dev one by hand on the other host — `localHost`
+accepts `localhost`, so it is a different cookie domain:
+
+```bash
+open "http://localhost:8790/?t=$(cat ~/.ytdl-dev/state/ytdl/gui.token)"
+```
+
+The `?t=` is what sets the cookie, so it has to be there the first time.
 
 ## Preparation
 
@@ -325,7 +409,7 @@ Then, on the Mac, give the sandbox an **older** build to update *from*:
 YTDL_DEV_VERSION=v2.0.9 hack/ytdl-dev.sh build darwin/arm64
 hack/ytdl-dev.sh seed
 export YTDL_BRANCH=feat/update-path/implementation
-hack/ytdl-dev.sh run -- gui        # opens on :8790
+ydev gui                           # opens on :8790 — see Setup about localhost
 ```
 
 Browse it at **`http://localhost:8790/`**, not `127.0.0.1` — cookies ignore the
@@ -493,15 +577,10 @@ the page, and the disabled **Aggiorna** button shows its reason on hover.
 
 ## Part B — the honesty gate
 
-**Run all of it in the sandbox.** These commands assume:
-
-```bash
-alias ydev='hack/ytdl-dev.sh run --'
-export YTDL_BRANCH=feat/update-path/implementation
-```
-
-so `ydev --version` is the dev build with its own state dir at
-`~/.ytdl-dev/state/ytdl`. Nothing in this Part touches the installed ytdl.
+**Run all of it in the sandbox**, with the `ydev` alias and `YTDL_BRANCH` from
+[Setup](#setup) — so `ydev --version` is
+the dev build reading its own state dir at `~/.ytdl-dev/state/ytdl`. Nothing in
+this Part touches the installed ytdl.
 
 > **Already found here, 2026-08-21: [`V20`](improvements.md#cycle6plus-gatec) —
 > blocking.** On a Mac where `yt-dlp --version` takes longer than 3 s (measured:

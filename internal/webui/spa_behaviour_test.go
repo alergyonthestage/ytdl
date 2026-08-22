@@ -1026,3 +1026,57 @@ startUpdate(true).then(() => console.log("deadline:" + updateDeadline));
 		t.Errorf("a retry inherited the previous run's deadline:\n%s", out)
 	}
 }
+
+// A version ytdl could not READ is a third fact, distinct from a version nobody
+// recorded and from a tool that is absent — finding V20. The page must not
+// borrow one's wording for another, and the verdict beside it must not quietly
+// read "sei aggiornato" when something was left uncompared (ADR-0016 §16.5).
+func TestUnreadableVersionIsItsOwnFact(t *testing.T) {
+	out := runNode(t, updateHarness+`
+// yt-dlp carries no version in the COMPARISON shape, because the read failed.
+updateInfo = Object.assign({}, upToDate, {
+  installed: { ytdl: "v2.1.0", ffmpeg: "9.0" },
+  unreadable: ["yt-dlp"],
+});
+renderUpdateVersions();
+console.log("versions:" + labels("updateVersions"));
+renderUpdateState();
+console.log("state:" + $("updateState").textContent);
+
+// And with everything readable, neither surface says anything about it.
+updateInfo = upToDate;
+renderUpdateVersions();
+console.log("clean-versions:" + labels("updateVersions"));
+renderUpdateState();
+console.log("clean-state:" + $("updateState").textContent);
+`)
+	if !strings.Contains(out, "non sono riuscito a leggerla") {
+		t.Errorf("the versions block did not say the read failed:\n%s", out)
+	}
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "versions:") {
+			if strings.Contains(l, "versione non registrata") {
+				t.Errorf("an unreadable version borrowed the never-recorded wording: %q", l)
+			}
+			if strings.Contains(l, "non installato") {
+				t.Errorf("an unreadable version was called absent: %q", l)
+			}
+		}
+		if strings.HasPrefix(l, "state:") {
+			// The three verdict states stay three: the verdict is untouched and the
+			// unobtainable fact is a sentence beside it.
+			if !strings.Contains(l, "Sei aggiornato") {
+				t.Errorf("the verdict changed instead of gaining a clause: %q", l)
+			}
+			if !strings.Contains(l, "Non ho potuto confrontare yt-dlp") {
+				t.Errorf("the verdict claimed up to date with nothing said about the gap: %q", l)
+			}
+		}
+		if strings.HasPrefix(l, "clean-state:") && strings.Contains(l, "Non ho potuto confrontare") {
+			t.Errorf("the clause appeared with every version readable: %q", l)
+		}
+		if strings.HasPrefix(l, "clean-versions:") && strings.Contains(l, "non sono riuscito a leggerla") {
+			t.Errorf("the read-failed wording appeared with every version readable: %q", l)
+		}
+	}
+}

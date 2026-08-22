@@ -374,3 +374,70 @@ func TestAnUnattestedDependencyIsNeverAPhantomUpdate(t *testing.T) {
 		t.Errorf("RenderVersion hides that the copy is unattested:\n%s", got)
 	}
 }
+
+// TestUnreadableDependencyLine is finding V20's user-visible half: a tool that
+// was asked and did not answer must not be described as one nobody recorded a
+// version for.
+func TestUnreadableDependencyLine(t *testing.T) {
+	unread := update.Dependency{Name: update.ComponentYtDlp, Path: "/x", Ours: true, Attested: true, Probed: true}
+	got := dependencyLine(unread, update.Pin{YtDlp: "2026.08.01"})
+	if !strings.Contains(got, "non sono riuscito a leggerne la versione") {
+		t.Fatalf("line = %q, want it to say the read failed", got)
+	}
+	if strings.Contains(got, "versione non registrata") {
+		t.Fatalf("line = %q, must not borrow the never-recorded wording", got)
+	}
+	// The legitimate never-recorded case keeps its own wording.
+	unrecorded := update.Dependency{Name: update.ComponentFFmpeg, Path: "/y", Ours: true, Attested: true}
+	if got := dependencyLine(unrecorded, update.Pin{}); !strings.Contains(got, "versione non registrata") {
+		t.Fatalf("line = %q, want the never-recorded wording", got)
+	}
+}
+
+// TestUnreadableClauseSitsBesideTheVerdict is ADR-0016 §16.5: the three verdict
+// states stay three, and the unobtainable fact is its own sentence.
+func TestUnreadableClauseSitsBesideTheVerdict(t *testing.T) {
+	now := time.Date(2026, 8, 21, 10, 0, 0, 0, time.UTC)
+	v := UpdateView{
+		Verdict: update.Verdict{
+			CheckedAt:  now,
+			LatestYtdl: "v2.1.0",
+			Pin:        update.Pin{YtDlp: "2026.08.01", FFmpeg: "1785863997_9.0"},
+			Installed: update.Installed{
+				Ytdl: "v2.1.0", FFmpeg: "1785863997_9.0",
+				Unreadable: []string{update.ComponentYtDlp},
+			},
+		},
+		HaveVerdict: true,
+		Enabled:     true,
+		Deps: []update.Dependency{
+			{Name: update.ComponentYtDlp, Path: "/x", Ours: true, Attested: true, Probed: true},
+		},
+		Now: now,
+	}
+
+	// The state itself is untouched — this is what "the three stay three" means.
+	if got := updateState(v); !strings.Contains(got, "sei aggiornato") {
+		t.Fatalf("updateState = %q, want the unchanged up-to-date state", got)
+	}
+	clause := RenderUnreadable(v)
+	if !strings.Contains(clause, "Non ho potuto confrontare yt-dlp") {
+		t.Fatalf("clause = %q, want it to say the component was not compared", clause)
+	}
+
+	// Both screens that show a verdict must carry it: `status` shows only the
+	// state line, so without this it would claim "sei aggiornato" in silence.
+	if got := RenderUpdateState(v); !strings.Contains(got, "Non ho potuto confrontare") {
+		t.Fatalf("status footer = %q, missing the clause", got)
+	}
+	if got := RenderVersion(v); !strings.Contains(got, "Non ho potuto confrontare") {
+		t.Fatalf("--version = %q, missing the clause", got)
+	}
+
+	// And it says nothing at all when everything answered.
+	v.Deps[0].Version = "2026.08.01"
+	v.Verdict.Installed.Unreadable = nil
+	if got := RenderUnreadable(v); got != "" {
+		t.Fatalf("clause = %q, want empty when every version was read", got)
+	}
+}

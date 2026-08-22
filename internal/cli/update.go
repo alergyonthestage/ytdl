@@ -183,6 +183,7 @@ func RenderVersion(v UpdateView) string {
 		b.WriteString(dependencyLine(d, pin))
 	}
 	fmt.Fprintf(&b, "Aggiornamenti: %s\n", updateState(v))
+	b.WriteString(RenderUnreadable(v))
 	return b.String()
 }
 
@@ -194,6 +195,13 @@ func RenderVersion(v UpdateView) string {
 func dependencyLine(d update.Dependency, p update.Pin) string {
 	if d.Missing() {
 		return fmt.Sprintf("%s non installato\n", d.Name)
+	}
+	if d.VersionUnreadable() {
+		// We asked and got nothing usable. Saying "(versione non registrata)" here
+		// described a tool nobody had written a version down for — which was true
+		// of ffmpeg without a marker and false of this, a tool that is installed,
+		// works, and answers when asked with enough patience (`V20`).
+		return fmt.Sprintf("%s (non sono riuscito a leggerne la versione)\n", d.Name)
 	}
 	shown := displayVersion(d.Name, d.Version)
 	if shown == "" {
@@ -218,6 +226,35 @@ func dependencyLine(d update.Dependency, p update.Pin) string {
 	}
 }
 
+// RenderUnreadable states, as its OWN sentence, that a dependency could not be
+// asked its version and was therefore not compared — or "" when everything
+// answered.
+//
+// It sits beside the verdict rather than inside it, which is the ruling in
+// ADR-0016 §16.5. Folding it into the state line would force a choice between
+// two wrong answers: rounding up to "sei aggiornato" (a certainty ytdl does not
+// have — the defect `V20` was) or collapsing to "non verificato" (which would
+// withhold an update ytdl HAS seen, and the news is never withheld).
+//
+// It is not gated on update_check: whether a local binary answered is a local
+// fact, and consent to phone home has nothing to do with it.
+func RenderUnreadable(v UpdateView) string {
+	var names []string
+	for _, d := range v.Deps {
+		if d.VersionUnreadable() {
+			names = append(names, d.Name)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	// Phrased around the verb rather than the component: "yt-dlp non è stata
+	// confrontata" forces a gender onto a tool name, and the plural form would have
+	// to agree with it. This reads the same for one component and for several.
+	return fmt.Sprintf("  Non ho potuto confrontare %s: non sono riuscito a leggerne la versione.\n",
+		strings.Join(names, " e "))
+}
+
 // RenderUpdateState is the one-line update state for `ytdl status`, indented to
 // sit with that screen's other footer facts.
 //
@@ -226,7 +263,10 @@ func dependencyLine(d update.Dependency, p update.Pin) string {
 // the notice beside it would say the same thing twice — and it says something on
 // every run, which is what "always in status" asks for.
 func RenderUpdateState(v UpdateView) string {
-	return "  aggiornamenti: " + updateState(v) + "\n"
+	// The unreadable clause rides with the state on this screen too: `status` is
+	// where a user goes to ask whether anything is wrong, and a verdict that was
+	// reached without comparing everything must say so wherever it appears.
+	return "  aggiornamenti: " + updateState(v) + "\n" + RenderUnreadable(v)
 }
 
 // updateState is the last line of `ytdl --version` and of `ytdl status`: which of

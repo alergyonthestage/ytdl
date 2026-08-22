@@ -177,3 +177,71 @@ func TestWithInstalledRebasesACachedRoundOnLiveFacts(t *testing.T) {
 		t.Error("WithInstalled disturbed the remote half of the round")
 	}
 }
+
+// TestUnreadableIsNotUnrecorded pins the distinction finding V20 turned on: an
+// empty Version means two different things, and only Probed tells them apart.
+func TestUnreadableIsNotUnrecorded(t *testing.T) {
+	cases := []struct {
+		name       string
+		dep        Dependency
+		unreadable bool
+	}{
+		{"asked and answered", Dependency{Name: ComponentYtDlp, Path: "/x", Probed: true, Version: "2026.07.04"}, false},
+		{"asked and silent", Dependency{Name: ComponentYtDlp, Path: "/x", Probed: true}, true},
+		{"never asked", Dependency{Name: ComponentFFmpeg, Path: "/x"}, false},
+		{"not there at all", Dependency{Name: ComponentYtDlp}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.dep.VersionUnreadable(); got != c.unreadable {
+				t.Fatalf("VersionUnreadable() = %v, want %v", got, c.unreadable)
+			}
+		})
+	}
+}
+
+// TestUnreadableSurvivesTheFlattening is the second half of V20: the fact has to
+// reach the surfaces, which read Installed rather than the Dependency list.
+func TestUnreadableSurvivesTheFlattening(t *testing.T) {
+	in := InstalledFrom([]Dependency{
+		{Name: ComponentYtDlp, Path: "/x", Ours: true, Attested: true, Probed: true},
+		{Name: ComponentFFmpeg, Path: "/y", Ours: true, Attested: true, Version: "1785863997_9.0"},
+	})
+	if len(in.Unreadable) != 1 || in.Unreadable[0] != ComponentYtDlp {
+		t.Fatalf("Unreadable = %v, want [yt-dlp]", in.Unreadable)
+	}
+	// It must NOT be reported as foreign or unattested: three separate facts with
+	// three separate remedies.
+	if len(in.Foreign) != 0 || len(in.Unattested) != 0 {
+		t.Fatalf("foreign=%v unattested=%v, want both empty", in.Foreign, in.Unattested)
+	}
+	// And the comparison still refuses to guess: an unreadable side stays empty,
+	// so nothing is invented for it.
+	if in.YtDlp != "" {
+		t.Fatalf("YtDlp = %q, want empty", in.YtDlp)
+	}
+}
+
+// TestUnreadableNeverForcesNotVerified is the ruling in ADR-0016 §16.5: an
+// unobtainable LOCAL fact must not suppress a remote answer the probe did get.
+func TestUnreadableNeverForcesNotVerified(t *testing.T) {
+	v := Verdict{
+		LatestYtdl: "v2.2.0",
+		Pin:        Pin{YtDlp: "2026.08.01", FFmpeg: "1785863997_9.0"},
+		Installed: Installed{
+			Ytdl: "v2.1.0", FFmpeg: "1785863997_9.0",
+			Unreadable: []string{ComponentYtDlp},
+		},
+	}
+	if !v.Known() {
+		t.Fatal("Known() = false: an unreadable local fact must not withhold the news")
+	}
+	if !v.Available() {
+		t.Fatal("Available() = false: the ytdl update the probe saw must still be reported")
+	}
+	for _, c := range v.Changes() {
+		if c.Component == ComponentYtDlp {
+			t.Fatalf("yt-dlp reported as changed from an unreadable version: %+v", c)
+		}
+	}
+}
