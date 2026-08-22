@@ -94,11 +94,11 @@ defect: it was `V21` and `V23`, unfixed, because the fixes were never published.
 
 ```mermaid
 flowchart TD
-  F["1 · fix pass in the container<br/>V23 · V25 · then push"] --> P["2 · on the Mac: verify what<br/>the NETWORK serves = what you built"]
-  P --> R["3 · re-publish v2.2.0-rc1<br/>the tag must point at the new head"]
-  R --> A["4 · A1b from step 2<br/>the handover, for the first time"]
-  A --> B["5 · Part B · A2 · A3 · A4"]
-  B --> C["6 · Part C · cleanup"]
+  F["1 · fix pass, in the container<br/>V23 · V25"] --> P["2 · push the branch<br/>from the Mac"]
+  P --> D["3 · diff what the network serves<br/>against what you are testing"]
+  D --> R["4 · delete and re-cut v2.2.0-rc1<br/>from the new head"]
+  R --> A["5 · A1b from its step 2<br/>the handover, for the first time"]
+  A --> B["then · Part B · A2 · A3 · A4 · Part C · cleanup"]
 ```
 
 **1 — in the container, and this needs the maintainer's go-ahead.** `V23` and
