@@ -764,11 +764,23 @@ of them blocking**, registered as
   silently inert. The budget came from a real 650 ms measurement taken in the
   container, where the invocation was warm: the measurement was true and the
   conclusion did not describe the target platform.
-- **`V21` (open, BLOCKING)** — the GUI applies an update, reports «Aggiornato. Non
-  serve riavviare nulla.», changes nothing, and offers the same update again for
-  ever. The handover has still never completed. Diagnosis is narrowed to two
-  candidate causes and needs four commands on the Mac to settle.
+- **`V21` (fixed, `70368cd`)** — `install.sh` aborted mid-install on **macOS's
+  bash 3.2**, whose parser reads the bytes of a multi-byte character as part of an
+  identifier: an unbraced expansion before an ellipsis named a variable that does
+  not exist, and `set -u` did the rest. The GUI therefore offered the same update
+  for ever. It survived 101 green assertions because the only shell that
+  reproduces it is the one this project never tests on; the suite now refuses the
+  shape outright.
+- **`V23` (open)** — that aborted install was recorded as `done, exit 0`, so the
+  page reported success for an install that installed nothing. The mechanism is
+  unproven and the container cannot establish it; hardening is applied and a
+  three-line experiment on the Mac settles it.
 - **`V22`** (open, minor) and **`V19`** (cosmetic, deliberately unfixed).
+
+**The lesson of this gate, twice over, is about the container**: it answered
+truthfully both times and the question was not the one that mattered. It is not
+the target platform, and for anything touching the shell or a cold process it
+cannot stand in for one.
 
 The by-hand pass also rewrote its own instructions three times: the checklist
 assumed the released `ytdl` on `$PATH` was under test, then that a rebuild

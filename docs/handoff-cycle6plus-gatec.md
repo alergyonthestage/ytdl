@@ -12,14 +12,15 @@ flowchart LR
   R2 --> DOC["documentation<br/>✓"]
   DOC --> GC["gate C — BY HAND<br/>◀ you are here"]
   GC --> M["merge --no-ff"]
-  GC -.->|"found V19–V22"| FIX["fix pass"]
+  GC -.->|"found V19–V23"| FIX["fix pass"]
   FIX --> GC
 ```
 
 The documentation phase is **done**. Gate C is being run **by hand on macOS by the
 maintainer**, at their explicit request ("i test passano, ma voglio verificare a
-mano"), and it has already justified itself: **four findings in two sittings, two
-of them blocking**, none of which the suite could have reached.
+mano"), and it has already justified itself: **five findings in three sittings,
+two of them blocking and both now fixed**, none of which the suite could have
+reached.
 
 **Branch `feat/update-path/implementation`, pushed, NOT merged.** `main` untouched.
 Last commit at handoff: see `git log -1`.
@@ -28,7 +29,7 @@ Last commit at handoff: see `git log -1`.
 |---|---|
 | `go build` · `go vet` · `gofmt -l` | clean |
 | `go test -race -count=1 ./...` | green |
-| `bash tests/test-installer.sh` | 101/101 |
+| `bash tests/test-installer.sh` | **103/103** (two added by the `V21` fix) |
 | `git diff main -- internal/core/ internal/daemon/` | **empty** |
 
 ## Start here, in this order
@@ -37,34 +38,72 @@ Last commit at handoff: see `git log -1`.
    Read `Setup` and the five Prerequisites before anything: four assumptions that
    are *not* true by default, each of which silently invalidated an attempt.
 2. **[improvements.md § Gate-C findings](improvements.md#cycle6plus-gatec)** —
-   `V20`–`V22`, with what is established and what still needs the Mac.
+   `V19`–`V23`, with what is established and what still needs the Mac.
 3. **[dev-testing.md](dev-testing.md)** — the sandbox, permanent reference.
 
-## The immediate job: V21
+## V21 is diagnosed and fixed. V23 is what remains.
 
-**`V21` is where the maintainer stopped**, and it is the one thing blocking the
-rest of gate C. The GUI applies an update, reports «Aggiornato. Non serve
-riavviare nulla.», changes nothing, and offers the same update again — for ever.
+**`V21` — resolved (`70368cd`).** The maintainer ran the four diagnostic commands
+and they settled it in one pass. Neither hypothesis the register carried was
+right, which is why they were written as hypotheses.
 
-The register has the full analysis. In one line: the panel's wording means
-`state == done && !changed`, `shouldHandOver` needs `Changed`, and `Changed` is
-inferred in `Runner.finish` from the installer's marker — so it is false in
-exactly two cases, **the installer skipped ytdl** or **the marker recorded no
-version**.
+`install.sh:541` was `info "Downloading yt-dlp $YTDLP_TARGET…"`. **macOS ships
+bash 3.2**, whose parser keeps reading the bytes of a multi-byte character as part
+of an identifier — so the expansion named `YTDLP_TARGET` plus the three bytes of
+the ellipsis, a variable that does not exist, and `set -u` aborted the installer
+there: after `deps.conf` was read, before anything was installed.
 
-**Do not start by reading code.** The next step is four commands on the Mac, run
-after an *Aggiorna* that ends in «Non serve riavviare nulla»:
+It explains every observation at once — no `installed.conf`, the binary untouched
+at v2.0.9, `Changed` false, no handover, the same update offered for ever. And it
+explains why nothing caught it: **the only shell that reproduces it is the one
+this project never tests on.** bash 5 stops at the first non-ASCII byte.
+
+Fixed by bracing, plus a portability check in `tests/test-installer.sh` that
+refuses the shape outright (verified 102/0 with the fix, 101/1 against the
+original line). Suite now **103/0**.
+
+### The open one: V23 — a failed install recorded as a successful run
+
+The installer died with a non-zero status and the run record said
+`{"state":"done","exit_code":0,"changed":false}`. The GUI therefore reported
+**«Aggiornato. Non serve riavviare nulla.»** for an install that installed
+nothing — worse than a failure, because the failure path offers the log and
+*Riprova* and this offers neither.
+
+**The mechanism is NOT established, and the container cannot establish it.**
+Replicating `Runner.Start`'s exact pipeline and `Wait` ordering here yields
+`shErr = exit status 1` and would record `failed`, correctly. The difference is in
+bash 3.2; the leading candidate is the EXIT trap, which ended in `return 0`.
+
+**Hardening is applied, not a proven fix**: `cleanup` now captures `$?` and exits
+with it — correct under both shells, costs nothing — and the suite pins the
+invariant that an aborted install exits non-zero. Written down honestly beside the
+test: **bash 5 preserves the status by itself, so that test passes with or without
+the change.**
+
+**Start the next session with this**, three lines on the Mac:
 
 ```bash
-cat ~/.ytdl-dev/state/ytdl/installed.conf
-cat ~/.ytdl-dev/state/ytdl/update-run.json
-~/.ytdl-dev/bin/ytdl --version
-tail -60 ~/.ytdl-dev/state/ytdl/update.log
+bash --version | head -1
+printf 'set -euo pipefail\ncleanup(){ return 0; }\ntrap cleanup EXIT\necho hi\necho "$NOPE"\n' | bash -s --
+echo "exit=$?"
 ```
 
-They decide between the two branches in one pass — the register says how to read
-them. Reproduce before reporting is this cycle's own rule, and it has already
-saved it twice.
+`exit=0` confirms the trap hypothesis and the hardening is the fix. `exit=1`
+refutes it, and the next place to look is `curl.Wait()` being called before
+`sh.Wait()` in `Runner.Start` — which Go's own documentation calls incorrect when
+`StdoutPipe` is used.
+
+**Then re-run A1b from step 1**, with the fixed installer: publish `v2.2.0-rc1`
+again (the tag was deleted), `stop`, rebuild stamped `v2.0.9`, `install`, and this
+time the handover should actually happen. That is still the thing this cycle has
+never done.
+
+**Worth deciding at the same time**: the runner trusts an exit status for a
+question it could verify. `install.sh` writes `installed.conf` on every completed
+run, so a run reporting success without advancing the marker's `installed_at` did
+not finish — an invariant the runner could check instead of inferring, and one
+that would have caught this regardless of the shell.
 
 **A `v2.2.0-rc1` release must exist on the real repo** for any of this to be
 reachable; the maintainer publishes and deletes it (checklist A1b step 1 and step
@@ -77,12 +116,16 @@ the GitHub web UI.
 |---|---|---|
 | `V19` | `internal/update`'s package comment claims an import it does not have | cosmetic, **not fixed** by choice |
 | `V20` | a cold `yt-dlp --version` exceeds the read budget; the surface then says «versione non registrata» and, worse, reports «sei aggiornato» while unable to compare yt-dlp at all | **fixed** (`8b80b66`) |
-| `V21` | the GUI update loops; no handover, nothing changes | **open, BLOCKING** |
-| `V22` | right after an update the verdict reads «nessun controllo ancora eseguito» | open, minor, may be a consequence of `V21` |
+| `V21` | `install.sh` aborted on macOS's bash 3.2 (an unbraced expansion before `…`); the GUI update therefore looped for ever | **fixed** (`70368cd`) |
+| `V22` | right after an update the verdict reads «nessun controllo ancora eseguito» | open, minor |
+| `V23` | that aborted install was recorded as `done, exit 0` — a failure presented as a successful no-op | **open**, mechanism unproven, hardening applied |
 
-`V20` is worth remembering for method: the 3-second budget came from a real
-measurement (650 ms) taken in this container, where the invocation was warm. The
-measurement was true and the conclusion did not describe the target platform.
+**Two findings, one lesson, and it is about this container.** `V20`'s 3-second
+budget came from a real 650 ms measurement taken here, where the invocation was
+warm. `V21` survived 101 green assertions because bash 5 parses a line that
+bash 3.2 does not. Both times the container answered a question truthfully and the
+question was not the one that mattered: **it is not the target platform, and for
+anything touching the shell or a cold process it cannot stand in for one.**
 
 ## Open cost, carried from the V20 fix — settle before merging
 
@@ -134,7 +177,8 @@ Container gotchas:
 
 Unchanged, and recorded so "gate C in progress" is not read as "verified":
 
-- **The handover has never completed.** `V21` is exactly this.
+- **The handover has never completed.** `V21` was why; with it fixed, A1b is the
+  next thing to run, and it is still unproven.
 - `install.sh` **has** now run against the real network on a real Mac (A2 is the
   first time), but the **withdrawn-build fallback** has never fired.
 - The **canary workflow** has never executed.
