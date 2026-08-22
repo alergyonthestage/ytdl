@@ -707,7 +707,7 @@ two findings, **G27** and **G28**, which land in this cycle. What remains is the
   which scope decided it; no per-download control is sticky by accident; the same
   rule is stated once in `ux-principles.md` §8 and holds in both channels.
 
-#### Cycle 6-plus — the update path (`F`) — **gate C running by hand; four findings, one blocking (2026-08-22)**
+#### Cycle 6-plus — the update path (`F`) — **gate C: seven findings, three blocking; a fix pass is due before it can be re-run (2026-08-22)**
 
 Not a gate-C finding: raised by the maintainer on 2026-08-09, immediately after
 installing v2.1.0 by hand. **Pulled ahead of Cycle 6 on 2026-08-12**, when ytdl
@@ -738,7 +738,8 @@ cycle's close.
 `feat/update-path/implementation`, **not yet merged**, and **both review passes
 and both fix passes are done**. Re-verified without the test cache: the suite is
 green under `-race`, `go vet` and `gofmt` are clean,
-`tests/test-installer.sh` passes **101/101**, and the parity gate
+`tests/test-installer.sh` passes **103/103** — re-run 2026-08-22, and also under
+a real bash 3.2 — and the parity gate
 (`git diff main -- internal/core/ internal/daemon/`) is **empty**.
 
 **The documentation phase is done** (2026-08-21). The three normative documents
@@ -771,16 +772,35 @@ of them blocking**, registered as
   for ever. It survived 101 green assertions because the only shell that
   reproduces it is the one this project never tests on; the suite now refuses the
   shape outright.
-- **`V23` (open)** — that aborted install was recorded as `done, exit 0`, so the
-  page reported success for an install that installed nothing. The mechanism is
-  unproven and the container cannot establish it; hardening is applied and a
-  three-line experiment on the Mac settles it.
+- **`V23` (mechanism proven; the applied hardening does *not* fix it)** — that
+  aborted install was recorded as `done, exit 0`, so the page reported success for
+  an install that installed nothing. Settled in the container on 2026-08-22
+  against a **bash 3.2 built from source**: it enters the `EXIT` trap with
+  `$? = 0` after a `set -u` abort, and only after that one. `local rc=$?; exit
+  "$rc"` therefore still exits 0 — and the test that pins the invariant aborts
+  through an explicit `exit 1`, the case 3.2 gets right. A fix that works under
+  both shells is measured (a completion flag) and not yet written.
+- **`V24` (open, blocking)** — **the branch was never pushed**, and the update
+  runner fetches `install.sh` from `raw.githubusercontent.com/<slug>/<branch>/`,
+  i.e. from `origin`, which is eight commits behind. So every *Aggiorna* on the
+  Mac ran the **pre-`V21`** installer, and `V21`, `V23`'s hardening and `V20`'s
+  branch code have **never been exercised on real hardware**. The `v2.2.0-rc1`
+  release is the asymmetric case: its tag was pushed from a local commit, so the
+  release and the branch describe different code. The checklist's `P3` asked
+  whether the branch *existed* on `origin`; it now compares **content**.
+- **`V25` (open, blocking for the merge)** — one `go test -race ./...` takes
+  **4 m 26 s** and leaves **1715 `/tmp/_MEI*` directories, 91 GB**: a *killed*
+  `yt-dlp` never removes its PyInstaller extraction, and `V20`'s 30-second budget
+  makes `cmd/ytdl` kill it in bulk. That is what turned the container's filesystem
+  read-only twice, and it answers the question `V20` left open.
 - **`V22`** (open, minor) and **`V19`** (cosmetic, deliberately unfixed).
 
-**The lesson of this gate, twice over, is about the container**: it answered
-truthfully both times and the question was not the one that mattered. It is not
-the target platform, and for anything touching the shell or a cold process it
-cannot stand in for one.
+**The lesson of this gate, three times over, is about the container**: it answered
+truthfully every time and the question was not the one that mattered. Warm where
+the Mac is cold (`V20`); bash 5 where the Mac is 3.2 (`V21`); and — the widest —
+**the working tree is not what the update path runs** (`V24`). For anything
+fetched over the network the artefact under test is the *published* one, and a
+local commit is invisible to it.
 
 The by-hand pass also rewrote its own instructions three times: the checklist
 assumed the released `ytdl` on `$PATH` was under test, then that a rebuild
@@ -789,9 +809,12 @@ somewhere other than the installer's target. Those corrections produced
 `hack/ytdl-dev.sh` and [dev-testing.md](dev-testing.md), a **permanent** sandbox
 for running dev builds — the one artefact of this phase that outlives the cycle.
 
-**What remains**: settle `V21`, fix what it turns out to be, re-run the affected
-parts of the checklist, close the open cost the `V20` fix carries (`cmd/ytdl`'s
-test time went from ~13 s to 87 s), and **then** merge `--no-ff`. The session
+**What remains**, in order: a **fix pass** for `V23` and `V25`; the maintainer
+**pushes the branch** (the container has no credentials for `origin`); `P3`'s
+content check; **re-cut `v2.2.0-rc1`** from the new head; then **A1b**, which is
+still the thing this cycle has never once completed; then the rest of the
+checklist; and **then** merge `--no-ff`. The sequence is written out in
+[verifica-cycle6plus.md § Ripresa](verifica-cycle6plus.md#ripresa); the session
 handoff is [handoff-cycle6plus-gatec.md](handoff-cycle6plus-gatec.md).
 
 **Two review passes, eighteen findings, all fixed.** The first reviewed the
