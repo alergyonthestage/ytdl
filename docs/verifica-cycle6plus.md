@@ -234,8 +234,21 @@ everything still runs, and every check just reads `non verificati`.
 
 Anywhere below, `ydev <args>` and `hack/ytdl-dev.sh run <args>` are the same
 thing. So `ydev gui` is `hack/ytdl-dev.sh run gui`, and there is no
-`hack/ytdl-dev.sh gui` — the script's own commands are only `build`, `seed`,
-`run`, `env`, `status` and `reset`.
+`hack/ytdl-dev.sh gui` — the script's own commands are:
+
+| Command | What it does |
+|---|---|
+| `build [GOOS/GOARCH]` | cross-compile, always stamped |
+| `seed` | copy yt-dlp/ffmpeg into the sandbox |
+| `run <args>` | run the built binary with the sandbox environment |
+| `install` | put the build where a real install lives — **required for A1b only** |
+| `stop` | stop the sandbox daemon (never the real one) |
+| `env` · `status` · `reset` | print the exports · show state · delete the sandbox |
+
+**`stop` is the one people miss.** `ytdl gui` reuses a daemon that is already
+listening, so a rebuild does **not** replace a running one: the old binary keeps
+serving and the page keeps showing the old version, which looks like the build
+did nothing. `hack/ytdl-dev.sh status` says whether one is running.
 
 ### 3. Check the setup before trusting anything
 
@@ -287,6 +300,14 @@ open "http://localhost:8790/?t=$(cat ~/.ytdl-dev/state/ytdl/gui.token)"
 ```
 
 The `?t=` is what sets the cookie, so it has to be there the first time.
+
+**`gui.token` does not exist until a GUI daemon has started at least once.** Run
+`ydev gui` first; `cat: …/gui.token: No such file or directory` means no daemon of
+yours has ever run, not that something is broken.
+
+If you are **not** running the real GUI at the same time, none of this matters —
+`127.0.0.1:8790` and `localhost:8790` both reach the same server, and either is
+fine.
 
 ## Preparation
 
@@ -385,50 +406,84 @@ that will overwrite your test binary (P5).
 
 #### A1b. The full handover — with a real pre-release
 
-Two builds that both carry the update path means **publishing one**.
+**Rewritten 2026-08-21 after the first attempt.** The earlier draft was wrong in
+three ways that cost a release: it never said to press **Aggiorna**, its numbered
+steps started at 4, and it put the cleanup *before* the action, so a reader
+following it in order deleted the release before using it. It also had the sandbox
+arranged so the handover could not have worked. All four are fixed below; the
+steps are one sequence, and nothing is deleted until step 9.
 
-**Decided by the maintainer, 2026-08-21: publish it on the real repository.** The
-earlier draft of this step routed around a scratch repo to protect the first
-non-maintainer user; that install was **deferred precisely until this cycle
-ships**, so there is no installation anywhere that a release could reach. The
-risk that made a scratch repo worth its cost does not exist, and a real
-pre-release additionally exercises `release.yml`, which has never run for this
-cycle.
+Two builds that both carry the update path means **publishing one**. Decided by
+the maintainer, 2026-08-21: publish it on the real repository. The first
+non-maintainer install was **deferred precisely until this cycle ships**, so there
+is no installation anywhere a release could reach — and a real pre-release also
+exercises `release.yml`, which has never run for this cycle.
+
+> **Why the binary has to be `install`ed and not just `run`.** The daemon re-execs
+> `os.Executable()`, and `install.sh` replaces `$YTDL_INSTALL_DIR/ytdl`. If the
+> running binary is the one in `tmp/dev/`, the handover restarts **that** — the
+> old build — the page never sees a new version, and you get the 60-second
+> "non sono riuscito a riaprire l'interfaccia" for a reason that has nothing to do
+> with the code under test. `hack/ytdl-dev.sh install` makes the two the same
+> file, exactly as a real installation has them.
+
+**1. Publish the release candidate.**
 
 ```bash
 git tag v2.2.0-rc1 && git push origin v2.2.0-rc1
 ```
 
 `release.yml` triggers on `v*`, builds both architectures, stamps
-`GITHUB_REF_NAME` and publishes with `gh release create --latest`. So
-`releases/latest` becomes the rc — which is exactly what the probe must see.
+`GITHUB_REF_NAME` and publishes with `gh release create --latest`, so
+`releases/latest` becomes the rc. **Wait for the Actions run to finish** before
+step 4 — a probe that runs first will simply not see it.
 
-Then, on the Mac, give the sandbox an **older** build to update *from*:
+**2. Stop anything still serving.** A rebuild does **not** replace a running
+daemon: `ytdl gui` reuses whatever is already listening, so the old binary keeps
+answering and the new stamp never appears.
+
+```bash
+hack/ytdl-dev.sh stop
+```
+
+**3. Build an OLDER build to update *from*, and install it into the sandbox.**
 
 ```bash
 YTDL_DEV_VERSION=v2.0.9 hack/ytdl-dev.sh build darwin/arm64
 hack/ytdl-dev.sh seed
+hack/ytdl-dev.sh install
 export YTDL_BRANCH=feat/update-path/implementation
-ydev gui                           # opens on :8790 — see Setup about localhost
 ```
 
-Browse it at **`http://localhost:8790/`**, not `127.0.0.1` — cookies ignore the
-port, so a dev GUI and a real GUI on `127.0.0.1` fight over one session cookie
-(see [dev-testing.md](dev-testing.md)). `localhost` is in `localHost`'s
-allowlist, so it is a different cookie domain and they coexist.
+**4. Start the GUI from the installed copy** — not through `ydev`, for the reason
+in the box above:
 
-> **Afterwards, delete the release and the tag.** Until this cycle merges and
-> ships properly, `releases/latest` should go back to v2.1.0:
->
-> ```bash
-> gh release delete v2.2.0-rc1 --cleanup-tag     # on the Mac; gh is not authenticated in the container
-> ```
->
-> And re-check that `deps.conf` on **`main`** is still absent: the fleet-wide
-> lever is that file on that branch, and nothing in this test should have put
-> one there.
+```bash
+eval "$(hack/ytdl-dev.sh env)"
+~/.ytdl-dev/bin/ytdl gui
+```
 
-4. Watch, without touching anything.
+If it reports «Il motore non ha aperto l'interfaccia in tempo», the binary was
+cold and took longer than the 10-second wait. Run it again; the second start is
+warm. The page's address is printed either way.
+
+**5. Check what the page says BEFORE touching anything.** *Impostazioni* →
+*Versione e aggiornamenti*:
+
+| Must read | If it does not |
+|---|---|
+| `ytdl` **v2.0.9** | a daemon from an earlier build is still serving — go back to step 2 |
+| *Cosa cambia*: `ytdl` v2.0.9 → **v2.2.0-rc1** | the release has not published yet, or `releases/latest` is still v2.1.0 — wait, then press **Controlla ora** |
+
+Do not proceed until both rows are right. Everything after this measures nothing
+if the page is describing a different pair of builds.
+
+**6. Press *Aggiorna*, and confirm.** The confirmation **must** say
+«L'interfaccia si chiude e si riapre da sola» — that clause appears only when
+`ytdl` is among the changes, which is `confirmUpdate`'s whole point. Press
+**Conferma**.
+
+**7. Watch, without touching anything.**
 
 | Must happen | Must **not** happen |
 |---|---|
@@ -441,19 +496,34 @@ The token handover is what makes that work; if it were broken you would land on
 a page answering `401 … riapri l'interfaccia con ytdl gui` — a Terminal, i.e.
 exactly the acceptance test failing.
 
-**Note what the sandbox changes here.** The installer writes to
-`YTDL_INSTALL_DIR`, so the rc lands in `~/.ytdl-dev/bin/ytdl` and your real
-`~/.local/bin/ytdl` stays on v2.1.0 throughout. The handover self-execs
-`os.Executable()`, which is the sandbox copy — so the whole sequence happens
-inside the sandbox, which is the first time this cycle has had a way to run it
-without consequences.
+**What the sandbox changes here.** The installer writes to `YTDL_INSTALL_DIR`, so
+the rc lands in `~/.ytdl-dev/bin/ytdl` and your real `~/.local/bin/ytdl` stays on
+v2.1.0 throughout. The whole sequence happens inside the sandbox — the first time
+this cycle has had a way to run it without consequences.
 
-5. Repeat once **with a second tab open**. The second tab must also show the
-   running panel (it adopts the run on load — `V17`), and must not start a second
-   update.
+**8. Repeat once with a second tab open.** The second tab must also show the
+running panel (it adopts the run on load — `V17`), and must not start a second
+update. Getting back to a pre-update state costs a rebuild:
 
-6. Afterwards: `unset YTDL_BRANCH`, delete the release and tag, and
-   `hack/ytdl-dev.sh reset` when you no longer need the sandbox.
+```bash
+hack/ytdl-dev.sh stop
+YTDL_DEV_VERSION=v2.0.9 hack/ytdl-dev.sh build darwin/arm64 && hack/ytdl-dev.sh install
+```
+
+**9. Only now, clean up.**
+
+```bash
+gh release delete v2.2.0-rc1 --cleanup-tag   # on the Mac; gh is not authenticated in the container
+unset YTDL_BRANCH
+```
+
+Then confirm `releases/latest` is back to v2.1.0 and that `deps.conf` is still
+absent on `main` — the full cleanup checklist is at the end of this document.
+
+> **If you deleted the release before step 7** — which the earlier draft invited —
+> nothing is lost but the tag. Re-run step 1 to publish it again, then continue
+> from step 2. The tag was removed by `--cleanup-tag`, so `git tag v2.2.0-rc1`
+> recreates it from the current branch head.
 
 #### A1c. If you skip A1b
 

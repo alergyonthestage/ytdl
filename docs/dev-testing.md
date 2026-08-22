@@ -19,12 +19,48 @@ down. Nothing here is a new engine capability.
 ```bash
 hack/ytdl-dev.sh build darwin/arm64   # cross-compiles; run it in the container
 hack/ytdl-dev.sh seed                 # copy yt-dlp/ffmpeg into the sandbox
-hack/ytdl-dev.sh run -- --version     # run the dev build, isolated
+hack/ytdl-dev.sh run --version        # run the dev build, isolated
+hack/ytdl-dev.sh stop                 # stop the sandbox daemon
+hack/ytdl-dev.sh install              # only when testing the update handover
 hack/ytdl-dev.sh status               # what is set and what is in the sandbox
 hack/ytdl-dev.sh reset                # delete the sandbox; never the real install
 ```
 
 The sandbox lives at `~/.ytdl-dev` (`YTDL_DEV_HOME` to move it).
+
+### A rebuild does not replace a running daemon
+
+`ytdl gui` starts a daemon only when nothing is already listening
+(`cmd/ytdl/main.go`: `if !listening { spawn }`). So rebuilding while a sandbox
+GUI is up changes nothing you can see: the old process keeps its inode, keeps
+serving, and keeps reporting the **old** version — which reads exactly like a
+build that silently failed.
+
+```bash
+hack/ytdl-dev.sh stop      # then start it again
+```
+
+`status` reports whether one is running, and `build` warns when it finds one.
+
+### Testing the update handover needs `install`
+
+The handover re-execs `os.Executable()`, and `install.sh` replaces
+`$YTDL_INSTALL_DIR/ytdl`. Those have to be the **same file**, or the handover
+restarts the binary in `tmp/dev/` — the old one — the page never observes a new
+version, and it fails after 60 s for a reason unrelated to the code.
+
+`hack/ytdl-dev.sh install` copies the build to `~/.ytdl-dev/bin/ytdl`, which is
+what `YTDL_INSTALL_DIR` points at, reproducing a real installation's layout. Run
+that copy with the sandbox environment applied:
+
+```bash
+hack/ytdl-dev.sh install
+eval "$(hack/ytdl-dev.sh env)"
+~/.ytdl-dev/bin/ytdl gui
+```
+
+`run` deliberately keeps executing the build directory: that is the predictable
+thing for ordinary CLI checks, where nothing replaces the binary underneath.
 
 ## What is isolated, and by which variable
 
