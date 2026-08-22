@@ -554,5 +554,53 @@ FORCE=0; FFMPEG_TARGET="1785863997_9.0"
 ffmpeg_is_current
 check "a marked copy is never already current" "1" "$?"
 
+# ──────────────────────────────────────────────────────────────────
+#  Portability: the shell that will actually run this is bash 3.2
+# ──────────────────────────────────────────────────────────────────
+# Every check above runs under the CONTAINER's bash (5.x). The installer runs on
+# macOS, which ships bash 3.2 — and one parser difference between them shipped a
+# blocking defect that 101 green assertions did not see (V21).
+#
+# bash 3.2 keeps reading the bytes of a multi-byte character as part of an
+# identifier, so an unbraced expansion followed directly by a non-ASCII character
+# names a DIFFERENT variable. Under `set -u` that is a fatal error, and because it
+# lives in a progress message it fires only on the real path, on a real Mac,
+# mid-install.
+#
+# There is no way to exercise bash 3.2 from here, so this refuses the SHAPE. It is
+# a static check of the file, deliberately, because that is the part that is
+# testable without the other shell.
+printf '\nbash 3.2 portability\n'
+
+# LC_ALL=C makes [^ -~] mean "any byte outside printable ASCII", which is the
+# actual hazard; a UTF-8 locale would fold multi-byte characters into one class
+# and match nothing. Written to work under BSD grep too, since a maintainer may
+# run this suite on the Mac.
+unbraced="$(LC_ALL=C grep -n '\$[A-Za-z_][A-Za-z0-9_]*[^ -~]' "$INSTALLER" || true)"
+if [ -n "$unbraced" ]; then
+  printf '%s\n' "$unbraced" >&2
+  check "no unbraced expansion is followed by a non-ASCII byte" "" "$unbraced"
+else
+  check "no unbraced expansion is followed by a non-ASCII byte" "0" "0"
+fi
+
+# The exit status has to survive the EXIT trap, because that status is the ONLY
+# thing the GUI's update runner uses to decide "done" versus "failed" — and a
+# failed install recorded as done is what V21/V23 looked like from the page.
+#
+# HONEST LIMIT: bash 5 preserves $? across an EXIT trap by itself, so this passes
+# whether or not the trap propagates the status explicitly. It pins the INVARIANT
+# and catches a gross break; it does not reproduce the shell difference that made
+# the invariant worth pinning, and no test here can.
+#
+# Run as a separate process, deliberately: sourcing the script would install its
+# trap into this shell. On a non-macOS host detect_platform calls fail(), which is
+# a real abort through the real trap, and needs no network.
+# YTDL_INSTALLER_LIB must be cleared for this one: the harness exports it so the
+# script can be sourced for its functions, and it makes the script return before
+# main() ever runs — which would make this assertion pass on nothing.
+env -u YTDL_INSTALLER_LIB bash "$INSTALLER" >/dev/null 2>&1
+check "an aborted install exits non-zero through the EXIT trap" "1" "$?"
+
 printf '\n%d passed, %d failed\n\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

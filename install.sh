@@ -59,7 +59,23 @@ DEPS_FILE=""; YTDLP_TARGET=""; FFMPEG_TARGET=""; YTDL_TARGET=""
 FFMPEG_PINNED=1
 
 TMPDIR_YTDL=""
-cleanup() { [ -n "$TMPDIR_YTDL" ] && rm -rf "$TMPDIR_YTDL"; return 0; }
+# The trap PRESERVES the exit status explicitly, and that is not decoration.
+#
+# This script's exit status is the only thing the GUI's update runner has to go
+# on: a non-zero status is what makes it record a failed run instead of a
+# successful one. An EXIT trap whose last command is `return 0` relies on the
+# shell keeping $? across the trap — which bash 5 does, and which older bash
+# (macOS ships 3.2) is not relied upon to do. Capturing $? and exiting with it is
+# correct under both, and costs nothing.
+#
+# Written after a run that aborted mid-install was recorded by the GUI as
+# "done, exit 0" (V23). That mechanism is NOT established — this is hardening,
+# not a proven fix — but the status has to be right either way.
+cleanup() {
+  local rc=$?
+  [ -n "$TMPDIR_YTDL" ] && rm -rf "$TMPDIR_YTDL"
+  exit "$rc"
+}
 trap cleanup EXIT
 
 # ──────────────────────────────────────────────────────────────────
@@ -538,7 +554,15 @@ install_ytdlp() {
   # Universal standalone build with Python embedded — needs macOS 10.15+, which
   # is now the floor, so it serves every supported target.
   local tmp="$TMPDIR_YTDL/yt-dlp_macos"
-  info "Downloading yt-dlp $YTDLP_TARGET…"
+  # BRACED, and it has to stay braced. macOS ships bash 3.2, whose parser keeps
+  # reading the bytes of a multi-byte character as part of an identifier: an
+  # unbraced expansion followed directly by the ellipsis becomes a DIFFERENT,
+  # unset variable name, and under `set -u` that aborts the installer right here —
+  # after deps.conf has been read and before anything is installed. bash 5 stops
+  # at the first non-ASCII byte, so the container never reproduced it and 101
+  # assertions passed over the top of it. tests/test-installer.sh now refuses the
+  # shape outright; see the check named there.
+  info "Downloading yt-dlp ${YTDLP_TARGET}…"
   download "$base/yt-dlp_macos" "$tmp"
   verify_checksum "$tmp" "yt-dlp_macos" "$sums"
   mv "$tmp" "$INSTALL_DIR/yt-dlp"

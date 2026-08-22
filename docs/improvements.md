@@ -838,3 +838,88 @@ round is run, and the surface has no state for "the machine just changed and has
 not been re-examined". Either the finish should trigger a check, or the page
 should say what actually happened. Worth deciding with `V21`, since a successful
 handover reloads the page and may hide it.
+
+### V21 — RESOLVED: `install.sh` aborted on line 541 under macOS's bash 3.2
+
+**Diagnosed on the Mac, 2026-08-22**, by the four commands the register asked for.
+Neither of the two hypotheses above was right, which is why they were written as
+hypotheses.
+
+```
+Installing yt-dlp
+bash: line 541: YTDLP_TARGET<U+2026>: unbound variable
+```
+
+Line 541 was:
+
+```bash
+info "Downloading yt-dlp $YTDLP_TARGET…"
+```
+
+**macOS ships bash 3.2**, whose parser keeps reading the bytes of a multi-byte
+character as part of an identifier — so the expansion names
+`YTDLP_TARGET` + the three bytes of `…`, a variable that does not exist, and
+`set -u` aborts. bash 5, which the container runs, stops at the first non-ASCII
+byte and expands it correctly.
+
+That is why **101 green assertions and a green `-race` suite never saw it**: the
+only shell that reproduces it is the one this project never tests on. The abort
+happens after `deps.conf` is read and **before anything is installed**, which
+matches every observation — no marker (`installed.conf` absent), the binary
+untouched at v2.0.9, `Changed` false, no handover, and the same update offered
+for ever.
+
+**Fixed** by bracing the expansion, plus a **portability check** in
+`tests/test-installer.sh` that refuses the shape outright: any unbraced expansion
+followed by a non-ASCII byte now fails the suite. Verified both ways — 102/0 with
+the fix, 101/1 against the original line. It is a static check of the file
+deliberately, because that is the part testable without the other shell.
+
+### V23 — an installer that aborted was recorded as a successful run — **OPEN**
+
+Split out of `V21` because fixing `V21` does not fix this, and it is the more
+dangerous of the two.
+
+The installer died at line 541 with a non-zero status, and the run record says:
+
+```json
+{"state":"done","exit_code":0,"changed":false}
+```
+
+So the GUI reported **«Aggiornato. Non serve riavviare nulla.»** for an install
+that installed nothing. A failed update presented as a successful no-op is worse
+than a failure: the failure path offers the log and *Riprova*, and this offers
+neither, because nothing knows anything went wrong.
+
+**The mechanism is NOT established.** Replicating `Runner.Start`'s exact pipeline
+and `Wait` ordering in this container gives `shErr = exit status 1` and would
+record `failed` — correctly. The difference has to lie in macOS's bash 3.2, and
+the leading candidate is the EXIT trap: `cleanup` ended in `return 0`, and older
+bash is not relied upon to preserve `$?` across a trap the way bash 5 does.
+
+**Hardening applied, not a proven fix.** `cleanup` now captures `$?` and exits
+with it, which is correct under both shells and costs nothing, and
+`tests/test-installer.sh` pins the invariant that an aborted install exits
+non-zero. Recorded honestly: **bash 5 preserves the status by itself, so that test
+passes with or without the change** — it guards the invariant, it does not
+reproduce the difference.
+
+**The experiment that settles it**, three lines on the Mac:
+
+```bash
+bash --version | head -1
+printf 'set -euo pipefail\ncleanup(){ return 0; }\ntrap cleanup EXIT\necho hi\necho "$NOPE"\n' | bash -s --
+echo "exit=$?"
+```
+
+`exit=0` confirms the trap hypothesis and the hardening is the fix. `exit=1`
+refutes it, and the fault is somewhere in the runner's pipeline on macOS — in
+which case the next place to look is `curl.Wait()` being called before
+`sh.Wait()`, which Go's own documentation calls incorrect when `StdoutPipe` is
+used.
+
+**Worth deciding either way**: the runner trusts an exit status for a question it
+could verify. `install.sh` writes `installed.conf` on every completed run, so a
+run that reports success without advancing the marker's `installed_at` did not
+finish — an invariant the runner could check instead of inferring, and one that
+would have caught this regardless of the shell.
