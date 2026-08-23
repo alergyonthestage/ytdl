@@ -81,6 +81,36 @@ cleared because nothing ever changed, and «un aggiornamento è già in corso» 
 the second press was the first press still running. Nothing you saw was a new
 defect: it was `V21` and `V23`, unfixed, because the fixes were never published.
 
+### A1b PASSED — 2026-08-23, and what it discharged with it
+
+The handover ran end to end for the first time in this cycle: the page reloaded
+by itself onto **v2.2.0-rc1 · yt-dlp 2026.08.19 · ffmpeg 9.0 · «Sei aggiornato»**.
+That single run is a real installer against the real network on real hardware, so
+it settles more than its own step:
+
+| | discharged by A1b | still open |
+|---|---|---|
+| **A1** the handover | **yes** — the thing this cycle had never done | — |
+| **A2** `install.sh` against the real network | the **first** run, including the pinned ffmpeg download and both checksum verifications | the **second** run — *idempotence*, which is a different code path (the three `*_is_current` skips, reading a marker that now exists for the first time) |
+| **A4** a browser rendering the GUI | the whole update flow, in one browser | the second browser, the **abandoned** panel and a run **adopted on load** (B5) |
+| **C1** the four `sha256` | **closed** — arm64 attested by execution, all four re-hashed against the live server 2026-08-23 | nothing; the amd64 pair's "hashed, not run" limit is recorded and accepted |
+| **C2** the acceptance test | the GUI alone carried the update, no Terminal after the GUI was open | starting the GUI still needs one — that is **Cycle 6-launch**, already scheduled |
+| `release.yml` | ran for real, twice | — |
+| `V20`'s fix | `yt-dlp 2026.08.19` read and shown on a cold Mac | — |
+| **A3** the withdrawn-build fallback | — | **never fired** |
+| **Part B** the honesty gate | B1's «sei aggiornato» state, after a real update | the rest |
+
+**`ffmpeg 9.0` is correct, not a truncation.** ffmpeg is *compared* by build id
+(`1785863997_9.0`) and *shown* by version, because the build number means nothing
+to the reader — `displayVersion` in both `internal/webui` and `internal/cli`. And
+the absence of a «non verificato» qualifier beside it is itself information: it
+is rendered whenever `ffmpeg_pinned = false`, so its absence says the pinned path
+was taken and both sums verified.
+
+**One defect found and deferred**: [`V26`](improvements.md#V26) — the *Conferma*
+button stays live during the install. Deferred to Cycle 10 with the question it
+raises (a surface of its own for an update in flight).
+
 ### What is settled, and needs nothing further from you
 
 | | |
