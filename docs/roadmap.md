@@ -730,9 +730,9 @@ every one of those references.
 design is [design-cycle6plus-update.md](design-cycle6plus-update.md)** — read
 those first: they answer all four questions below. The design was **approved at
 gate B on 2026-08-13** and **built the same day**. It was then **reviewed twice**,
-and the session that documents it started from a gate-C handoff, since consumed;
-what follows the cycle is
-[handoff-post-cycle6plus.md](handoff-post-cycle6plus.md).
+and the session that documents it started from a gate-C handoff, since consumed —
+as was the closing handoff that followed it. What comes next is
+[handoff-cycle6launch.md](handoff-cycle6launch.md).
 
 **Where it stands (2026-08-19).** All eleven implementation steps are done on
 `feat/update-path/implementation`, **not yet merged**, and **both review passes
@@ -822,10 +822,12 @@ Three defects are deferred to **Cycle 10** as one decision rather than three
 `V27` is a deliberate deferral of a normative rule and is pinned under Cycle 10
 for that reason.
 
-**What remains**: merge `--no-ff`, tag the release, and re-install on the
-maintainer's own machine — the installed v2.1.0 has no update path, which is the
-gap this cycle closes, so the last manual install is also the last one ever. The
-procedure is in [handoff-post-cycle6plus.md](handoff-post-cycle6plus.md).
+**Closed on 2026-08-23.** Merged `--no-ff` into `main`, tagged **`v2.2.0`**,
+`release.yml` published both architectures, and the maintainer re-installed on
+their own machine — the v2.1.0 they were running had no update path, which is the
+gap this cycle closes, so that manual install is also the last one they will ever
+need. `deps.conf` is now on `main`, and from here a commit to it reaches every
+installation within a day.
 
 **Two review passes, eighteen findings, all fixed.** The first reviewed the
 implementation and found nine (`V1`–`V9`,
@@ -998,6 +1000,25 @@ pass, if it is ever wanted once the GUI itself is one click away.
   starts the daemon and opens the browser when nothing is running, and only
   opens the browser when something already is. Plus its uninstall path, and the
   installer telling the user, in Italian, that it is there and where.
+- **What "desktop launcher" means — clarified by the maintainer, 2026-08-23.**
+  Not an icon that must live on the Desktop. **The user should see ytdl as an
+  app**: an icon in the Applications folder, which they can then put in the Dock,
+  on the Desktop, or anywhere they like. The name of the cycle is about the
+  *destination* — the desktop metaphor — not about a location on disk.
+
+  That is a scope input, not a settled design, but it narrows the artefact
+  question sharply and adds three of its own:
+  - **A `.command` file is effectively ruled out.** It is not an app: it cannot
+    sit in the Applications folder as one, it cannot be pinned to the Dock as
+    one, and double-clicking it opens a Terminal window — which this cycle exists
+    to avoid.
+  - **`/Applications` needs admin; `~/Applications` does not.** The installer has
+    never used `sudo` and that is ADR-0001's whole shape, so `~/Applications` is
+    the candidate — it is indexed by Spotlight and Launchpad, and it does not
+    exist by default, so the installer would create it.
+  - **It must survive being moved.** If the user drags it to the Dock, to the
+    Desktop, or into a folder of their own, it must still work — so it resolves
+    `ytdl` by absolute path and never by its own location.
 - **Analysis must settle:**
   - **The artefact.** A double-clickable `.command`, an `osacompile`-built
     `.app` in `~/Applications`, or an Automator app. The decisive question is
@@ -1013,11 +1034,31 @@ pass, if it is ever wanted once the GUI itself is one click away.
     appears to do nothing for two seconds.
   - **Where the icon comes from.** No external assets and no binary blobs
     committed for their own sake — either the system's default application icon,
-    or something generated at install time.
+    or something generated at install time. The clarification raises the stakes
+    here: an entry in the Applications folder carrying the generic AppleScript
+    applet icon reads as broken, where the same icon on a file the user
+    double-clicks once would not.
+  - **What `install.sh` does to it on every UPDATE, not just on install.** Since
+    Cycle 6-plus the installer runs again on every update, so whatever it does to
+    the bundle it does repeatedly. Deleting and recreating it would churn the
+    user's Dock entry, their Spotlight index and any alias they made. Leaving it
+    alone when it has not changed is the likely answer, and it has to be a
+    decision rather than an accident.
+  - **What it means to "quit" it.** The daemon already exits by itself when the
+    page closes and the queue is empty (ADR-0008). An app the user sees in the
+    Dock invites a Quit that has nothing to quit — so: does the bundle stay in the
+    Dock while the interface is open, or is it a launcher that bounces once and
+    goes? Both are defensible; what is not defensible is the user not being able
+    to tell which one they have.
+  - **Its name.** What appears under the icon is what the audience will call the
+    program. `ytdl` is the developer's name for it.
 - **Depends on nothing in Cycles 6/7**, and touches neither `internal/core` nor
   `internal/daemon`: it is installer + one entry-point path.
-- **Done when:** a non-developer starts ytdl from the desktop, twice in a row,
-  without a Terminal ever appearing — and uninstalling removes it.
+- **Done when:** a non-developer starts ytdl **as an app** — from the
+  Applications folder, the Dock, or wherever they chose to put it — twice in a
+  row, without a Terminal ever appearing, and uninstalling removes it. It is the
+  single exception `C2` recorded when it passed at Cycle 6-plus's gate C: the
+  update itself needed no Terminal, but opening the interface still did.
 
 #### Cycle 7 — partial outcome and playlists per track (`F`) — planned
 
