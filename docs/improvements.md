@@ -1234,3 +1234,108 @@ an Apple Silicon Mac, so its attestation is of immutability and architecture, no
 of behaviour — which is exactly what ADR-0016 §12 claims and all it claims. If
 that ever needs closing, the cheapest route is Rosetta 2 rather than an Intel
 machine: `softwareupdate --install-rosetta` and then run the unpacked binary once.
+
+<a id="V27"></a>
+
+### V27 — la GUI descrive lo stesso ffmpeg due volte, e una delle due è falsa — **la domanda del gate C**
+
+**Osservato dal maintainer il 2026-08-23**, durante `A3a`. Con un ffmpeg non
+attestato — cioè dopo un fallback, che è lo stato che `A3` produce apposta — il
+blocco *Versione e aggiornamenti* legge:
+
+```
+ffmpeg
+versione non registrata
+ffmpeg
+non verificato: la versione attestata non è più disponibile
+```
+
+Il marker, nello stesso istante, dice `ffmpeg_build = 1787073674_9.0.1`, e il CLI
+sulla stessa macchina stampa la cosa giusta:
+
+```
+ffmpeg 9.0.1   (non verificata: la versione attestata non è più disponibile)
+```
+
+Quindi **«versione non registrata» è falso**: la versione è registrata, è nel
+marker, e un'altra superficie dello stesso binario la mostra.
+
+#### La causa, ed è la terza volta che è la stessa
+
+La GUI prende la versione **mostrata** da `Installed`, che è la forma della
+**comparazione**. `InstalledFrom` svuota `Installed.FFmpeg` quando la copia non è
+attestata — deliberatamente, perché una copia non attestata deve restare
+**non confrontata** (ADR-0016 §15). `buildUpdateDTO` riusa quello stesso campo
+per il display, e un campo vuoto ricade su «versione non registrata».
+
+Il CLI non ci casca perché rende da `Dependencies()` — cioè dal `Dependency`, che
+ha `Version`, `Attested`, `Probed`, `Ours` e `Path` separati.
+
+Il commento accanto a `Missing` nel DTO **nomina già la trappola**:
+
+> `Installed` is the COMPARISON shape, so a copy we cannot vouch for carries no
+> version, and without this the page called an installed ffmpeg "non installato"
+> (`V12`).
+
+`V12` era la stessa radice e fu chiusa aggiungendo `Missing`; `V20` era la stessa
+radice e fu chiusa aggiungendo `Unreadable`; questa è la stessa radice sul campo
+che nessuna delle due ha toccato — **la versione**. Ogni volta che un componente
+diventa legittimamente non confrontato, la superficie ne perde la versione e dice
+qualcosa di falso su di lui.
+
+**La riga doppia è un secondo difetto, più lieve**: lo stesso strumento compare
+due volte nella lista, una con un valore e una con un avviso. Il CLI lo dice in
+una riga sola perché l'avviso è una *qualifica* della versione, non un'altra voce.
+
+#### Il rimedio
+
+Prendere la versione mostrata da `u.Deps()` invece che da `v.Installed`, in
+`buildUpdateDTO` — `Deps()` è già chiamata lì accanto, per `Missing`. `Installed`
+resta puramente la forma della comparazione, che è ciò che deve essere. Poi la
+riga di `unattested` diventa una qualifica della riga di ffmpeg invece di una voce
+a sé, come nel CLI.
+
+**Blocca il gate secondo la regola del progetto** (`ux-principles.md` §5, e il
+punto 5 dei non-negoziabili di `CLAUDE.md`): una superficie non afferma mai il
+falso. È una decisione del maintainer se correggerlo adesso o rinviarlo con la
+motivazione a verbale — ma non può diventare «verificato» per silenzio.
+
+<a id="V28"></a>
+
+### V28 — un'installazione che non installa niente costa 45 secondi
+
+**Misurato dal maintainer il 2026-08-23**, in `A2`, cioè il run di idempotenza:
+
+```
+real    0m44.675s     user 0m3.801s     sys 0m1.444s
+```
+
+Il run è **corretto** — salta tutti e tre i componenti, non scarica niente, arriva
+a `✓ Done.`. Ma `user`+`sys` sono 5,2 s dei 44,7: **il resto è attesa**, e la
+maggior parte è lo stesso identico `yt-dlp --version` rieseguito da capo.
+
+Contati sul codice, in un run in cui tutto è già corrente, `yt-dlp` viene eseguito
+**sette volte** e `ytdl --version` **quattro** (ognuna delle quali ne esegue una
+di yt-dlp):
+
+| dove | esecuzioni |
+|---|---|
+| `ytdlp_is_current` → `tool_version` | 1 |
+| `ytdl_is_current` → `ytdl_version` → `ytdl --version` | 2 |
+| `verify_install` → `ytdl --version`, `yt-dlp --version`, `ffmpeg -version` | 4 |
+| `write_marker` → `ytdl_version` + `tool_version` | 3 |
+
+È lo stesso costo di [`V25`](#V25) visto dall'altro lato: là riempie `/tmp` nella
+suite, qui sono 45 secondi davanti a cui **sta una persona non tecnica**, mentre
+[ADR-0016 §11](decisions/0016-cycle6plus-update-path.md) promette che
+«l'aggiornamento comune dura secondi». Non è falso ciò che la GUI dice, quindi non
+è un difetto di onestà — è la promessa di progetto che non regge sul ferro vero.
+
+**Il rimedio era già stato individuato e rinviato**, in `V20`: `installed.conf`
+registra `yt_dlp_version` e **nessuno lo legge**. Usare il marker come risposta
+veloce per una copia che è nostra, tenendo l'exec come autorità fuori dal percorso
+critico, toglierebbe quasi tutti e sette gli exec. Porta con sé la sua domanda di
+staleness (un utente che lancia `yt-dlp -U` alle spalle di ytdl), che è il motivo
+per cui fu tenuta separata.
+
+Va deciso insieme a `V25`: sono la stessa causa e la stessa correzione.

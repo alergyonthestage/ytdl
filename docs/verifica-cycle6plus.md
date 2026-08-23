@@ -39,12 +39,19 @@ quindi ha chiuso più del suo passo:
 | **C1** i quattro `sha256` | **chiuso** — arm64 attestato dall'esecuzione, tutti e quattro ri-hashati il 2026-08-23 |
 | **C2** il test di accettazione | **fatto** — l'update è andato dalla sola GUI, senza Terminale |
 | `release.yml` | eseguito davvero |
-| **A2** *idempotenza* | **da fare** → [§2](#a2) |
-| **A3** il fallback su build ritirata | **mai scattato** → [§3](#a3) |
+| **A2** *idempotenza* | **fatto 2026-08-23** — nessun download; 44,7 s, registrati come [`V28`](improvements.md#V28) |
+| **A3a** il fallback scatta e lo dichiara | **fatto 2026-08-23** — installer e CLI corretti; **la GUI no**: [`V27`](improvements.md#V27) |
+| **A3b** «non riesco a chiedere» ≠ «ritirata» | **da rifare** — la ricetta con `/etc/hosts` era sbagliata → [§3b](#a3) |
+| **A3c** convergenza | **da fare** → [§3](#a3) |
 | **B5** + secondo tab + secondo browser | **da fare** → [§4](#b4) |
 
-Un difetto trovato e rinviato: [`V26`](improvements.md#V26) — il bottone
-*Conferma* resta cliccabile durante l'installazione. Rinviato al Ciclo 10.
+Difetti trovati finora:
+
+| | |
+|---|---|
+| [`V26`](improvements.md#V26) | il bottone *Conferma* resta cliccabile durante l'installazione — **rinviato al Ciclo 10** |
+| [`V27`](improvements.md#V27) | con un ffmpeg non attestato la GUI lo mostra due volte, la prima come «versione non registrata», che è **falso** — **da decidere prima di chiudere il gate** |
+| [`V28`](improvements.md#V28) | un'installazione che non installa niente costa 45 s, quasi tutti nello stesso probe ripetuto — da decidere con `V25` |
 
 ### L'ordine
 
@@ -169,10 +176,11 @@ time curl -fsSL "https://raw.githubusercontent.com/alergyonthestage/ytdl/$YTDL_B
 | `✓ PATH already configured` | una modifica a `~/.zprofile` |
 | `✓ Done.` e **nessun download** | un abort |
 
-**Sul tempo, onestamente:** attesa realistica **10–20 secondi**, non due. Quasi
-tutto se ne va in `verify_install`, che esegue `ytdl --version`, che a sua volta
-interroga un `yt-dlp` freddo (7,4 s misurati — è il finding `V20`). Il punto del
-test è che **non scarichi niente**, non che sia istantaneo.
+**Sul tempo:** misurato il 2026-08-23, **44,7 secondi**, di cui solo 5,2 di CPU.
+Il resto è lo stesso `yt-dlp --version` rieseguito sette volte. Il run è
+**corretto** — non scarica niente — e il test verifica quello; il costo è
+registrato a parte come [`V28`](improvements.md#V28), perché 45 secondi non sono
+i «secondi» che ADR-0016 §11 promette a chi sta davanti alla GUI.
 
 **Un caso che NON è un fallimento:** se yt-dlp ha pubblicato una release nuova nel
 frattempo, `yt_dlp_version = latest` fa il suo mestiere e lo scarica. Verificato il
@@ -233,6 +241,13 @@ yd --version
 | `ffmpeg 9.0.1   (non verificata: la versione attestata non è più disponibile)` | `ffmpeg 9.0.1` liscio |
 | | `ffmpeg non installato` — era il difetto `V12` |
 
+> **§3a è stato eseguito ed è passato il 2026-08-23** — avvisi corretti, marker
+> con `ffmpeg_pinned = false` e `ffmpeg_build = 1787073674_9.0.1`, CLI che stampa
+> `ffmpeg 9.0.1   (non verificata: la versione attestata non è più disponibile)`.
+> **Ma la GUI no**: mostra ffmpeg due volte, la prima come «versione non
+> registrata», che è falso. È [`V27`](improvements.md#V27), e va deciso prima di
+> chiudere il gate. Se rifai §3a dopo la correzione, è questa riga a controllare.
+
 E la riga che è la più facile da sbagliare — **una copia non attestata è
 NON CONFRONTATA, non obsoleta** (ADR-0016 §15, terza proprietà). Apri la GUI e
 premi **Controlla ora**:
@@ -251,38 +266,84 @@ Chiudi la scheda quando hai finito (il daemon si spegne da solo a coda vuota).
 
 ### 3b. «Non riesco a chiedere» non è «è stata ritirata»
 
-**Questo è il confine che protegge la proprietà comprata da ADR-0016 §12**, e la
-ricetta vecchia lo testava male: spegnere il wi-fi fa fallire prima il download di
-`deps.conf`, quindi l'installer aborta molto prima di arrivare a ffmpeg e non
-prova niente. Va bloccato **solo** il server di ffmpeg.
+**Questo è il confine che protegge la proprietà comprata da ADR-0016 §12**: mai
+degradare in silenzio a «non verificato» per colpa di una connessione ballerina.
+Una copia non verificata ottenuta perché il wi-fi dell'albergo singhiozza è
+esattamente ciò che il pin esiste per impedire.
 
-Adesso `ffmpeg_pinned = false`, quindi ffmpeg non è mai «già corrente» e il
-download viene comunque tentato: è la condizione giusta per questa prova.
+> ### ⚠️ La ricetta con `/etc/hosts` NON funziona — non usarla
+>
+> Provata il 2026-08-23 e **bypassata**: l'installer ha scaricato ffmpeg
+> normalmente e ha stampato `✓ Checksum verified`. Non è un difetto del codice, è
+> la ricetta che era sbagliata.
+>
+> `ffmpeg.martin-riedl.de` ha **record AAAA** (`2a06:98c1:3120::7`,
+> `2a06:98c1:3121::7`). Una riga in `/etc/hosts` dirotta solo l'**IPv4**; il
+> resolver di macOS unisce la voce del file con l'AAAA che arriva dal DNS, curl
+> preferisce l'IPv6, e il blocco non esiste mai.
+>
+> **Prova indiretta che era attivo lo stesso:** con quella riga in `/etc/hosts`
+> sul Mac, anche il container ha smesso di risolvere quel nome in IPv4 — Docker
+> Desktop inoltra il DNS al resolver dell'host. Bloccava, ma la famiglia
+> sbagliata.
+>
+> **Se la riga è ancora lì, toglila adesso** (blocca quel dominio per tutto il
+> Mac, e per il container):
+>
+> ```bash
+> grep -n 'ytdl gate C' /etc/hosts
+> sudo sed -i '' '/ytdl gate C, temporaneo/d' /etc/hosts
+> sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
+> curl -sI https://ffmpeg.martin-riedl.de/ | head -1     # deve rispondere
+> ```
+
+**La ricetta giusta usa `~/.curlrc`**, che è meglio in ogni dimensione: niente
+`sudo`, niente cache DNS, e `--resolve` vale per **entrambe** le famiglie perché
+scavalca la risoluzione invece di alterarla. `install.sh` invoca `curl` senza
+`-q`, quindi ogni sua chiamata legge quel file — e `--resolve` tocca **solo**
+l'host nominato, perciò `deps.conf` continua a scaricarsi da GitHub.
+
+Precondizione: dopo §3a il marker dice `ffmpeg_pinned = false`, quindi ffmpeg non
+è mai «già corrente» e il download **viene tentato**. È la condizione che serve.
+Se hai già eseguito §3c, rifai prima §3a.
 
 ```bash
 export YTDL_BRANCH=feat/update-path/implementation      # torna al pin vero
 
-# blocca SOLO ffmpeg.martin-riedl.de (chiede la password di amministratore)
-sudo sh -c 'printf "\n127.0.0.1 ffmpeg.martin-riedl.de  # ytdl gate C, temporaneo\n" >> /etc/hosts'
-sudo dscacheutil -flushcache
+# 1. metti da parte un eventuale ~/.curlrc tuo, poi dirotta SOLO ffmpeg
+[ -f ~/.curlrc ] && cp ~/.curlrc ~/.curlrc.ytdl-bak
+echo '--resolve ffmpeg.martin-riedl.de:443:127.0.0.1' >> ~/.curlrc
 
+# 2. controlla che il dirottamento sia davvero in vigore PRIMA di lanciare
+curl -s -o /dev/null -w 'ffmpeg-host  http=%{http_code}
+' https://ffmpeg.martin-riedl.de/
+curl -s -o /dev/null -w 'github       http=%{http_code}
+' https://raw.githubusercontent.com/
+
+# 3. adesso l'installer
 curl -fsSL "https://raw.githubusercontent.com/alergyonthestage/ytdl/$YTDL_BRANCH/install.sh" | bash
 echo "exit=$?"
 ```
 
-| Deve accadere | Non deve accadere |
-|---|---|
-| `✗ Download failed: https://ffmpeg.martin-riedl.de/download/macos/arm64/1785863997_9.0/ffmpeg.zip` | un fallback |
-| `The server answered 000.` | `installed (NOT verified …)` |
-| **`exit=1`** | `exit=0` |
-| il marker resta com'era | `ffmpeg_pinned` cambiato da questo run |
+Al punto 2 devono uscire **`ffmpeg-host http=000`** e **`github http=301`**. Se
+`ffmpeg-host` risponde qualcosa di diverso da `000`, il dirottamento non è in
+vigore e il punto 3 non proverebbe niente: fermati.
 
-**Ripristina subito**, prima di proseguire:
+| Deve accadere al punto 3 | Non deve accadere |
+|---|---|
+| `▸ Downloading ffmpeg 1785863997_9.0…` | un fallback |
+| `✗ Download failed: https://ffmpeg.martin-riedl.de/download/macos/arm64/1785863997_9.0/ffmpeg.zip` | `installed (NOT verified — the attested build is gone)` |
+| `The server answered 000.` | «is no longer published» |
+| **`exit=1`** | `exit=0` |
+| il marker resta com'era, `ffmpeg_pinned = false` | una chiave cambiata da questo run |
+
+**Ripristina subito**, prima di §3c:
 
 ```bash
-sudo sed -i '' '/ytdl gate C, temporaneo/d' /etc/hosts
-sudo dscacheutil -flushcache
-curl -sI https://ffmpeg.martin-riedl.de/ | head -1     # deve rispondere di nuovo
+rm -f ~/.curlrc
+[ -f ~/.curlrc.ytdl-bak ] && mv ~/.curlrc.ytdl-bak ~/.curlrc
+curl -s -o /dev/null -w 'ffmpeg-host  http=%{http_code}
+' https://ffmpeg.martin-riedl.de/   # atteso 200
 ```
 
 ### 3c. La convergenza — il dubbio deve sanarsi in un solo download
@@ -452,9 +513,16 @@ cd ~/Scripts/yt-download
 # il branch di prova, anche in locale
 git branch -D test/withdrawn-ffmpeg
 
-# /etc/hosts, se §3b si è interrotto prima del ripristino
+# ~/.curlrc, se §3b si è interrotto prima del ripristino
+grep -n 'ffmpeg.martin-riedl.de' ~/.curlrc 2>/dev/null && rm -f ~/.curlrc
+[ -f ~/.curlrc.ytdl-bak ] && mv ~/.curlrc.ytdl-bak ~/.curlrc
+
+# /etc/hosts, dalla ricetta sbagliata del 2026-08-23 — la riga può esserci
+# più di una volta, il sed le toglie tutte
 grep -n 'ytdl gate C' /etc/hosts && \
-  { sudo sed -i '' '/ytdl gate C, temporaneo/d' /etc/hosts; sudo dscacheutil -flushcache; }
+  { sudo sed -i '' '/ytdl gate C, temporaneo/d' /etc/hosts
+    sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder; }
+curl -sI https://ffmpeg.martin-riedl.de/ | head -1        # deve rispondere
 
 # il sandbox e i build (l'installazione vera non viene toccata)
 hack/ytdl-dev.sh reset
