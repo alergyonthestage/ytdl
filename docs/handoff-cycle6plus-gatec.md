@@ -37,11 +37,11 @@ is finding `V24` and the reason this handoff exists. Last commit: see
 
 ## Start here, in this order
 
-1. **[verifica-cycle6plus.md § Ripresa](verifica-cycle6plus.md#ripresa)** — the
-   corrected sequence to restart from, what is still live on the machine and on
-   GitHub, and the four lines that confirm `V24` on the Mac while the evidence is
-   still there. Then `Setup` and the five Prerequisites — **`P3` was rewritten**,
-   and it is the one that let three sittings run against the wrong code.
+1. **[verifica-cycle6plus.md](verifica-cycle6plus.md)** — **rewritten from
+   nothing on 2026-08-23, in Italian**, after A1b passed. It now carries only what
+   is left to run — A2's idempotence, A3's withdrawn-build fallback, B5 with the
+   second tab and the second browser — then the full cleanup and the closing
+   sequence. Everything already discharged is a table in its §0.
 2. **[improvements.md § Gate-C findings](improvements.md#cycle6plus-gatec)** —
    `V19`–`V23`, with what is established and what still needs the Mac.
 3. **[dev-testing.md](dev-testing.md)** — the sandbox, permanent reference.
@@ -111,8 +111,9 @@ item blocking for the merge rather than merely tidy.
    the web UI. Pushing a tag the remote already has does not re-run `release.yml`.
 5. **A1b from its step 2**, and then the rest of the checklist.
 
-All five are written out in
-[verifica-cycle6plus.md § Ripresa](verifica-cycle6plus.md#ripresa).
+They were all run on 2026-08-23 and **A1b passed**: the page reloaded by itself
+onto v2.2.0-rc1. What is left is in
+[verifica-cycle6plus.md](verifica-cycle6plus.md).
 
 ## What gate C has produced so far
 

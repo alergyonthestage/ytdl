@@ -718,7 +718,7 @@ future release means physically returning to that machine.
 rather than carried out, precisely because this cycle had not shipped. Two
 consequences, and both matter. There is currently **no installation anywhere that
 a release could reach**, which is why gate C's handover test may use a real
-pre-release (see [verifica-cycle6plus.md](verifica-cycle6plus.md) A1b). And this
+pre-release (A1b, run and passed on 2026-08-23). And this
 cycle is the **blocker** for that first install, not merely an improvement to
 it — which is the sharper reason it was pulled ahead. It keeps the name `-plus`
 rather than renumbered (the `2B-plus` precedent), because
@@ -814,7 +814,8 @@ for running dev builds — the one artefact of this phase that outlives the cycl
 content check; **re-cut `v2.2.0-rc1`** from the new head; then **A1b**, which is
 still the thing this cycle has never once completed; then the rest of the
 checklist; and **then** merge `--no-ff`. The sequence is written out in
-[verifica-cycle6plus.md § Ripresa](verifica-cycle6plus.md#ripresa); the session
+[verifica-cycle6plus.md](verifica-cycle6plus.md), rewritten on 2026-08-23 to
+carry only what is left to run; the session
 handoff is [handoff-cycle6plus-gatec.md](handoff-cycle6plus-gatec.md).
 
 **Two review passes, eighteen findings, all fixed.** The first reviewed the
