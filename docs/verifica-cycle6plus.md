@@ -41,8 +41,8 @@ quindi ha chiuso più del suo passo:
 | `release.yml` | eseguito davvero |
 | **A2** *idempotenza* | **fatto 2026-08-23** — nessun download; 44,7 s, registrati come [`V28`](improvements.md#V28) |
 | **A3a** il fallback scatta e lo dichiara | **fatto 2026-08-23** — installer e CLI corretti; **la GUI no**: [`V27`](improvements.md#V27) |
-| **A3b** «non riesco a chiedere» ≠ «ritirata» | **da rifare** — la ricetta con `/etc/hosts` era sbagliata → [§3b](#a3) |
-| **A3c** convergenza | **da fare** → [§3](#a3) |
+| **A3b** «non riesco a chiedere» ≠ «ritirata» | **da rifare** — due ricette sbagliate: `/etc/hosts` non bloccava, e senza `--force` il download non veniva tentato → [§3b](#a3) |
+| **A3c** convergenza | **osservata il 2026-08-23**; resta una riga di conferma → [§3c](#a3) |
 | **B5** + secondo tab + secondo browser | **da fare** → [§4](#b4) |
 
 Difetti trovati finora:
@@ -282,20 +282,11 @@ esattamente ciò che il pin esiste per impedire.
 > resolver di macOS unisce la voce del file con l'AAAA che arriva dal DNS, curl
 > preferisce l'IPv6, e il blocco non esiste mai.
 >
-> **Prova indiretta che era attivo lo stesso:** con quella riga in `/etc/hosts`
-> sul Mac, anche il container ha smesso di risolvere quel nome in IPv4 — Docker
-> Desktop inoltra il DNS al resolver dell'host. Bloccava, ma la famiglia
-> sbagliata.
->
-> **Se la riga è ancora lì, toglila adesso** (blocca quel dominio per tutto il
-> Mac, e per il container):
->
-> ```bash
-> grep -n 'ytdl gate C' /etc/hosts
-> sudo sed -i '' '/ytdl gate C, temporaneo/d' /etc/hosts
-> sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
-> curl -sI https://ffmpeg.martin-riedl.de/ | head -1     # deve rispondere
-> ```
+> **Prova indiretta che era comunque attiva:** con quella riga sul Mac anche il
+> container ha smesso di risolvere quel nome in IPv4 — Docker Desktop inoltra il
+> DNS al resolver dell'host. Bloccava, ma la famiglia sbagliata. Le tre copie
+> della riga sono state rimosse il 2026-08-23; se ne ricomparissero, il comando è
+> in [§5b](#cleanup).
 
 **La ricetta giusta usa `~/.curlrc`**, che è meglio in ogni dimensione: niente
 `sudo`, niente cache DNS, e `--resolve` vale per **entrambe** le famiglie perché
@@ -303,9 +294,18 @@ scavalca la risoluzione invece di alterarla. `install.sh` invoca `curl` senza
 `-q`, quindi ogni sua chiamata legge quel file — e `--resolve` tocca **solo**
 l'host nominato, perciò `deps.conf` continua a scaricarsi da GitHub.
 
-Precondizione: dopo §3a il marker dice `ffmpeg_pinned = false`, quindi ffmpeg non
-è mai «già corrente» e il download **viene tentato**. È la condizione che serve.
-Se hai già eseguito §3c, rifai prima §3a.
+> ### ⚠️ Senza `--force` questo test non prova niente
+>
+> Provato il 2026-08-23 e **saltato**: l'installer ha risposto
+> `✓ ffmpeg 1785863997_9.0 is already what ytdl requires` e non ha mai tentato il
+> download, quindi `exit=0` era corretto e la regola sotto esame non è stata
+> toccata. Il marker diceva già `ffmpeg_pinned = true`, per via del run di
+> convergenza eseguito prima.
+>
+> **`--force` risponde «no» a tutti e tre i salti**, quindi il download viene
+> sempre tentato qualunque sia lo stato del marker. È lo stesso flag che il
+> pulsante *Riprova* della GUI manda, quindi è anche l'unica occasione in cui
+> questa checklist lo esercita.
 
 ```bash
 export YTDL_BRANCH=feat/update-path/implementation      # torna al pin vero
@@ -315,13 +315,12 @@ export YTDL_BRANCH=feat/update-path/implementation      # torna al pin vero
 echo '--resolve ffmpeg.martin-riedl.de:443:127.0.0.1' >> ~/.curlrc
 
 # 2. controlla che il dirottamento sia davvero in vigore PRIMA di lanciare
-curl -s -o /dev/null -w 'ffmpeg-host  http=%{http_code}
-' https://ffmpeg.martin-riedl.de/
-curl -s -o /dev/null -w 'github       http=%{http_code}
-' https://raw.githubusercontent.com/
+curl -s -o /dev/null -w 'ffmpeg-host  http=%{http_code}\n' https://ffmpeg.martin-riedl.de/
+curl -s -o /dev/null -w 'github       http=%{http_code}\n' https://raw.githubusercontent.com/
 
-# 3. adesso l'installer
-curl -fsSL "https://raw.githubusercontent.com/alergyonthestage/ytdl/$YTDL_BRANCH/install.sh" | bash
+# 3. l'installer, con --force
+curl -fsSL "https://raw.githubusercontent.com/alergyonthestage/ytdl/$YTDL_BRANCH/install.sh" \
+  | bash -s -- --force
 echo "exit=$?"
 ```
 
@@ -331,19 +330,24 @@ vigore e il punto 3 non proverebbe niente: fermati.
 
 | Deve accadere al punto 3 | Non deve accadere |
 |---|---|
-| `▸ Downloading ffmpeg 1785863997_9.0…` | un fallback |
-| `✗ Download failed: https://ffmpeg.martin-riedl.de/download/macos/arm64/1785863997_9.0/ffmpeg.zip` | `installed (NOT verified — the attested build is gone)` |
-| `The server answered 000.` | «is no longer published» |
+| `Reinstalling everything (--force)` sotto l'intestazione | — |
+| `▸ Downloading yt-dlp 2026.08.19…` seguito da `✓ yt-dlp installed` | — è `--force`: ri-scarica ~35 MB da GitHub, che è raggiungibile, ed è atteso |
+| **`▸ Downloading ffmpeg 1785863997_9.0…`** — la riga che dice che il download è stato **tentato** | `✓ ffmpeg … is already what ytdl requires`: se compare, il test è saltato e non prova niente |
+| `✗ Download failed: https://ffmpeg.martin-riedl.de/download/macos/arm64/1785863997_9.0/ffmpeg.zip` | un fallback |
+| `The server answered 000.` | «is no longer published» · `installed (NOT verified …)` |
 | **`exit=1`** | `exit=0` |
-| il marker resta com'era, `ffmpeg_pinned = false` | una chiave cambiata da questo run |
+| il marker **non cambia** — `write_marker` gira solo a fine run | una chiave riscritta da questo run |
+
+**La riga da guardare per prima è la terza.** Un test saltato assomiglia
+esattamente a un test passato: entrambi finiscono senza fallback. La differenza è
+se `▸ Downloading ffmpeg …` è comparsa.
 
 **Ripristina subito**, prima di §3c:
 
 ```bash
 rm -f ~/.curlrc
 [ -f ~/.curlrc.ytdl-bak ] && mv ~/.curlrc.ytdl-bak ~/.curlrc
-curl -s -o /dev/null -w 'ffmpeg-host  http=%{http_code}
-' https://ffmpeg.martin-riedl.de/   # atteso 200
+curl -s -o /dev/null -w 'ffmpeg-host  http=%{http_code}\n' https://ffmpeg.martin-riedl.de/   # atteso 200
 ```
 
 ### 3c. La convergenza — il dubbio deve sanarsi in un solo download
@@ -354,6 +358,27 @@ tornare attestata al primo installer utile, non trascinarsi il dubbio.
 > **Attenzione:** la ricetta vecchia diceva «ri-esegui l'installer da `main`».
 > Era **sbagliata**: `deps.conf` non esiste su `main` fino al merge, quindi
 > `load_deps` aborta subito. Si usa il ramo di implementazione.
+
+> ### ✓ Quasi tutto §3c è già stato osservato, il 2026-08-23
+>
+> Il run fatto mentre `/etc/hosts` non bloccava nulla **era** §3c, senza saperlo:
+> ffmpeg ri-scaricato **una volta** dall'URL pinned, `✓ Checksum verified` per
+> entrambi gli zip, `✓ ffmpeg and ffprobe installed (verified)` — e il run
+> successivo ha risposto `already what ytdl requires`, cioè ha convertito.
+>
+> E il marker è **provato corretto dal salto stesso**: `ffmpeg_is_current` ritorna
+> vero solo se `ffmpeg_pinned` non è `false` **e** `ffmpeg_build` vale
+> `1785863997_9.0`. Il run di oggi ha saltato ffmpeg, quindi entrambe le
+> condizioni valgono.
+>
+> **Resta una sola riga da guardare** — la superficie:
+>
+> ```bash
+> yd --version
+> ```
+>
+> Deve stampare `ffmpeg 9.0   (verificata con questo ytdl)`, **senza** più
+> «non verificata». Se è così, §3c è chiuso e non va rieseguito.
 
 ```bash
 export YTDL_BRANCH=feat/update-path/implementation
