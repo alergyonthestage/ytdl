@@ -15,8 +15,10 @@ Amended by [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md)
 (gate-C review of Cycle 5): the scope vocabulary and §8 below, and the partial
 outcome in §3 and §5. Amended again by
 [ADR-0015](decisions/0015-cycle6-tab-scope-and-faithful-reruns.md) (gate A of
-Cycle 6): the middle scope is the browser tab, and §3 and §8 say so. Section
-numbers are stable — amendments append rather than renumber, because code
+Cycle 6): the middle scope is the browser tab, and §3 and §8 say so. Amended a
+third time by [ADR-0016](decisions/0016-cycle6plus-update-path.md) §16.4 (Cycle
+6-plus): §7 now carries the register of asymmetries recorded under its own rule.
+Section numbers are stable — amendments append rather than renumber, because code
 comments and design documents cite them.
 
 ## 1. The tasks the tool serves
@@ -157,6 +159,19 @@ A capability lands in **both** channels, or the cycle's ADR records the asymmetr
 and its reason. The asymmetries Cycle 5 inherited (cancel/retry CLI-only, live
 progress GUI-only, "where is my file" in neither) all came from nobody having
 written this rule down.
+
+**Asymmetries recorded under this rule**, so the register is one list rather than
+a search through the ADRs:
+
+| asymmetry | recorded in | why |
+|---|---|---|
+| Applying an update **asynchronously**, and therefore the `abandoned` run state, is GUI-only | [ADR-0016](decisions/0016-cycle6plus-update-path.md) §16.4 | `ytdl --update` is synchronous and streams to the terminal; it writes no run record, so the CLI has no run it could fail to follow. The *capability* — apply an update — is in both channels |
+
+Note what the rule asks for, on the evidence of Cycle 6-plus: the **capability**
+is what must land in both channels, not every state its implementation needs. The
+update itself is in both (`ytdl --update` and the GUI's *Aggiorna*), and both show
+the same three verdict states; only the record of an apply that outlived the
+surface watching it is GUI-only, because only the GUI's apply can outlive it.
 
 ## 8. Scope of a choice
 

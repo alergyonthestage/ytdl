@@ -216,6 +216,7 @@ const nodes = {
 const $ = (id) => nodes[id];
 const applyQueue = () => {}, renderRecent = () => {}, setDaemon = () => {};
 const setOpenFolderAvailability = () => {}, retentionLabel = () => "da sempre";
+const applyUpdate = () => {};
 const setMsg = () => {};
 let retentionDays = 0;
 let appliedSessionOut = "";
@@ -595,5 +596,487 @@ eval(loadFn);
 	}
 	if !strings.Contains(out, "offset:1") {
 		t.Errorf("the offset was accumulated from both responses, so the next page would skip records:\n%s", out)
+	}
+}
+
+// updateHarness executes the REAL update-rendering functions against fake DOM
+// nodes. Grepping the source would not catch the thing that matters here — that
+// the banner survives a non-empty queue while the action does not — because both
+// are decided by conditions, not by the presence of a string.
+const updateHarness = harness + `
+function node(extra) {
+  return Object.assign({
+    hidden: false, textContent: "", disabled: false, title: "", className: "",
+    children: [],
+    append(...cs) { this.children.push(...cs); },
+    scrollIntoView() {}, focus() {}, addEventListener() {},
+  }, extra || {});
+}
+const nodes = {};
+const $ = (id) => (nodes[id] = nodes[id] || node());
+function el(tag, className, text) { const n = node(); n.tag = tag; n.className = className || ""; n.textContent = text || ""; return n; }
+function button(label, className, onClick) { const b = el("button", className, label); b.onClick = onClick; return b; }
+function replaceChildren(n, cs) { n.children = cs || []; }
+const setMsg = () => {}, loadState = async () => {}, api = async () => ({});
+// The REAL routing table and the REAL lookup, not a stand-in. A stub here read
+// ROUTES.settings — which is undefined, because the table is keyed by hash — and
+// made a broken banner button look correct. A harness may replace what a function
+// TALKS TO; replacing what it reasons ABOUT is how a test comes to agree with a
+// bug.
+global.ROUTES = eval("(" + extract(/const ROUTES = \{[\s\S]*?\n\};/)
+  .replace(/^const ROUTES = /, "").replace(/;$/, "") + ")");
+eval(extract(/function hashForView\(name\) \{[\s\S]*?\n\}/));
+const location = { hash: "" };
+const whenText = (iso) => "il 12/08/2026";
+let updateInfo = null, updatePollTimer = 0, updateVersionBefore = "", updateDeadline = 0;
+// applyUpdate adopts a run in flight and asks for a poll; the harness counts the
+// asks rather than running timers.
+let scheduled = 0;
+function scheduleUpdatePoll() { scheduled++; }
+
+eval(extract(/function updateStateText\(u\) \{[\s\S]*?\n\}/));
+eval(extract(/function renderUpdateState\(\) \{[\s\S]*?\n\}/));
+eval(extract(/function renderUpdateVersions\(\) \{[\s\S]*?\n\}/));
+eval(extract(/function renderUpdateChanges\(\) \{[\s\S]*?\n\}/));
+eval(extract(/function blockedText\(b\) \{[\s\S]*?\n\}/));
+eval(extract(/function renderUpdateBanner\(\) \{[\s\S]*?\n\}/));
+eval(extract(/function confirmUpdate\(\) \{[\s\S]*?\n\}/));
+eval(extract(/function renderUpdateAction\(\) \{[\s\S]*?\n\}/));
+eval(extract(/function showUpdatePanel\(st\) \{[\s\S]*?\n\}/));
+eval(extract(/function applyUpdate\(u\) \{[\s\S]*?\n\}/));
+
+const labels = (id) => ($(id).children || []).map((c) => c.textContent).join("|");
+const upToDate = {
+  enabled: true, known: true, available: false, busy: false,
+  checkedAt: "2026-08-12T14:02:11Z",
+  installed: { ytdl: "v2.1.0", ytDlp: "2026.07.04", ffmpeg: "9.0" },
+};
+const availableUpdate = Object.assign({}, upToDate, {
+  available: true,
+  changes: [{ component: "ytdl", from: "v2.1.0", to: "v2.2.0" }],
+});
+`
+
+// The banner appears whenever an update is available, INCLUDING with a non-empty
+// queue. Emptiness gates the action, never the news — a user with downloads
+// running is told there is an update and told what to do about it
+// (ADR-0016 §9). This is the one thing in the whole surface a grep could not
+// check, because both halves are conditions.
+func TestBannerShowsEvenWithAFullQueue(t *testing.T) {
+	out := runNode(t, updateHarness+`
+applyUpdate(Object.assign({}, availableUpdate, { blocked: { reason: "queue", pending: 2 } }));
+console.log("banner-hidden:" + $("updateBanner").hidden);
+console.log("banner-text:" + $("updateBannerText").textContent);
+console.log("action:" + labels("updateActionSlot"));
+console.log("action-disabled:" + ($("updateActionSlot").children[0] || {}).disabled);
+`)
+	if !strings.Contains(out, "banner-hidden:false") {
+		t.Errorf("a non-empty queue hid the banner:\n%s", out)
+	}
+	// The banner explains the disabled button, so the two are never a mystery
+	// side by side.
+	if !strings.Contains(out, "2 download in corso") || !strings.Contains(out, "coda vuota") {
+		t.Errorf("the banner does not say why the update cannot start:\n%s", out)
+	}
+	// The ACTION is disabled, with its reason (ux-principles.md §4).
+	if !strings.Contains(out, "action-disabled:true") {
+		t.Errorf("the action was left live over a non-empty queue:\n%s", out)
+	}
+	if !strings.Contains(out, "coda vuota") {
+		t.Errorf("the disabled action carries no reason:\n%s", out)
+	}
+}
+
+// Every count reads the same way: "download" and "in corso" are both invariant
+// in Italian, so there is one form and no pluralisation to get wrong. And no
+// number ever appears without what it counts (ux-principles.md §5).
+//
+// The "running" reason is pinned here as the RENDERER's contract, not as a
+// string a user meets: banner and action are both hidden while an update runs,
+// and §4's obligation for that case is met by the panel instead — see
+// TestARunTheTabDidNotStartStillReachesTheUser. The branch stays because the
+// server computes and ships the reason, and a client that silently discarded it
+// would be the harder bug to find.
+func TestTheBlockedReasonNamesTheCountInEveryCase(t *testing.T) {
+	out := runNode(t, updateHarness+`
+for (const b of [
+  { reason: "queue", pending: 1 },
+  { reason: "queue", pending: 2 },
+  { reason: "queue" },
+  { reason: "running" },
+]) console.log("blocked:" + blockedText(b));
+console.log("blocked:" + blockedText(null));
+`)
+	for _, want := range []string{
+		"blocked:1 download in corso: l'aggiornamento parte a coda vuota.",
+		"blocked:2 download in corso: l'aggiornamento parte a coda vuota.",
+		"blocked:Non riesco a leggere la coda: l'aggiornamento parte a coda vuota.",
+		"blocked:Un aggiornamento è già in corso.",
+		"blocked:\n",
+	} {
+		if !strings.Contains(out+"\n", want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestBannerIsAbsentWhenNothingIsStale(t *testing.T) {
+	out := runNode(t, updateHarness+`
+applyUpdate(upToDate);
+console.log("banner-hidden:" + $("updateBanner").hidden);
+console.log("action:" + labels("updateActionSlot"));
+console.log("changes-hidden:" + $("updateChanges").hidden);
+`)
+	if !strings.Contains(out, "banner-hidden:true") {
+		t.Errorf("the banner shows with nothing to say:\n%s", out)
+	}
+	if !strings.Contains(out, "action:\n") && !strings.Contains(out, "action:") {
+		t.Fatalf("unexpected output:\n%s", out)
+	}
+	if strings.Contains(out, "action:Aggiorna") {
+		t.Errorf("an update action is offered with nothing to update:\n%s", out)
+	}
+	if !strings.Contains(out, "changes-hidden:true") {
+		t.Errorf("the changes table shows with no changes:\n%s", out)
+	}
+}
+
+// A capability that is not there renders nothing at all, rather than an empty
+// panel that looks broken (ux-principles.md §4).
+func TestNoUpdateObjectRendersNoSurface(t *testing.T) {
+	out := runNode(t, updateHarness+`
+applyUpdate(null);
+console.log("banner-hidden:" + $("updateBanner").hidden);
+console.log("section-hidden:" + $("updateSection").hidden);
+`)
+	if !strings.Contains(out, "banner-hidden:true") || !strings.Contains(out, "section-hidden:true") {
+		t.Errorf("a missing capability still rendered a surface:\n%s", out)
+	}
+}
+
+// The three verdict states never collapse into two, and "sei aggiornato" always
+// carries the day it was checked (ADR-0016 §8).
+func TestTheThreeVerdictStatesStayDistinct(t *testing.T) {
+	out := runNode(t, updateHarness+`
+console.log("uptodate:" + updateStateText(upToDate));
+console.log("available:" + updateStateText(availableUpdate));
+console.log("unverified:" + updateStateText(Object.assign({}, upToDate, { known: false })));
+console.log("never:" + updateStateText({ enabled: true }));
+console.log("off:" + updateStateText({ enabled: false }));
+`)
+	cases := map[string]string{
+		"uptodate:":   "Sei aggiornato",
+		"available:":  "È disponibile un aggiornamento",
+		"unverified:": "non verificati",
+		"never:":      "nessun controllo ancora eseguito",
+		"off:":        "disattivato",
+	}
+	for prefix, want := range cases {
+		line := ""
+		for _, l := range strings.Split(out, "\n") {
+			if strings.HasPrefix(l, prefix) {
+				line = l
+			}
+		}
+		if !strings.Contains(line, want) {
+			t.Errorf("%s = %q, want it to contain %q", prefix, line, want)
+		}
+	}
+	// A probe that did not answer must never read as up to date.
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "unverified:") || strings.HasPrefix(l, "never:") {
+			if strings.Contains(l, "Sei aggiornato") {
+				t.Errorf("an unverified state rendered as up to date: %q", l)
+			}
+		}
+	}
+	if !strings.Contains(out, "uptodate:Sei aggiornato — verificato il 12/08/2026") {
+		t.Errorf("\"sei aggiornato\" without the date it was checked:\n%s", out)
+	}
+}
+
+// The panel's five outcomes, each distinct. done-with-restart and
+// done-without-restart are the ones that must not be confused: after the
+// installer became idempotent, most updates cost no restart at all (design §5).
+// "abandoned" is the fifth: the process watching the installer died first, so
+// the panel says it does not know how it went rather than guessing at one of the
+// other four (design §7.3, V1).
+func TestUpdatePanelRendersEveryOutcome(t *testing.T) {
+	out := runNode(t, updateHarness+`
+for (const st of [
+  { state: "running" },
+  { state: "done", changed: false },
+  { state: "done", changed: true },
+  { state: "failed", exitCode: 3, logTail: "boom" },
+  { state: "abandoned", logTail: "got as far as ffmpeg" },
+]) {
+  showUpdatePanel(st);
+  console.log(st.state + "/" + !!st.changed + ":" + $("updatePanelText").textContent +
+    " [" + labels("updatePanelActions") + "]");
+}
+`)
+	want := []struct{ prefix, contains string }{
+		{"running/false:", "in corso"},
+		{"done/false:", "Non serve riavviare"},
+		{"done/true:", "Riapro l'interfaccia"},
+		{"failed/false:", "non è riuscito"},
+		{"abandoned/false:", "come sia andato"},
+	}
+	for _, w := range want {
+		found := false
+		for _, l := range strings.Split(out, "\n") {
+			if strings.HasPrefix(l, w.prefix) && strings.Contains(l, w.contains) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no line %q containing %q:\n%s", w.prefix, w.contains, out)
+		}
+	}
+	// A failure offers the log and a retry — never a summary of how far it got,
+	// because only the installer knows that.
+	if !strings.Contains(out, "Vedi il dettaglio") || !strings.Contains(out, "Riprova") {
+		t.Errorf("a failed update offers neither the log nor a retry:\n%s", out)
+	}
+	// A success that changed nothing must not promise a restart.
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "done/false:") && strings.Contains(l, "Riapro") {
+			t.Errorf("a dependency-only update promised a restart: %q", l)
+		}
+	}
+	// An abandoned run must not be rounded up to either certainty: neither
+	// "riuscito" nor "non è riuscito" is something anyone here knows.
+	for _, l := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(l, "abandoned/") {
+			continue
+		}
+		for _, claim := range []string{"non è riuscito", "Aggiornato"} {
+			if strings.Contains(l, claim) {
+				t.Errorf("an abandoned run claimed %q, which nobody here knows: %q", claim, l)
+			}
+		}
+		if !strings.Contains(l, "Vedi il dettaglio") || !strings.Contains(l, "Riprova") {
+			t.Errorf("an abandoned run offers neither the log nor a retry: %q", l)
+		}
+	}
+}
+
+// A tool that is THERE is never called "non installato", whatever the comparison
+// shape carries for it. A foreign ffmpeg, one whose attested build was withdrawn,
+// and one installed before the marker existed all arrive with no version — and
+// the page used to render all three as absent, directly above a warning that only
+// means anything if the thing IS installed (V12, ux-principles.md §5).
+func TestAnInstalledToolIsNeverCalledMissing(t *testing.T) {
+	out := runNode(t, updateHarness+`
+const base = { enabled: true, installed: { ytdl: "v2.1.0", ytDlp: "2026.07.04" } };
+applyUpdate(Object.assign({}, base, { foreign: ["ffmpeg"] }));
+console.log("foreign:" + labels("updateVersions"));
+applyUpdate(Object.assign({}, base, { unattested: ["ffmpeg"] }));
+console.log("unattested:" + labels("updateVersions"));
+applyUpdate(Object.assign({}, base, {}));
+console.log("no-marker:" + labels("updateVersions"));
+applyUpdate(Object.assign({}, base, { missing: ["ffmpeg"] }));
+console.log("absent:" + labels("updateVersions"));
+`)
+	// The cells are compared WHOLE. "non installato da ytdl: …" is the warning row
+	// underneath and legitimately starts with the same words, so a substring test
+	// here would agree with the bug.
+	cells := func(line string) []string { return strings.Split(line, "|") }
+	has := func(line, want string) bool {
+		for _, c := range cells(line) {
+			if c == want {
+				return true
+			}
+		}
+		return false
+	}
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "absent:"):
+			if !has(line, "non installato") {
+				t.Errorf("an ffmpeg that really is absent must say so: %q", line)
+			}
+		case strings.HasPrefix(line, "foreign:"), strings.HasPrefix(line, "unattested:"),
+			strings.HasPrefix(line, "no-marker:"):
+			if has(line, "non installato") {
+				t.Errorf("an installed ffmpeg was called absent: %q", line)
+			}
+			if !has(line, "versione non registrata") {
+				t.Errorf("no version and no explanation for an installed ffmpeg: %q", line)
+			}
+		}
+	}
+}
+
+// A run the tab did not start still reaches the user.
+//
+// showUpdatePanel had exactly two callers, both downstream of the Aggiorna
+// button, so the two states that by definition outlive the click were invisible:
+// an update running while another tab (or a reload) looks at it — which showed
+// the banner with no control and no reason, V1's own §4 sentence (V17) — and a
+// run nobody was left to follow, whose whole point is that the tab was gone
+// (V16, design §7.3).
+func TestARunTheTabDidNotStartStillReachesTheUser(t *testing.T) {
+	out := runNode(t, updateHarness+`
+const base = { enabled: true, installed: { ytdl: "v2.1.0", ytDlp: "2026.07.04" } };
+
+applyUpdate(Object.assign({}, base, { busy: true, blocked: { reason: "running" },
+  run: { state: "running" } }));
+console.log("running:hidden=" + $("updatePanel").hidden + " text=" + $("updatePanelText").textContent +
+  " scheduled=" + scheduled + " before=" + updateVersionBefore);
+
+updateVersionBefore = "";
+applyUpdate(Object.assign({}, base, { run: { state: "abandoned", logTail: "got as far as ffmpeg" } }));
+console.log("abandoned:hidden=" + $("updatePanel").hidden + " text=" + $("updatePanelText").textContent +
+  " [" + labels("updatePanelActions") + "]");
+
+$("updatePanel").hidden = true;
+applyUpdate(base);
+console.log("norun:hidden=" + $("updatePanel").hidden);
+`)
+	for _, want := range []string{
+		"running:hidden=false",
+		"scheduled=1",
+		// Adopting a run in flight must remember the build we are on, or the reload
+		// trigger compares against "" and fires at once.
+		"before=v2.1.0",
+		"abandoned:hidden=false",
+		"norun:hidden=true",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "in corso") {
+		t.Errorf("a running update shows no progress text:\n%s", out)
+	}
+	// The abandoned panel offers the log and a retry, and claims neither outcome.
+	if !strings.Contains(out, "Vedi il dettaglio") || !strings.Contains(out, "Riprova") {
+		t.Errorf("the abandoned panel offers neither the log nor a retry:\n%s", out)
+	}
+	for _, claim := range []string{"non è riuscito", "Aggiornato"} {
+		for _, line := range strings.Split(out, "\n") {
+			if strings.HasPrefix(line, "abandoned:") && strings.Contains(line, claim) {
+				t.Errorf("an abandoned run claimed %q: %q", claim, line)
+			}
+		}
+	}
+}
+
+// The installed versions are local facts and are shown whether or not any probe
+// succeeded (ADR-0016 §8); a dependency ytdl did not install is called out as
+// the different problem it is.
+func TestVersionsAreAlwaysShown(t *testing.T) {
+	out := runNode(t, updateHarness+`
+applyUpdate({ enabled: true, installed: { ytdl: "v2.1.0", ytDlp: "2026.07.04" }, foreign: ["yt-dlp"] });
+console.log("versions:" + labels("updateVersions"));
+`)
+	for _, want := range []string{"v2.1.0", "2026.07.04"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("a local fact is missing with no verdict: %q\n%s", want, out)
+		}
+	}
+	// ffmpeg absent must say so rather than be omitted.
+	if !strings.Contains(out, "non installato") {
+		t.Errorf("a missing dependency is silently absent:\n%s", out)
+	}
+	if !strings.Contains(out, "non installato da ytdl") {
+		t.Errorf("a foreign dependency is not called out:\n%s", out)
+	}
+}
+
+// The banner's action has to land on a hash the router actually knows. It reads
+// like it could not fail — and it did: ROUTES is keyed by HASH, so the obvious
+// ROUTES.settings is undefined, and the button set location.hash to the string
+// "undefined". Nothing in the grep-based suite could see it, and the first
+// version of this harness stubbed ROUTES and agreed with the bug.
+func TestBannerActionNavigatesToARouteThatExists(t *testing.T) {
+	out := runNode(t, updateHarness+`
+applyUpdate(availableUpdate);
+const go = ($("updateBannerActions").children || [])[0];
+if (!go) { console.log("no-action"); } else {
+  go.onClick();
+  console.log("hash:" + location.hash);
+  console.log("known:" + (ROUTES[location.hash] === "settings"));
+}
+`)
+	if strings.Contains(out, "no-action") {
+		t.Fatalf("the banner offers no way to reach the update:\n%s", out)
+	}
+	if strings.Contains(out, "hash:undefined") || !strings.Contains(out, "known:true") {
+		t.Errorf("the banner action does not reach the settings view:\n%s", out)
+	}
+}
+
+// A retry must get its own deadline. One left over from the previous attempt
+// made the panel report "non sono riuscito a riaprire l'interfaccia" the instant
+// the second run finished.
+func TestEachUpdateRunGetsItsOwnRestartDeadline(t *testing.T) {
+	out := runNode(t, updateHarness+`
+eval(extract(/const RESTART_TIMEOUT_MS = [^;]+;/));
+eval(extract(/async function startUpdate\(force\) \{[\s\S]*?\n\}/));
+eval(extract(/function scheduleUpdatePoll\(\) \{[\s\S]*?\n\}/));
+global.setTimeout = () => 0;
+global.clearTimeout = () => {};
+applyUpdate(availableUpdate);
+updateDeadline = 1;                       // left over from an earlier attempt
+startUpdate(true).then(() => console.log("deadline:" + updateDeadline));
+`)
+	if !strings.Contains(out, "deadline:0") {
+		t.Errorf("a retry inherited the previous run's deadline:\n%s", out)
+	}
+}
+
+// A version ytdl could not READ is a third fact, distinct from a version nobody
+// recorded and from a tool that is absent — finding V20. The page must not
+// borrow one's wording for another, and the verdict beside it must not quietly
+// read "sei aggiornato" when something was left uncompared (ADR-0016 §16.5).
+func TestUnreadableVersionIsItsOwnFact(t *testing.T) {
+	out := runNode(t, updateHarness+`
+// yt-dlp carries no version in the COMPARISON shape, because the read failed.
+updateInfo = Object.assign({}, upToDate, {
+  installed: { ytdl: "v2.1.0", ffmpeg: "9.0" },
+  unreadable: ["yt-dlp"],
+});
+renderUpdateVersions();
+console.log("versions:" + labels("updateVersions"));
+renderUpdateState();
+console.log("state:" + $("updateState").textContent);
+
+// And with everything readable, neither surface says anything about it.
+updateInfo = upToDate;
+renderUpdateVersions();
+console.log("clean-versions:" + labels("updateVersions"));
+renderUpdateState();
+console.log("clean-state:" + $("updateState").textContent);
+`)
+	if !strings.Contains(out, "non sono riuscito a leggerla") {
+		t.Errorf("the versions block did not say the read failed:\n%s", out)
+	}
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "versions:") {
+			if strings.Contains(l, "versione non registrata") {
+				t.Errorf("an unreadable version borrowed the never-recorded wording: %q", l)
+			}
+			if strings.Contains(l, "non installato") {
+				t.Errorf("an unreadable version was called absent: %q", l)
+			}
+		}
+		if strings.HasPrefix(l, "state:") {
+			// The three verdict states stay three: the verdict is untouched and the
+			// unobtainable fact is a sentence beside it.
+			if !strings.Contains(l, "Sei aggiornato") {
+				t.Errorf("the verdict changed instead of gaining a clause: %q", l)
+			}
+			if !strings.Contains(l, "Non ho potuto confrontare yt-dlp") {
+				t.Errorf("the verdict claimed up to date with nothing said about the gap: %q", l)
+			}
+		}
+		if strings.HasPrefix(l, "clean-state:") && strings.Contains(l, "Non ho potuto confrontare") {
+			t.Errorf("the clause appeared with every version readable: %q", l)
+		}
+		if strings.HasPrefix(l, "clean-versions:") && strings.Contains(l, "non sono riuscito a leggerla") {
+			t.Errorf("the read-failed wording appeared with every version readable: %q", l)
+		}
 	}
 }

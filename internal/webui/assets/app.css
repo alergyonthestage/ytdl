@@ -147,3 +147,60 @@ details[open] > summary { margin-bottom: .6rem; }
 }
 .savebar[hidden] { display: none; }
 .savebar-text { flex: 1 1 auto; font-size: .88rem; font-weight: 600; }
+
+/* ---- updates ------------------------------------------------------------ */
+
+/* The banner sits above the view container, so it is visible on all three
+   views. It is a notice, not an alarm: a warning tone, never an error one — a
+   missed update is not a failure. */
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border: 1px solid #d9b25a;
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: #fdf7e6;
+}
+.banner-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+.versions {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 16px;
+  margin: 0 0 10px;
+}
+.versions dt { font-weight: 600; }
+.versions dd { margin: 0; }
+.versions .warn { color: #8a5a00; }
+
+.update-state { margin: 0 0 10px; }
+.update-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.update-actions .muted { font-size: 13px; }
+.confirm-text { flex: 1 1 100%; }
+
+.changes { border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+.changes caption { text-align: left; font-weight: 600; padding-bottom: 4px; }
+.changes th, .changes td { text-align: left; padding: 3px 16px 3px 0; }
+.changes th { font-weight: 600; color: #555; }
+
+.update-panel { margin: 12px 0 0; }
+.update-panel-actions { display: flex; gap: 8px; margin-top: 8px; }
+/* The installer's own output, shown verbatim as text. A partial failure is
+   never summarised — the installer is the only thing that knows how far it
+   got. */
+.update-panel .log {
+  margin-top: 8px;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  background: #f4f4f4;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 8px;
+}

@@ -1,0 +1,143 @@
+name: canary
+
+# The canary (ADR-0016 §3).
+#
+# deps.conf's yt-dlp policy starts at "latest", and the residual risk of a loose
+# policy is a new yt-dlp breaking ytdl and nobody noticing. The maintainer will
+# not hear about it: the users are students, artists, clients and strangers who
+# found the repository, and none of them file bug reports — they stop using the
+# tool. At a reaction latency measured in weeks, the thing that notices has to be
+# a machine.
+#
+# A red run is an email to the maintainer, which is the entire point: the rollback
+# lever in deps.conf is only useful if someone knows to pull it. GitHub emails the
+# owner when a SCHEDULED workflow fails on the default branch, so this needs no
+# notification wiring of its own.
+on:
+  schedule:
+    # Daily, early UTC. Nothing here depends on the time; a fixed hour just keeps
+    # the runs comparable.
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+  # Also on any change to the pin itself: a re-pinned yt-dlp is exactly the moment
+  # to find out whether ytdl still works with it, and waiting until the next
+  # scheduled run would mean shipping first and checking afterwards.
+  push:
+    branches: [main]
+    paths:
+      - 'deps.conf'
+      - '.github/workflows/canary.yml'
+      - 'internal/run/canary_test.go'
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    strategy:
+      # Both legs always run, so one failing still reports the other. Under the
+      # current policy the two are usually the same version; the job says so
+      # rather than quietly testing one thing twice.
+      fail-fast: false
+      matrix:
+        # "pinned" is whatever deps.conf currently declares — a tag, or "latest"
+        # resolved the same way the installer resolves it. "newest" is upstream's
+        # latest regardless of the pin, which is what catches a break BEFORE the
+        # policy hands it to everyone.
+        which: [pinned, newest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          ffmpeg -version | head -1
+
+      - name: Work out which yt-dlp to test
+        id: version
+        run: |
+          set -euo pipefail
+          # Read the pin with the same discipline install.sh uses: parsed, never
+          # sourced, and split on the first '='.
+          pinned="$(awk -F= '/^[[:space:]]*yt_dlp_version[[:space:]]*=/ {
+                      sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, "");
+                      print; exit }' deps.conf)"
+          [ -n "$pinned" ] || { echo "deps.conf declares no yt_dlp_version"; exit 1; }
+
+          if [ "${{ matrix.which }}" = "newest" ] || [ "$pinned" = "latest" ]; then
+            # The same redirect read the installer and the Go probe make: the
+            # target of releases/latest IS the answer.
+            loc="$(curl -sSI https://github.com/yt-dlp/yt-dlp/releases/latest \
+                   | awk 'tolower($1) == "location:" { print $2 }' | tr -d '\r' | tail -1)"
+            version="${loc##*/releases/tag/}"
+          else
+            version="$pinned"
+          fi
+          [ -n "$version" ] || { echo "could not resolve a yt-dlp version"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Testing ytdl against yt-dlp $version (pin says: $pinned)"
+
+      - name: Install that yt-dlp
+        run: |
+          set -euo pipefail
+          v="${{ steps.version.outputs.version }}"
+          base="https://github.com/yt-dlp/yt-dlp/releases/download/$v"
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL --retry 3 -o "$HOME/.local/bin/yt-dlp" "$base/yt-dlp_linux"
+          curl -fsSL --retry 3 -o /tmp/SHA2-256SUMS "$base/SHA2-256SUMS"
+          # Verify it, exactly as the installer does. A canary that ran an
+          # unverified binary would be testing something other than what ships.
+          expected="$(awk '$2 == "yt-dlp_linux" {print $1; exit}' /tmp/SHA2-256SUMS)"
+          actual="$(sha256sum "$HOME/.local/bin/yt-dlp" | awk '{print $1}')"
+          [ "$expected" = "$actual" ] || { echo "checksum mismatch"; exit 1; }
+          chmod +x "$HOME/.local/bin/yt-dlp"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Make the fixture and serve it
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fixture
+          # Generated here, never committed: a couple of seconds of synthetic
+          # audio, so there is nothing to license and nothing to keep in the
+          # repository. The metadata gives the tag pipeline something to carry.
+          ffmpeg -v error -f lavfi -i "sine=frequency=440:duration=3" \
+            -metadata title="Canary Track" \
+            -metadata artist="Canary Artist" \
+            /tmp/fixture/canary.m4a
+          ls -l /tmp/fixture
+          # yt-dlp's `generic` extractor handles a plain HTTP media URL, so no
+          # third-party site is involved and the job cannot fail for someone
+          # else's outage.
+          # nohup + setsid so the server survives this step's shell exiting; the
+          # download runs two steps later.
+          setsid nohup python3 -m http.server 8099 --directory /tmp/fixture \
+            >/tmp/fixture/http.log 2>&1 &
+          for _ in $(seq 1 20); do
+            curl -fsS -o /dev/null http://127.0.0.1:8099/canary.m4a && break
+            sleep 0.25
+          done
+          curl -fsS -o /dev/null http://127.0.0.1:8099/canary.m4a
+
+      - name: Run ytdl end to end
+        env:
+          YTDL_CANARY: '1'
+          YTDL_CANARY_URL: 'http://127.0.0.1:8099/canary.m4a'
+        run: go test ./internal/run -run TestCanaryEndToEnd -v -count=1
+
+      - name: What broke
+        if: failure()
+        run: |
+          echo "ytdl no longer works with yt-dlp ${{ steps.version.outputs.version }} (${{ matrix.which }})."
+          echo
+          echo "If the 'newest' leg is red and 'pinned' is green, the policy is the"
+          echo "problem: pin yt_dlp_version in deps.conf to the last good tag. That"
+          echo "one commit reaches every installation within a day, with no release."
+          echo
+          echo "If both are red, the break is in ytdl."

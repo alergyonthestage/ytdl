@@ -27,7 +27,7 @@ Two diagrams: the Cycle-1 spine, then what the later cycles added around it.
 flowchart TD
     MAIN["cmd/ytdl/main.go<br/>parse → resolve → dep-check → dispatch · owns exit codes"]
     CLI["internal/cli<br/>hand-written parser (+C1/C3) · Usage & parse messages · renderers"]
-    RUN["internal/run<br/>Dispatch · 5 modes · temp files · background · deps · version/update · runtime messages"]
+    RUN["internal/run<br/>Dispatch · 5 modes · temp files · background · deps · --update (streams the installer) · runtime messages"]
     CORE["internal/core<br/>BuildArgs / ReExecArgs (pure, golden-tested)"]
     CONFIG["internal/config<br/>Settings · Defaults · Resolve (overlay) · LoadFile · Save"]
     LOGSTORE["internal/logstore<br/>central store · retention · breadcrumb · hash · history record"]
@@ -62,25 +62,40 @@ flowchart TD
     LOGSTORE["internal/logstore"]
     CONFIG["internal/config"]
     RUN["internal/run"]
+    UPDATE["internal/update<br/>probe · cache · verdict · installer runner<br/>(Cycle 6-plus)"]
+    BUILD["internal/buildinfo"]
     MAIN --> WEBUI
     MAIN --> DAEMON
     MAIN --> JOBS
     MAIN --> QUEUE
+    MAIN --> UPDATE
     CLI --> JOBS
     CLI --> TERM
     CLI --> LOGSTORE
     CLI --> QUEUE
+    CLI --> UPDATE
     WEBUI --> JOBS
     WEBUI --> QUEUE
     WEBUI --> LOGSTORE
     WEBUI --> CONFIG
+    WEBUI --> UPDATE
     DAEMON --> QUEUE
     JOBS --> QUEUE
     JOBS --> LOGSTORE
     JOBS --> CONFIG
     JOBS --> OPEN
     RUN --> QUEUE
+    RUN --> UPDATE
+    UPDATE --> BUILD
 ```
+
+**`internal/daemon` has no edge to `internal/update`, and that is the point.** The
+daemon needs the update capability — it keeps itself alive while an installer of
+its own is running (ADR-0008), and it serves the GUI's update routes — but it
+takes **all of it by injection** from `cmd/ytdl`: `daemon.Config.LiveClients` is a
+composed predicate, and `webui.Updater` is an interface the composition root
+implements. That is what let Cycle 6-plus add a whole capability with
+`git diff main -- internal/daemon/` still empty.
 
 `internal/jobs` is the seam that keeps the two channels from drifting: whatever
 both of them do **to a record** lives there once. That is why the failure-hint
@@ -89,7 +104,9 @@ same remedy because they call the same function, not because two authors kept tw
 tables in step (gate-C finding G8). The `cli → jobs` edge exists for exactly that;
 nothing in `jobs` imports `cli`, so there is no cycle.
 
-- **`internal/config`** (leaf) — the 9-key `Settings`, `Defaults()`, `Resolve()` (the
+- **`internal/config`** (leaf) — the 20-key `Settings` (9 at Cycle 1; the log/notify
+  keys arrived in 2A, `concurrency` in 2B, `job_timeout` in 2B-plus,
+  `open_folder_on_done` in 5 and `update_check` in 6-plus), `Defaults()`, `Resolve()` (the
   per-field overlay: flag > env > session > config file > default), and `LoadFile()`
   (the tolerant `key=value` parser — **parse, never `source`**). `ConfigPath()` is
   `${XDG_CONFIG_HOME:-~/.config}/ytdl/config`.
@@ -99,9 +116,15 @@ nothing in `jobs` imports `cli`, so there is no cycle.
   dry-run > background > verbose > silent > default), plus `Usage` and parse-error text.
 - **`internal/run`** — the runtime the goldens don't cover: `Dispatch`, the five mode
   behaviours, temp files, native background detach (`Setsid` + `/dev/null`), PATH
-  prepend, dependency check, `--version`, `--update`, and all runtime user-facing
+  prepend, dependency check, `--update`, and all runtime user-facing
   strings. In Cycle 2A it also records every job to the central store, drops/cleans
-  the in-destination failure breadcrumb, and fires completion notifications.
+  the in-destination failure breadcrumb, and fires completion notifications. Since
+  Cycle 6-plus it **resolves the tools it execs through `update.ToolPath`** — our
+  own copy under `~/.local/bin` when it is there, else `$PATH` — and appends
+  `--ffmpeg-location` **after** `core.BuildArgs`, only for a copy that is ours
+  (ADR-0016 §14.3). Rendering `--version` moved out to `internal/cli`
+  (`RenderVersion`), which is where the pure renderers live; `run.Update()` — the
+  streamed `curl … | bash` — stayed.
 - **`internal/logstore`** (leaf, Cycle 2A) — the central log store + age retention
   (`Record`/`Prune`), the in-destination failure breadcrumb (`WriteBreadcrumb`/
   `RemoveBreadcrumb`, keyed by `Hash(NormalizeURL(url))`), and per-item playlist
@@ -116,8 +139,10 @@ nothing in `jobs` imports `cli`, so there is no cycle.
   enqueue — which is what lets both queue views state where it will land.
 - **`internal/daemon`** (Cycle 2B) — the on-demand drainer: an exclusive `flock`
   for single-instance, draining under the concurrency cap, idle-exiting when the
-  queue empties and no GUI is connected (ADR-0008). **Untouched since Cycle 2B**,
-  like `core`.
+  queue empties **and** `LiveClients` says nothing needs it (ADR-0008).
+  **Untouched since Cycle 2B**, like `core` — Cycle 6-plus added a third
+  keep-alive clause to that rule *without* touching this package, by composing the
+  predicate it is handed in `cmd/ytdl`.
 - **`internal/jobs`** (Cycle 5) — what both channels do *to a record*: cancel,
   "riscarica", the open/reveal guards (a record id, never a path), and the
   render-time failure-hint catalogue. Its existence is the answer to "the GUI and
@@ -130,7 +155,33 @@ nothing in `jobs` imports `cli`, so there is no cycle.
 - **`internal/term`** — display-width arithmetic for a terminal that must not
   wrap: `DisplayWidth`, `Clip` (cut a title), `Pad` (align a column) and `Wrap`
   (never cut an instruction), plus TTY/`NO_COLOR` detection.
-- **`cmd/ytdl`** — wires it together and owns `os.Exit` codes.
+- **`internal/update`** (near-leaf, Cycle 6-plus) — detection, caching and
+  application of an update ([ADR-0016](decisions/0016-cycle6plus-update-path.md)).
+  It imports **`internal/buildinfo` and the standard library, nothing else**: the
+  state dir arrives as a parameter, never resolved here, which is what keeps it
+  injectable into the daemon. Four concerns, one per file group:
+  - **probe** (`probe.go`, `parse.go`) — `LatestTag` reads the `302` that
+    `github.com/<slug>/releases/latest` answers with; `FetchPin` reads `deps.conf`
+    from `raw.githubusercontent.com`. Both comparisons are **string equality**, not
+    version ordering, and the probe **tolerates an unknown `deps.conf` key** while
+    `install.sh` refuses one (ADR-0016 §14.2).
+  - **verdict** (`update.go`) — `Verdict`, and everything a surface asks of it
+    *derived* rather than stored: `Known`, `Available`, `Changes`, `ChangedYtdl`,
+    `IsDev`. `Changes` reports what **differs**, never what is newer, so a rollback
+    reads correctly.
+  - **cache** (`cache.go`, `refresh.go`) — `Load`/`Save` (atomic), `DefaultTTL`
+    (24 h), `RefreshBudget` (30 s), `RefreshAsync`. Every surface reads the cache;
+    no probe is ever on a path a user waits on.
+  - **local facts + runner** (`install.go`, `runner.go`) — `Resolve`/`ToolPath`
+    (ours vs `$PATH`), `Dependencies`/`InstalledFrom`, the installer marker, and
+    `Runner` with `Start`/`Progress`/`Running`/`OnFinish`. Public API added by the
+    review: **`StateAbandoned`** — a run that claims to be running while nothing
+    is, **derived at read time and never written** — and **`StaleAfter`** (2 h),
+    the clock backstop behind the pid test (ADR-0016 §16.1).
+- **`cmd/ytdl`** — wires it together and owns `os.Exit` codes. Since Cycle 6-plus it
+  is also where the **handover** lives (`handOver`, `spawnGUIWithToken`,
+  `daemonAlive`, `guiUpdater`): composition-root work by ADR-0016's own account,
+  which is what keeps `internal/daemon` untouched.
 
 Runtime strings live in `run`, parse strings in `cli` — so `run` does not import
 `cli` and there is no cycle (a minor consolidation of the design's `cli/dispatch.go`).

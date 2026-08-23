@@ -29,6 +29,7 @@ import (
 	"github.com/alergyonthestage/ytdl/internal/queue"
 	"github.com/alergyonthestage/ytdl/internal/run"
 	"github.com/alergyonthestage/ytdl/internal/term"
+	"github.com/alergyonthestage/ytdl/internal/update"
 	"github.com/alergyonthestage/ytdl/internal/webui"
 )
 
@@ -69,7 +70,9 @@ func realMain(args []string) int {
 		fmt.Print(cli.HelpText(parsed))
 		return 0
 	case cli.ActionVersion:
-		return run.ShowVersion(os.Stdout)
+		settings, _ := resolveWithFlags(config.Partial{})
+		fmt.Print(cli.RenderVersion(updateSurface(settings.UpdateCheck, withVersions)))
+		return 0
 	case cli.ActionUpdate:
 		return run.Update()
 	case cli.ActionQueue:
@@ -124,6 +127,13 @@ func realMain(args []string) int {
 		return 1
 	}
 
+	// One of the two startup refresh sites (ADR-0016 §5). This one covers the plain
+	// `ytdl <url>` the installer itself tells people to type: without it a user who
+	// never enqueues and never opens the GUI would refresh the verdict never. It
+	// runs BEFORE the download, so the probe overlaps work the user is already
+	// waiting on, and writes for the NEXT invocation.
+	update.RefreshAsync(config.StatePath(), settings.UpdateCheck, time.Now())
+
 	o := core.Options{
 		Mode:     parsed.RunMode,
 		URL:      parsed.URL,
@@ -131,7 +141,72 @@ func realMain(args []string) int {
 		// Playlist mode is on via the -p flag or the persistent config default.
 		Playlist: parsed.Playlist || settings.PlaylistDefault,
 	}
-	return run.Dispatch(o, os.Stdout, os.Stderr)
+	rc := run.Dispatch(o, os.Stdout, os.Stderr)
+
+	// After the command's own output, never before it (design §6.1), and on
+	// failure as well as success: a stale dependency is MORE relevant when a
+	// download has just failed, though the notice never claims to be the cause.
+	printUpdateNotices(settings.UpdateCheck, withoutVersions)
+	return rc
+}
+
+// The two costs a surface can choose between when it reads the local facts. Asking
+// yt-dlp its version costs the better part of a second, so only a screen the user
+// deliberately opened pays it; a notice printed after a download reads the
+// versions from the cached verdict instead (see update.Dependencies).
+const (
+	withVersions    = true
+	withoutVersions = false
+)
+
+// updateSurface assembles the update view at the edge, so the cli renderers stay
+// pure. It pairs the remembered REMOTE answer with the LOCAL facts it can afford
+// to read.
+func updateSurface(enabled, versions bool) cli.UpdateView {
+	stateDir := config.StatePath()
+	v, have := update.Load(stateDir)
+	deps := update.Dependencies(stateDir, versions)
+
+	// The local facts always replace what the cache remembered: a verdict written
+	// by a previous build must not make this one look stale, and IsDev keys off
+	// Installed.Ytdl, which InstalledFrom fills from the running build.
+	//
+	// They are FLATTENED by InstalledFrom rather than assembled here. Assembling
+	// them here is what V2 was: it copied the marker's build id straight into
+	// Installed.FFmpeg, undoing the one place that deliberately leaves that field
+	// empty for a copy the pin does not vouch for — so an unattested ffmpeg was
+	// compared against a build that no longer exists, and reported an update on
+	// every single run that applying could never resolve (ADR-0016 §15). One
+	// flattening rule, one place, and both channels read it.
+	local := update.InstalledFrom(deps)
+	if !versions {
+		// Nothing asked yt-dlp its version on this path, so this walk has nothing to
+		// say about it: keep what the last round recorded rather than blanking a
+		// side that WAS answered.
+		local.YtDlp = v.Installed.YtDlp
+	}
+	v.Installed = local
+
+	return cli.UpdateView{
+		Verdict:     v,
+		HaveVerdict: have,
+		Enabled:     enabled,
+		Deps:        deps,
+		Now:         time.Now(),
+	}
+}
+
+// printUpdateNotices writes the update and foreign-dependency notices to STDERR,
+// so they never contaminate output a script may be parsing, and so they carry the
+// same "!" warning mark as every other advisory ytdl prints.
+//
+// The two are separate messages because they are separate problems: one says
+// something newer exists, the other says the pin is not in force at all
+// (ADR-0016 §4, §8).
+func printUpdateNotices(enabled, versions bool) {
+	view := updateSurface(enabled, versions)
+	fmt.Fprint(os.Stderr, cli.RenderUpdateNotice(view))
+	fmt.Fprint(os.Stderr, cli.RenderForeignDependency(view))
 }
 
 // resolveSettings builds the layer Partials and resolves them. The session layer
@@ -184,6 +259,13 @@ func runDaemon(daemonArgs []string) int {
 	}
 
 	settings, _ := resolveWithFlags(config.Partial{})
+
+	// The other startup refresh site (ADR-0016 §5). It covers every path that goes
+	// through the daemon — `ytdl -b`, `gui`, `again`, `retry` — and, unlike the
+	// foreground one, it runs in a process that will still be alive when the probe
+	// answers.
+	update.RefreshAsync(stateDir, settings.UpdateCheck, time.Now())
+
 	sp := queue.Open(stateDir)
 	cfg := daemon.Config{
 		Spool:         sp,
@@ -195,10 +277,18 @@ func runDaemon(daemonArgs []string) int {
 
 	var srv *webui.Server
 	if gui {
-		token, err := newGUIToken()
+		// The token an outgoing daemon handed us, or a fresh one. An ordinary
+		// `ytdl gui` always gets a fresh one, because nothing set the variable.
+		token, err := sessionToken()
 		if err != nil {
 			return 1
 		}
+		upd := newGUIUpdater(stateDir, func() config.Settings {
+			s, _ := resolveWithFlags(config.Partial{})
+			return s
+		})
+		upd.wireHandover(token)
+
 		srv = webui.New(webui.Deps{
 			Spool:         sp,
 			ConfigPath:    config.ConfigPath(),
@@ -209,22 +299,32 @@ func runDaemon(daemonArgs []string) int {
 			// daemon spawned by `ytdl -b` still owns the queue.
 			DaemonRunning: func() bool { return daemon.IsRunning(sp.LockPath()) },
 			Token:         token,
+			Updater:       upd,
 		})
-		cfg.LiveClients = srv.HasClients
-		// Set explicitly (Serve would only default its own copy) because serveGUI
-		// reads it too, to decide how long to keep retrying the queue lock.
-		cfg.FirstClientGrace = daemon.DefaultFirstClientGrace
+		// Built ONCE and used everywhere the lifetime is decided. There are two such
+		// places — daemon.drain reads it through cfg.LiveClients, and serveGUI tests
+		// it directly while another daemon owns the queue lock — and a rule written
+		// out twice is a rule that gets fixed once (V13).
+		alive := wireLifetime(&cfg, srv.HasClients, upd.Running)
+
 		cfg.Run = jobRunner(sp, srv)
 
 		// The user asked for the interface, so THIS process owns the port and
 		// serves immediately — publishing the token first, so `ytdl gui` can read
 		// it the moment the port answers.
 		_ = writeGUIToken(guiTokenPath(stateDir), token)
+		// NOTE: the handover exits with os.Exit, which skips this defer ON PURPOSE
+		// — by then the token file belongs to the incoming daemon, which has
+		// written the same value into it (see handOver).
 		defer os.Remove(guiTokenPath(stateDir))
-		stopWeb := startWebUI(srv)
+
+		hs, stopWeb := startWebUI(srv, stateDir)
+		// Published for the handover, which has to close this listener before it
+		// spawns the replacement.
+		upd.setWeb(hs)
 		defer stopWeb()
 
-		return serveGUI(cfg, srv)
+		return serveGUI(cfg, alive)
 	}
 
 	cfg.Run = jobRunner(sp, nil) // headless: no GUI, so no progress sink (title write-back still runs)
@@ -232,6 +332,22 @@ func runDaemon(daemonArgs []string) int {
 		return 1
 	}
 	return 0
+}
+
+// wireLifetime gives cfg this process's lifetime rule and returns the same
+// closure for serveGUI, which decides the same question in its own loop.
+//
+// One construction, two readers. Written out twice — as it was — a rule gets
+// fixed once (V13), and nothing in the suite notices (V14).
+func wireLifetime(cfg *daemon.Config, hasClients, updating func() bool) func() bool {
+	alive := daemonAlive(hasClients, updating)
+	cfg.LiveClients = alive
+	// Set explicitly (Serve would only default its own copy) because serveGUI
+	// reads it too, to decide how long to keep retrying the queue lock.
+	if cfg.FirstClientGrace == 0 {
+		cfg.FirstClientGrace = daemon.DefaultFirstClientGrace
+	}
+	return alive
 }
 
 // serveGUI runs the interface and takes over the queue when it can.
@@ -243,9 +359,16 @@ func runDaemon(daemonArgs []string) int {
 // shared spool and config; only live progress needs queue ownership) and retry
 // the lock until the incumbent idle-exits, then start draining ourselves.
 //
-// We stop retrying once no client is connected and the first-client grace has
-// passed, so an unused GUI daemon does not linger (ADR-0008: no idle process).
-func serveGUI(cfg daemon.Config, srv *webui.Server) int {
+// We stop retrying once nothing is keeping this process alive and the first-client
+// grace has passed, so an unused GUI daemon does not linger (ADR-0008: no idle
+// process).
+//
+// alive is the SAME closure daemon.Serve is given, not a second copy of the test.
+// This loop used to ask srv.HasClients() directly, which meant an installer this
+// process launched did not hold it open: with a headless daemon owning the queue,
+// clicking Aggiorna and closing the tab exited this process within a second, and
+// the setsid'd installer ran on with nobody left to record how it went (V13).
+func serveGUI(cfg daemon.Config, alive func() bool) int {
 	started := time.Now()
 	for {
 		err := daemon.Serve(cfg)
@@ -255,7 +378,7 @@ func serveGUI(cfg daemon.Config, srv *webui.Server) int {
 		if !errors.Is(err, daemon.ErrAlreadyRunning) {
 			return 1
 		}
-		if !srv.HasClients() && time.Since(started) > cfg.FirstClientGrace {
+		if !alive() && time.Since(started) > cfg.FirstClientGrace {
 			return 0
 		}
 		time.Sleep(time.Second)
@@ -328,13 +451,20 @@ func jobRunner(sp *queue.Spool, srv *webui.Server) func(context.Context, queue.C
 	}
 }
 
-// startWebUI binds the loopback GUI port and serves the interface, returning a
-// shutdown func. It runs from daemon.AfterLock, so the caller already owns the
-// queue. A bind failure is non-fatal: the daemon simply drains headlessly.
-func startWebUI(srv *webui.Server) func() {
+// startWebUI binds the loopback GUI port and serves the interface, returning the
+// server (for the handover, which must close its listener) and a graceful
+// shutdown func for the ordinary exit.
+//
+// A bind failure is still non-fatal — the daemon simply drains headlessly — but
+// it is no longer MUTE. The user asked for an interface and did not get one, and
+// with /dev/null stdio the diagnostics log is the only place that can say so;
+// `ytdl status` points at it. Failing silently is what the update path must never
+// rely on, and it should not have been relied on before either.
+func startWebUI(srv *webui.Server, stateDir string) (*http.Server, func()) {
 	ln, err := net.Listen("tcp", guiAddr())
 	if err != nil {
-		return func() {}
+		logDaemon(stateDir, "gui: could not bind "+guiAddr()+": "+err.Error()+" — draining headlessly")
+		return nil, func() {}
 	}
 	hs := &http.Server{
 		Handler:           srv.Handler(),
@@ -344,7 +474,7 @@ func startWebUI(srv *webui.Server) func() {
 		// No WriteTimeout on purpose: SSE responses are long-lived by design.
 	}
 	go hs.Serve(ln)
-	return func() {
+	return hs, func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_ = hs.Shutdown(ctx)
@@ -861,6 +991,17 @@ func runStatusCmd() int {
 	if lp := daemonLogPath(stateDir); fileExists(lp) {
 		fmt.Printf("  diagnostica: %s\n", lp)
 	}
+	// `status` is where a user goes to ask whether anything is wrong, so the update
+	// state belongs on it — the same capability in both channels (ux-principles.md
+	// §7). It pays for the versions, because this screen was opened deliberately.
+	//
+	// The one-line state, not the two-line notice: this screen ALWAYS says where
+	// the update stands, including "disponibile un aggiornamento · ytdl --update",
+	// so printing the notice beside it would say the same thing twice. The foreign
+	// warning is a different fact and still prints.
+	view := updateSurface(settings.UpdateCheck, withVersions)
+	fmt.Print(cli.RenderUpdateState(view))
+	fmt.Fprint(os.Stderr, cli.RenderForeignDependency(view))
 	return 0
 }
 

@@ -707,12 +707,20 @@ two findings, **G27** and **G28**, which land in this cycle. What remains is the
   which scope decided it; no per-download control is sticky by accident; the same
   rule is stated once in `ux-principles.md` §8 and holds in both channels.
 
-#### Cycle 6-plus — the update path (`F`) — **gates A and B closed; implementation next (2026-08-13)**
+#### Cycle 6-plus — the update path (`F`) — **gate C PASSED 2026-08-23; ten findings, three blocking, all closed or deferred with a reason**
 
 Not a gate-C finding: raised by the maintainer on 2026-08-09, immediately after
 installing v2.1.0 by hand. **Pulled ahead of Cycle 6 on 2026-08-12**, when ytdl
-was installed for a user who is not the maintainer: without it, every future
-release means physically returning to that machine. It keeps the name `-plus`
+was about to be installed for a user who is not the maintainer: without it, every
+future release means physically returning to that machine.
+
+**Clarified by the maintainer, 2026-08-21:** that installation was **deferred**
+rather than carried out, precisely because this cycle had not shipped. Two
+consequences, and both matter. There is currently **no installation anywhere that
+a release could reach**, which is why gate C's handover test may use a real
+pre-release (A1b, run and passed on 2026-08-23). And this
+cycle is the **blocker** for that first install, not merely an improvement to
+it — which is the sharper reason it was pulled ahead. It keeps the name `-plus`
 rather than renumbered (the `2B-plus` precedent), because
 [improvements.md](improvements.md#gate-c) pins G19–G23 to Cycle 7, G24 to Cycle 8,
 G25 to Cycle 9 and the `S` group to Cycle 10 — taking a number here would falsify
@@ -721,9 +729,170 @@ every one of those references.
 **Its rulings are [ADR-0016](decisions/0016-cycle6plus-update-path.md) and its
 design is [design-cycle6plus-update.md](design-cycle6plus-update.md)** — read
 those first: they answer all four questions below. The design was **approved at
-gate B on 2026-08-13**; the implementation session starts from
-[handoff-cycle6plus-implementation.md](handoff-cycle6plus-implementation.md),
-which is deleted at the cycle's close.
+gate B on 2026-08-13** and **built the same day**. It was then **reviewed twice**,
+and the session that documents it started from a gate-C handoff, since consumed;
+what follows the cycle is
+[handoff-post-cycle6plus.md](handoff-post-cycle6plus.md).
+
+**Where it stands (2026-08-19).** All eleven implementation steps are done on
+`feat/update-path/implementation`, **not yet merged**, and **both review passes
+and both fix passes are done**. Re-verified without the test cache: the suite is
+green under `-race`, `go vet` and `gofmt` are clean,
+`tests/test-installer.sh` passes **103/103** — re-run 2026-08-22, and also under
+a real bash 3.2 — and the parity gate
+(`git diff main -- internal/core/ internal/daemon/`) is **empty**.
+
+**The documentation phase is done** (2026-08-21). The three normative documents
+that contradicted the code are realigned, the four ratified decisions are
+[ADR-0016](decisions/0016-cycle6plus-update-path.md) §16, and the user- and
+reference-facing documentation — which did not exist — is written: `guida-uso.md`
+§ *Tenere ytdl aggiornato*, `guida-installazione.md`, `README.md`,
+`cli-reference.md` §8, `go-engine.md`, and the `[Unreleased]` changelog entry the
+file had no section for. The register records what was discharged and one new
+finding, `V19` (a package comment claims an import the package does not have;
+cosmetic, deliberately unfixed — the docs phase writes no code).
+
+**Gate C is running, by hand on macOS, and it has already justified itself.** The
+maintainer asked for it explicitly — "i test passano, ma voglio verificare a mano"
+— and in two sittings it produced **four findings the suite could not reach, two
+of them blocking**, registered as
+[`V19`–`V22`](improvements.md#cycle6plus-gatec):
+
+- **`V20` (fixed, `8b80b66`)** — a *cold* `yt-dlp --version` takes 7.4 s on stock
+  macOS against a 3-second budget. The surface then called a working tool
+  «versione non registrata» and, far worse, reported **«sei aggiornato» while
+  structurally unable to compare yt-dlp at all** — ADR-0016 §2's whole purpose,
+  silently inert. The budget came from a real 650 ms measurement taken in the
+  container, where the invocation was warm: the measurement was true and the
+  conclusion did not describe the target platform.
+- **`V21` (fixed, `70368cd`)** — `install.sh` aborted mid-install on **macOS's
+  bash 3.2**, whose parser reads the bytes of a multi-byte character as part of an
+  identifier: an unbraced expansion before an ellipsis named a variable that does
+  not exist, and `set -u` did the rest. The GUI therefore offered the same update
+  for ever. It survived 101 green assertions because the only shell that
+  reproduces it is the one this project never tests on; the suite now refuses the
+  shape outright.
+- **`V23` (mechanism proven; the applied hardening does *not* fix it)** — that
+  aborted install was recorded as `done, exit 0`, so the page reported success for
+  an install that installed nothing. Settled in the container on 2026-08-22
+  against a **bash 3.2 built from source**: it enters the `EXIT` trap with
+  `$? = 0` after a `set -u` abort, and only after that one. `local rc=$?; exit
+  "$rc"` therefore still exits 0 — and the test that pins the invariant aborts
+  through an explicit `exit 1`, the case 3.2 gets right. A fix that works under
+  both shells is measured (a completion flag) and not yet written.
+- **`V24` (open, blocking)** — **the branch was never pushed**, and the update
+  runner fetches `install.sh` from `raw.githubusercontent.com/<slug>/<branch>/`,
+  i.e. from `origin`, which is eight commits behind. So every *Aggiorna* on the
+  Mac ran the **pre-`V21`** installer, and `V21`, `V23`'s hardening and `V20`'s
+  branch code have **never been exercised on real hardware**. The `v2.2.0-rc1`
+  release is the asymmetric case: its tag was pushed from a local commit, so the
+  release and the branch describe different code. The checklist's `P3` asked
+  whether the branch *existed* on `origin`; it now compares **content**.
+- **`V25` (open, blocking for the merge)** — one `go test -race ./...` takes
+  **4 m 26 s** and leaves **1715 `/tmp/_MEI*` directories, 91 GB**: a *killed*
+  `yt-dlp` never removes its PyInstaller extraction, and `V20`'s 30-second budget
+  makes `cmd/ytdl` kill it in bulk. That is what turned the container's filesystem
+  read-only twice, and it answers the question `V20` left open.
+- **`V22`** (open, minor) and **`V19`** (cosmetic, deliberately unfixed).
+
+**The lesson of this gate, three times over, is about the container**: it answered
+truthfully every time and the question was not the one that mattered. Warm where
+the Mac is cold (`V20`); bash 5 where the Mac is 3.2 (`V21`); and — the widest —
+**the working tree is not what the update path runs** (`V24`). For anything
+fetched over the network the artefact under test is the *published* one, and a
+local commit is invisible to it.
+
+The by-hand pass also rewrote its own instructions three times: the checklist
+assumed the released `ytdl` on `$PATH` was under test, then that a rebuild
+replaces a running daemon, then that the handover could work with the binary
+somewhere other than the installer's target. Those corrections produced
+`hack/ytdl-dev.sh` and [dev-testing.md](dev-testing.md), a **permanent** sandbox
+for running dev builds — the one artefact of this phase that outlives the cycle.
+
+**Gate C passed on 2026-08-23**, after four by-hand sittings on real hardware.
+Everything reachable was run — the handover end to end, the installer against the
+real network, its idempotence, the withdrawn-build fallback **and** the boundary
+that must not fall back, the abandoned-run state, a run adopted in a second tab,
+and the acceptance test. The full outcome, including what was **not** run and what
+was **deferred with a reason**, is
+[improvements.md § Gate C — esito](improvements.md#cycle6plus-gatec-esito).
+
+Three defects are deferred to **Cycle 10** as one decision rather than three
+(`V26` · `V27` · `V29`), and three to a **fix pass** (`V23` · `V25` · `V28`).
+`V27` is a deliberate deferral of a normative rule and is pinned under Cycle 10
+for that reason.
+
+**What remains**: merge `--no-ff`, tag the release, and re-install on the
+maintainer's own machine — the installed v2.1.0 has no update path, which is the
+gap this cycle closes, so the last manual install is also the last one ever. The
+procedure is in [handoff-post-cycle6plus.md](handoff-post-cycle6plus.md).
+
+**Two review passes, eighteen findings, all fixed.** The first reviewed the
+implementation and found nine (`V1`–`V9`,
+[register](improvements.md#cycle6plus-review)); the second reviewed **the fix
+session itself** and found nine more (`V10`–`V18`,
+[register](improvements.md#cycle6plus-fixreview)). Every finding in both was
+reproduced by execution, and every fix was run against the code *before* it to
+prove the test fails there.
+
+The second pass is the one worth remembering, because four of its findings were
+**regressions the first pass introduced** — including a race that made a
+successful update read as abandoned on every run, and a GUI that told a Homebrew
+user ffmpeg was not installed. Two of them had been asserted as impossible, in
+writing, in the commit messages that caused them. The lesson the register records:
+a property claimed in a commit has to be verified by executing, not by re-reading
+the diff.
+
+Seven further findings were **deliberately deferred**, each with its reason, in
+the second register's "Deferred to a later cycle" section. None is a regression
+and none is reachable without an unusual precondition.
+
+Neither the handover, nor the installer against the real network, nor the
+withdrawn-build fallback, nor the canary has ever run, and **no browser has ever
+rendered this GUI** — neither review changed that, and both handoffs say so rather
+than letting "reviewed" read as "exercised".
+
+**Four ratified decisions the documentation phase must record** (maintainer,
+2026-08-18, after the second review supplied the evidence): an abandoned run is
+recognised by **PID with a clock backstop**, never by the clock alone — a
+clock-only rule would declare a live installer abandoned, which the review
+reproduced as a second `install.sh` launched over one still doing `mv`; the GUI
+panel gains a **fifth state**, which design §7.3 had already promised and had no
+state to live in; the V3 fix **costs exactly one ffmpeg download** on machines
+carrying `ffmpeg_pinned = false`, proven to converge and therefore creating no
+recurring obligation; and the abandoned state is **GUI-only by right**, because
+`ytdl --update` is synchronous and never writes a run record.
+
+**Three normative documents were behind the code, and are no longer** (closed
+2026-08-21): ADR-0008's lifetime rule is stated as the three-way union it became,
+with the keep-alive clause separated from the exit cause; design §7.3 says
+`abandoned` instead of "stays `running`"; and the GUI-only asymmetry is recorded
+in ADR-0016 §16.4 and registered in `ux-principles.md` §7, as that section's own
+rule demands. The user-facing documentation, which did not exist at all, is
+written — along the way `cli-reference.md`'s description of `ytdl -V` turned out
+to be outright **false**, and the config leaf in `go-engine.md` still claimed the
+9-key `Settings` of Cycle 1 (it has 20).
+
+Three things the implementation learned that the design could not have known, all
+carried back into [ADR-0016](decisions/0016-cycle6plus-update-path.md) §14:
+
+- **ffmpeg's build id is per architecture** (`1785863997_9.0` on arm64,
+  `1785871427_9.0` on amd64, for the same ffmpeg 9.0). A single `ffmpeg_build`,
+  as the design sketched it, could not have described both.
+- **The Go probe tolerates an unknown deps.conf key; install.sh still refuses
+  one.** A deployed binary is arbitrarily older than the file it reads, so a key
+  added later would otherwise drop the whole fleet to "non verificato" — and
+  stop it seeing the very update that teaches it that key.
+- **`--ffmpeg-location` is appended after `core.BuildArgs`.** ytdl never invokes
+  ffmpeg (yt-dlp does, off the inherited `$PATH`), so without it the pin said
+  which ffmpeg was *installed* but not which one was *used*.
+
+**Two things the container cannot close, carried to the maintainer:** the four
+ffmpeg sha256 values in `deps.conf` were **computed here, not attested** — they
+must be verified on the Mac before the release that ships them, since the whole
+value of §12 is that the sum means someone checked; and the GUI's visuals, the
+banner, the update panel and the handover reload have been exercised by node and
+by curl against a live daemon, but never by a browser.
 
 **What already exists, so the cycle does not rebuild it:** `ytdl --update`
 (`internal/run/runner.go`) re-runs `install.sh` through `curl … | bash`, and the
@@ -777,14 +946,18 @@ replacing a *running* binary (atomic `mv`; the live process keeps its inode,
     daemon takes everything by injection, so **the constraint needed no amendment**
     and `internal/daemon` stays byte-unchanged. What ADR-0016 §7 *does* amend is
     ADR-0008: the daemon gains a third exit cause, an explicit user request.
-- **Design must settle — applying it from the GUI**, the hard half. The binary to
-  replace is the one serving the page: the daemon holds the flock and the queue,
-  the installer overwrites `~/.local/bin/ytdl` while it runs, and the live process
-  stays on the old inode until it restarts. So the design owes an answer on
-  refusing (or waiting) while downloads are in flight, running the installer
-  detached, restarting the daemon, and getting the browser to reconnect — against
-  [ADR-0008](decisions/0008-daemon-lifecycle.md), where an open SSE connection *is*
-  the liveness clause.
+- ~~**Design must settle — applying it from the GUI**~~, the hard half: **answered
+  and built** ([ADR-0016](decisions/0016-cycle6plus-update-path.md) §9,
+  [design](design-cycle6plus-update.md) §7.2). The installer runs detached and
+  setsid'd, so it outlives the binary it replaces; the old daemon keeps its own
+  inode and therefore survives to *report* the outcome; it then closes the
+  listener with `Close` (never `Shutdown`, which an SSE connection would block
+  for ever), hands the session token to the child in the environment, and exits
+  — the third exit cause ADR-0008 gains. The browser reconnects by polling, not
+  by SSE, because that connection dies at the handover by construction.
+  Downloads in flight gate the **action** and never the news, and emptiness is
+  re-checked server-side at the click. Most updates cost no restart at all: after
+  the installer became idempotent, a re-pinned yt-dlp leaves the page where it is.
 - **Non-negotiable:** the update stays the installer. No second download-and-verify
   path in Go (item 1.9,
   [ADR-0005](decisions/0005-macos-floor-and-single-engine.md)) — that one is what
@@ -794,7 +967,23 @@ replacing a *running* binary (atomic `mv`; the live process keeps its inode,
   update without opening a Terminal; and the check can be turned off. **Raised on
   2026-08-12:** the acceptance test is now a person who is not the maintainer —
   they must be able to go from "there is an update" to "I am on it" from the GUI
-  alone, with nobody at their keyboard.
+  alone, with nobody at their keyboard. **Built as of 2026-08-13; the acceptance
+  test itself is verified when the maintainer opens the page on macOS, which is
+  the one thing the container cannot do.**
+- **The ffmpeg pin creates no standing obligation** (ADR-0016 §15, ruled
+  2026-08-13 after the risk was raised at review). Pinning an exact build trades a
+  moving target for a fixed one, and a fixed URL can be withdrawn — which would
+  have made *every new install* fail until someone re-pinned, with nobody
+  reporting it, because a person who cannot install a tool gives up rather than
+  files an issue. That is the failure mode the canary exists to prevent,
+  reintroduced through the back door. So the pin is a **preference**: a withdrawn
+  build (404/410) falls back to the current one and is recorded as unattested,
+  every surface says `non verificata`, and only a withdrawal does this — "could
+  not ask" still aborts. An unattested copy is left uncompared, so it never
+  becomes a phantom update. **Nothing here needs periodic maintenance: if
+  `deps.conf` is never touched again, installs keep working.** If withdrawals turn
+  out to be common, the durable fix is mirroring the four zips as ytdl release
+  assets — a cycle of its own, never a quieter fallback.
 
 #### Cycle 6-launch — the desktop launcher (`F`) — **after the update path**
 
@@ -889,6 +1078,36 @@ Implements ADR-0014 decision 2, plus the storage work it forces.
   radii, elevation, colour **semantics** separated from the action colour,
   density, focus, motion) and then apply it. The document is the deliverable that
   outlives the restyle, exactly as `ux-principles.md` outlived Cycle 5.
+- **Plus the update surface, added 2026-08-23 by the maintainer at gate C.** The
+  update path works end to end, and the way it is *presented* is the weakest part
+  of it. Two things to take as input, not as settled requirements:
+  - [`V26`](improvements.md#V26) — while an install is running the *Conferma*
+    button stays live in the versions block, and pressing it answers «un
+    aggiornamento è già in corso». A control that cannot work is still offered,
+    which `ux-principles.md` §5 forbids. **One line closes it** (the finding names
+    it); it is deferred here because the third point subsumes it.
+  - [`V27`](improvements.md#V27) — **this one is normative, and its deferral is a
+    debt rather than a preference.** With an unattested ffmpeg the page prints the
+    tool twice, the first time as «versione non registrata», while the marker holds
+    its build and the CLI prints it correctly. A surface stating something untrue
+    is what `ux-principles.md` §5 and non-negotiable #5 forbid outright. It is here
+    because the honest fix is the same scope decision as the point below — the page
+    must stop reusing the COMPARISON shape for DISPLAY — and because no
+    installation is in that state today. Upstream is already at 9.0.1, so that will
+    change. **Cycle 10 does not start without this item.**
+  - [`V29`](improvements.md#V29) — *Controlla ora* is never disabled during an
+    update, and its answer can put *Aggiorna* back on screen. Reproduce it before
+    fixing: the finding separates what the code explains from what was observed.
+  - **An update in flight probably deserves a surface of its own** — the
+    maintainer's words: "meglio una pagina ad hoc «updating», così l'utente non
+    usa ytdl o clicca altro mentre l'update è in corso". Today it is a panel
+    beside controls that keep working, on a page whose other sections stay live.
+    That is a scope question (does the whole document go into an updating state?
+    what happens to the queue?), not a styling one, so it is analysed here rather
+    than patched now.
+  - Also carried in: [`V22`](improvements.md#cycle6plus-gatec) — immediately after
+    an update the verdict reads «nessun controllo ancora eseguito», which is true
+    and reads as a failure.
 - **Hard constraints:** no external assets — the CSP is `script-src 'self'` and
   the binary is self-contained, so no CDN fonts and inline icons only; no
   `innerHTML` (a test enforces it); dark mode; one document that never reloads

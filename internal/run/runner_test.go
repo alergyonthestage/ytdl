@@ -14,6 +14,7 @@ import (
 	"github.com/alergyonthestage/ytdl/internal/logstore"
 	"github.com/alergyonthestage/ytdl/internal/notify"
 	"github.com/alergyonthestage/ytdl/internal/queue"
+	"github.com/alergyonthestage/ytdl/internal/update"
 )
 
 // A daemon-spawn failure is a warning, not a failure: the job is still enqueued
@@ -189,6 +190,17 @@ exit "${YTDLP_FAKE_RC:-0}"
 		}
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	useShimDir(t, bin)
+}
+
+// useShimDir points dependency resolution at the shim directory a test has just
+// populated. Resolution became absolute in Cycle 6-plus (ADR-0016 §4), so without
+// this a test would reach the real yt-dlp of whatever machine the suite runs on —
+// which is exactly the situation the change exists to prevent, and it would make
+// the suite's result depend on the developer's Homebrew.
+func useShimDir(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv(update.BinDirEnv, dir)
 }
 
 func runOptions(t *testing.T, mode core.Mode, outDir string) core.Options {
@@ -571,7 +583,10 @@ func TestCheckDeps(t *testing.T) {
 	if err := CheckDeps(); err != nil {
 		t.Errorf("CheckDeps with both tools present: %v", err)
 	}
-	// Point PATH at an empty dir: both tools vanish.
+	// Point BOTH resolution sources at empty dirs: our bin dir and $PATH. Since
+	// ADR-0016 §4 an empty $PATH alone no longer hides the tools — that is the
+	// point of the change, and this is where the test has to say so.
+	useShimDir(t, t.TempDir())
 	t.Setenv("PATH", t.TempDir())
 	err := CheckDeps()
 	if err == nil {

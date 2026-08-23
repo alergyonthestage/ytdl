@@ -21,7 +21,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alergyonthestage/ytdl/internal/buildinfo"
 	"github.com/alergyonthestage/ytdl/internal/config"
 	"github.com/alergyonthestage/ytdl/internal/core"
 	"github.com/alergyonthestage/ytdl/internal/daemon"
@@ -29,11 +28,34 @@ import (
 	"github.com/alergyonthestage/ytdl/internal/notify"
 	"github.com/alergyonthestage/ytdl/internal/open"
 	"github.com/alergyonthestage/ytdl/internal/queue"
+	"github.com/alergyonthestage/ytdl/internal/update"
 )
 
-// ytDlp and ffmpeg are the external tools ytdl drives.
-const ytDlp = "yt-dlp"
-const ffmpeg = "ffmpeg"
+// ytDlp and ffmpeg are the external tools ytdl drives. The spellings come from
+// internal/update because that package owns where they are resolved FROM, and
+// two copies of the same name is how the probe and the runner end up disagreeing
+// about which yt-dlp is being driven.
+const ytDlp = update.ComponentYtDlp
+const ffmpeg = update.ComponentFFmpeg
+
+// ytDlpCmd is the yt-dlp to exec: OUR copy by absolute path when the installer
+// provisioned one, else whatever $PATH offers.
+//
+// PrependLocalBin puts ~/.local/bin at the front of $PATH only when it is ABSENT
+// from it, so a Mac whose .zprofile runs Homebrew's shellenv after the
+// installer's line has /opt/homebrew/bin first — and a Homebrew yt-dlp wins the
+// LookPath. ytdl would then silently drive a binary it never installed and never
+// tested, which is precisely the situation the pin exists to prevent
+// (ADR-0016 §4). Resolving by absolute path closes that; the surface reports the
+// fallback rather than pretending the pin holds.
+//
+// This is legal against the parity gate, verified: the golden files carry no
+// argv[0] — they begin at the first flag — and the program name lives here,
+// outside the frozen internal/core.
+func ytDlpCmd() string {
+	path, _ := update.ToolPath(ytDlp)
+	return path
+}
 
 // stderrCap bounds how much yt-dlp stderr is kept for the central log store, so
 // a pathological run cannot balloon a record (or memory) unbounded.
@@ -77,13 +99,19 @@ type DepError struct{ Tool string }
 
 func (e *DepError) Error() string { return e.Tool }
 
-// CheckDeps requires both yt-dlp and ffmpeg on PATH (parity: both are hard
+// CheckDeps requires both yt-dlp and ffmpeg (parity: both are hard
 // requirements). The ffmpeg label matches the Bash message (ytdl line 188).
+//
+// It asks the same resolver the exec sites use, so "ytdl says it is missing" and
+// "ytdl cannot run it" can never disagree. A dependency that resolves outside our
+// bin dir still SATISFIES the check — a foreign copy is a different problem, with
+// a different remedy, and refusing to download over it would be a worse answer
+// than saying so (ADR-0016 §4).
 func CheckDeps() error {
-	if _, err := exec.LookPath(ytDlp); err != nil {
+	if _, _, found := update.Resolve(ytDlp); !found {
 		return &DepError{Tool: "yt-dlp"}
 	}
-	if _, err := exec.LookPath(ffmpeg); err != nil {
+	if _, _, found := update.Resolve(ffmpeg); !found {
 		return &DepError{Tool: "ffmpeg (serve per estrarre l'audio e incorporare la copertina)"}
 	}
 	return nil
@@ -137,7 +165,7 @@ func runDryRun(o core.Options, w io.Writer) int {
 	fmt.Fprintf(w, "▸ Anteprima (nessun download) — formato .%s\n", o.Settings.Format)
 	fmt.Fprintf(w, "▸ Destinazione: %s\n\n", o.Settings.OutputDir)
 	var errbuf capBuffer
-	cmd := exec.Command(ytDlp, core.BuildArgs(o)...)
+	cmd := exec.Command(ytDlpCmd(), core.BuildArgs(o)...)
 	cmd.Stdout = w
 	cmd.Stderr = &errbuf
 	rc := runCode(cmd)
@@ -186,7 +214,7 @@ func runVerbose(o core.Options, w io.Writer) int {
 	work, cleanWork := workDir()
 	defer cleanWork()
 	var errbuf capBuffer
-	cmd := exec.Command(ytDlp, withTempRedirect(core.BuildArgs(o), o, work)...)
+	cmd := exec.Command(ytDlpCmd(), withRuntimeArgs(core.BuildArgs(o), o, work)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = io.MultiWriter(os.Stderr, &errbuf)
 	rc := runCode(cmd)
@@ -219,7 +247,7 @@ func runDefault(o core.Options, w io.Writer) int {
 	defer cleanWork()
 
 	var errbuf capBuffer
-	cmd := exec.Command(ytDlp, withTempRedirect(core.BuildArgs(o), o, work)...)
+	cmd := exec.Command(ytDlpCmd(), withRuntimeArgs(core.BuildArgs(o), o, work)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = io.MultiWriter(os.Stderr, &errbuf)
 	rc := runCode(cmd)
@@ -316,7 +344,7 @@ func runSilentSink(ctx context.Context, o core.Options, sink ProgressSink, cance
 	// audio) into the scratch dir so a failed/cancelled queued download leaves no
 	// residue in the destination — only the final file on success, or the .log
 	// breadcrumb below (ADR-0011). Appended after BuildArgs, off the golden path.
-	args := withTempRedirect(core.BuildArgs(o), o, work)
+	args := withRuntimeArgs(core.BuildArgs(o), o, work)
 
 	// Per-item playlist tracking (U7): append extra yt-dlp print sinks AFTER
 	// BuildArgs — pure runtime instrumentation, off the golden argv path — only
@@ -353,7 +381,7 @@ func runSilentSink(ctx context.Context, o core.Options, sink ProgressSink, cance
 		fmt.Fprintf(os.Stderr, "✗ Errore file temporaneo: %v\n", err)
 		return 1
 	}
-	cmd := exec.CommandContext(ctx, ytDlp, args...)
+	cmd := exec.CommandContext(ctx, ytDlpCmd(), args...)
 	var markReaped func()
 	if cancellable {
 		markReaped = cancellableProcessGroup(cmd)
@@ -516,23 +544,6 @@ func runBackground(o core.Options, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// ShowVersion prints ytdl's version and yt-dlp's, tolerating a missing or
-// unresponsive yt-dlp (ytdl lines 101-108).
-func ShowVersion(w io.Writer) int {
-	fmt.Fprintf(w, "ytdl %s\n", buildinfo.Version)
-	if _, err := exec.LookPath(ytDlp); err != nil {
-		fmt.Fprintln(w, "yt-dlp non installato")
-		return 0
-	}
-	out, err := exec.Command(ytDlp, "--version").Output()
-	if err != nil {
-		fmt.Fprintln(w, "yt-dlp (non risponde)")
-		return 0
-	}
-	fmt.Fprintf(w, "yt-dlp %s\n", strings.TrimSpace(string(out)))
-	return 0
-}
-
 // Update re-runs the installer, the single place the provisioning logic lives
 // (ytdl lines 112-131). It streams `curl … | bash`.
 func Update() int {
@@ -571,6 +582,14 @@ func Update() int {
 	if curlErr != nil || shErr != nil {
 		return updateFailed()
 	}
+
+	// Whatever the installer just did, the cached verdict is now describing a
+	// machine that no longer exists. Discarding it stops the notice from telling
+	// the user, for up to a day, to do the thing they have just done — a surface
+	// asking for an action already taken breaks the honesty rule as surely as a
+	// wrong version string would (ux-principles.md §5). Best-effort: a stale cache
+	// must never turn a successful update into a failed one.
+	_ = update.Invalidate(config.StatePath())
 	return 0
 }
 
@@ -695,6 +714,37 @@ func withTempRedirect(args []string, o core.Options, work string) []string {
 		return args
 	}
 	return append(args, core.TempRedirectArgs(o, work)...)
+}
+
+// withRuntimeArgs appends everything ytdl adds AFTER core.BuildArgs for a mode
+// that actually downloads: the intermediate-file redirection and the location of
+// the ffmpeg the installer provisioned. Both are pure runtime instrumentation,
+// appended off the golden argv path exactly as TempRedirectArgs always has been
+// (project rule 1). Dry run deliberately does not use it — it postprocesses
+// nothing, so its argv stays core.BuildArgs and nothing else.
+func withRuntimeArgs(args []string, o core.Options, work string) []string {
+	return withFFmpegLocation(withTempRedirect(args, o, work))
+}
+
+// withFFmpegLocation tells yt-dlp which ffmpeg to use, when it is ours.
+//
+// ADR-0016 §4 rules that ytdl runs its own copies of its dependencies rather than
+// the system's. Resolving yt-dlp by absolute path achieves that for yt-dlp — but
+// ytdl never invokes ffmpeg, yt-dlp does, and yt-dlp looks it up on the $PATH it
+// inherited. So without this the pin would say which ffmpeg is INSTALLED while a
+// Homebrew one, earlier on $PATH, is the one actually converting the audio: the
+// same ordering hole, one process further down.
+//
+// The DIRECTORY is passed rather than the binary, because yt-dlp needs ffprobe
+// from beside it — the installer provisions both. Only our own copy is ever
+// named: a dependency that came from $PATH is one yt-dlp would have found by
+// itself, and pinning its location would claim ownership ytdl does not have.
+func withFFmpegLocation(args []string) []string {
+	path, ours, found := update.Resolve(ffmpeg)
+	if !found || !ours {
+		return args
+	}
+	return append(args, "--ffmpeg-location", filepath.Dir(path))
 }
 
 // tempFile creates an empty temp file and returns its path and a cleanup func,

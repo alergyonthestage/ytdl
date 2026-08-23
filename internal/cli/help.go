@@ -232,6 +232,9 @@ CHIAVI
   breadcrumb_on_failure  true|false — lascia un .log accanto all'audio mancante
   job_timeout            secondi oltre i quali un download in coda viene fermato
                          (0 = nessun limite)
+  update_check           true|false — controlla da solo se c'è un aggiornamento
+                         (il controllo manuale e "ytdl --update" restano
+                         disponibili anche con false)
 
   $YTDL_OUT_DIR ha la precedenza sul file; i flag hanno la precedenza su tutto.
 `

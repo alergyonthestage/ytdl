@@ -9,6 +9,16 @@ Revised 2026-08-13 for the dependency ruling (ADR-0016 §2–§4, §11–§12): 
 what it drives, the installer becomes idempotent, and the user is left with one
 update axis.
 
+**Built 2026-08-13.** Three things this document had wrong or left open were
+corrected while implementing it, and the corrections are rulings in their own
+right: they live in [ADR-0016 §14](decisions/0016-cycle6plus-update-path.md).
+In short — ffmpeg's build id is **per architecture**, so §2's single
+`ffmpeg_build` became one key per arch (corrected below); the Go probe
+**tolerates** an unknown `deps.conf` key while `install.sh` still refuses one
+(§8's test row corrected below); and `--ffmpeg-location` is appended after
+`core.BuildArgs`, without which §4 was simply not true for ffmpeg. Everything
+else in this document was built as written.
+
 Normative background: [ux-principles.md](ux-principles.md) §4 (an action that
 cannot work is disabled with a reason), §5 (a surface never states something
 untrue), §7 (a capability lands in both channels).
@@ -47,18 +57,32 @@ same `raw.githubusercontent.com/<slug>/<branch>/` it comes from itself.
 # yt_dlp_version accepts "latest" (the current policy) or an exact tag; writing a
 # tag here is the rollback lever, and it reaches every installation within a day.
 yt_dlp_version              = latest
-ffmpeg_build                = 1785863997_9.0
+ffmpeg_build_arm64          = 1785863997_9.0
+ffmpeg_build_amd64          = 1785871427_9.0
 ffmpeg_sha256_arm64_ffmpeg  = <hex>
 ffmpeg_sha256_arm64_ffprobe = <hex>
 ffmpeg_sha256_amd64_ffmpeg  = <hex>
 ffmpeg_sha256_amd64_ffprobe = <hex>
 ```
 
+**One build id per architecture** (corrected while building, ADR-0016 §14.1):
+upstream builds macOS arm64 and amd64 separately and stamps them differently, so
+a single value could not describe both. Both readers resolve the machine's own,
+exactly as they resolve `latest` into a tag; a pin naming every architecture
+except the running one aborts rather than guessing.
+
 `latest` is resolved — by the installer and by the probe alike — with the same
 redirect read used for ytdl's own tag, so everything downstream compares two
-concrete version strings and never a placeholder. **ffmpeg has no `latest`**: it
-is always an exact build, because that is what makes its checksum meaningful
-(ADR-0016 §12).
+concrete version strings and never a placeholder. **ffmpeg declares no `latest`**:
+the pin always names an exact build, because that is what makes its checksum
+meaningful (ADR-0016 §12).
+
+**But the pin is a preference, not a precondition** (ADR-0016 §15). If upstream
+has WITHDRAWN the attested build (404/410), the installer takes the current one,
+records `ffmpeg_pinned = false` in the marker, and every surface says `non
+verificata`. Anything other than a withdrawal — including "could not ask" —
+aborts instead. An unattested copy is left **uncompared**, so it can never become
+a phantom update that applying could not resolve.
 
 **(design choice) `key = value`, not JSON.** `install.sh` must parse this on a
 stock Mac, where `jq` does not exist and hand-rolled JSON parsing in bash is how
@@ -74,6 +98,13 @@ none — ADR-0016 §12.
 **Fetching `deps.conf` fails closed.** If it cannot be read or a key is missing,
 the installer aborts with a message; it never falls back to `latest`, because a
 silent fallback is exactly the unpinned behaviour §2 removes.
+
+**The two readers differ on ONE point, deliberately** (ADR-0016 §14.2): an
+unknown key aborts `install.sh` and is ignored by the Go probe. The installer
+arrives from the same commit as the file, so a key it does not know is a typo in
+the pin; a deployed binary is arbitrarily older than the file it reads, so the
+same strictness there would drop the whole fleet to "non verificato" the day a
+key is added — and stop it seeing the update that teaches it that key.
 
 ## 3. New package: `internal/update`
 
@@ -251,7 +282,9 @@ flowchart TD
 
 Marker: `${XDG_STATE_HOME:-~/.local/state}/ytdl/installed.conf`, same
 `key = value` format (`ytdl_version`, `yt_dlp_version`, `ffmpeg_build`,
-`installed_at`).
+`ffmpeg_pinned`, `installed_at`). `ffmpeg_pinned` is what keeps a fallback
+install honest and uncompared (ADR-0016 §15); an older marker without the key
+counts as attested, since nothing could have fallen back before it existed.
 
 **Consequence for the GUI (design choice):** when the installer skips ytdl
 itself — the common "the maintainer re-pinned yt-dlp" update — **no handover and
@@ -470,7 +503,7 @@ because it was **asked to**.
 | `deps.conf` unreadable | the installer aborts before touching anything; the page reports it as a failed update with the log. Never a silent fall back to `latest` |
 | the interface does not return within 60 s | «L'aggiornamento è riuscito, ma non sono riuscito a riaprire l'interfaccia da solo.» + how to reopen it. The one place a Terminal is named — and Cycle 6-launch removes even that |
 | the probe fails | nothing. Silence, and the last known verdict keeps its date |
-| the daemon dies mid-install | the installer is setsid'd and finishes anyway; the run state stays `running` and the page says it cannot tell how it went, pointing at the log. It never guesses |
+| the daemon dies mid-install | the installer is setsid'd and finishes anyway; the run is read back as **`abandoned`** and the page says it cannot tell how it went, pointing at the log. It never guesses. **Corrected 2026-08-21** — this row said "the run state stays `running`", which is what the implementation first did and what review finding `V1` showed to be a permanent lock-out: a `running` record refuses every later update. The state is now **derived at read time and never written** (ADR-0016 §16.1), the panel has a fifth state for it (§16.2), and the page adopts such a run from `applyUpdate` on load rather than only downstream of the button (`V16`) |
 
 A partial installer failure is **never** summarised: what is reported is the exit
 code and the log, because the installer is the only thing that knows how far it
@@ -481,15 +514,15 @@ got.
 | area | test |
 |---|---|
 | `internal/update` | tag probe: `302` + `Location` parsed; non-3xx, missing/garbage `Location`, timeout → error, never a guess |
-| | pin fetch: valid, missing key, unknown key rejected, unreachable |
+| | pin fetch: valid, missing key, unreachable, **an unknown key TOLERATED** (ADR-0016 §14.2 — a deployed binary is older than the file it reads; `install.sh` still refuses one, being fetched from the same commit) |
 | | `Known`/`Available`/`Changes` across the matrix: ytdl moved, pin moved, both, neither, `dev`, either source silent |
 | | cache: round trip, TTL boundary, corrupt file = no verdict, atomic write leaves no partial |
 | | refresh: disabled → no probe; fresh cache → no probe |
-| `internal/run` | resolution prefers our copy, falls back to `$PATH`, reports `Foreign`; the golden argv is unchanged either way |
+| `internal/run` | resolution prefers our copy, falls back to `$PATH`, reports `Foreign`; the golden argv is unchanged either way — asserted by running a recording shim in both modes and comparing against `core.BuildArgs` itself. Plus `--ffmpeg-location`: present for our own copy, absent for a `$PATH` one, and never on dry run (ADR-0016 §14.3) |
 | `internal/config` | `update_check` round-trips through `LoadFile`/`Save`; default on; a garbage value warns and falls back |
 | `internal/cli` | the notice renders each verdict state, the foreign-dependency message, and "" when there is nothing to say |
 | `internal/webui` | `/api/state` carries `update`; nil `Updater` → no fields **and** no control; `POST /api/update` → `409` + reason on a non-empty queue, `409` when already running, `202` otherwise; the notice is present in state **while** blocked |
-| `tests/test-installer.sh` | `deps.conf` parsing (valid, missing, garbage, unknown key, `latest`); skip-when-current per component; a pinned **older** tag reinstalls (downgrade); `--force` reinstalls; the marker is written; an unreadable `deps.conf` aborts and installs nothing. All pure bash, no network |
+| `tests/test-installer.sh` | the withdrawn-build rule: 200 verifies, 404/410 falls back, **everything else aborts** (ADR-0016 §15), and the marker records which happened. Plus `deps.conf` parsing (valid, missing, garbage, unknown key, `latest`); skip-when-current per component; a pinned **older** tag reinstalls (downgrade); `--force` reinstalls; the marker is written; an unreadable `deps.conf` aborts and installs nothing. All pure bash, no network |
 | CI — canary (ADR-0016 §3) | a scheduled job runs ytdl **end to end** against the newest yt-dlp and against the resolved pin: a fixture media file over local HTTP (yt-dlp's `generic` extractor), ffmpeg from the runner, asserting the produced filename, the written ID3 tags, that `--print-to-file after_move:` returned the path, and that the `--progress-template` lines still parse. Red ⇒ the maintainer is emailed. Recorded limit: the extractor is not YouTube's, so the metadata **fallback chain** is not what this exercises |
 | `spa_test.go` | the reload prohibition is **narrowed**: exactly one `location.reload(`, in the handover path; every other navigation rule and the `innerHTML` ban unchanged |
 | `spa_behaviour_test.go` | the banner appears whenever available, **including with a non-empty queue**; the action is disabled with a reason; the panel renders in-progress / done-without-restart / done-with-restart / failed |

@@ -12,6 +12,13 @@
   [G10](../improvements.md#gate-c)) — the close warning this ADR prescribes is
   reworded below. The decision is unchanged; the old wording implied that closing
   the GUI cancelled the queue, which is the opposite of what this ADR decides.
+- **Amended again:** 2026-08-21, Cycle 6-plus's documentation phase — the
+  lifetime rule below gains a **third keep-alive clause** (an installer this
+  process launched is still running), alongside the third **exit** cause
+  [ADR-0016](0016-cycle6plus-update-path.md) §9 had already added. Both are
+  recorded in "Cycle 6-plus" below. The decision is unchanged: the daemon still
+  lives only as long as it has a reason to — this names one more reason it can
+  have.
 
 ## Context
 
@@ -36,12 +43,16 @@ Maintainer constraints (confirmed 2026-07-23):
 ## Decision
 
 **No always-on daemon.** `ytdld` is *long-lived but session-scoped*: it lives only
-as long as it has a reason to. Its lifetime is the **union** of two conditions:
+as long as it has a reason to. Its lifetime is the **union** of its reasons —
+two as of Cycle 3, three since Cycle 6-plus:
 
-> **daemon alive  ⟺  (a GUI client is connected)  OR  (the queue has pending/running work)**
+> **daemon alive  ⟺  (a GUI client is connected)  OR  (the queue has pending/running work)  OR  (an installer this process launched is still running)**
 
 Equivalently, the **exit condition** is a conjunction: the daemon exits only when
-the **GUI is closed AND the queue is drained**. Concretely:
+the **GUI is closed AND the queue is drained AND no installer of ours is in
+flight**. The third clause is Cycle 6-plus's and is explained below; everything
+that follows in this section is the original two-clause rule, unchanged.
+Concretely:
 
 - **CLI-only (no GUI)** — unchanged from Cycle 2B-core: spawned on enqueue,
   idle-exits when the queue drains. This is the special case with *no* GUI client.
@@ -63,11 +74,54 @@ flowchart TD
     START["ytdld running"] --> CHECK{"exit test<br/>(polled)"}
     CHECK -->|"queue has pending/running work"| DRAIN["keep draining"] --> CHECK
     CHECK -->|"a GUI client is connected"| SERVE["keep serving UI"] --> CHECK
-    CHECK -->|"queue drained AND no GUI client"| EXIT["release flock, exit"]
+    CHECK -->|"our installer is still running<br/>(Cycle 6-plus)"| WAIT["keep waiting on it,<br/>so its outcome gets written"] --> CHECK
+    CHECK -->|"all three false"| EXIT["release flock, exit"]
+    START -.->|"explicit request:<br/>handover after an update<br/>(ADR-0016 §9)"| EXIT
 ```
+
+The dotted edge is the **third exit cause**, which does not consult the exit test
+at all: see "Cycle 6-plus" below.
 
 **No `launchd` LaunchAgent** with `RunAtLoad` + `KeepAlive` (always-resident) is
 installed. The default install remains plist-free.
+
+## Cycle 6-plus — a third keep-alive clause, and a third exit cause
+
+Added 2026-08-21. [ADR-0016](0016-cycle6plus-update-path.md) gives the GUI the
+ability to apply an update, and that touches this ADR's rule from **both** ends.
+The two are easy to confuse, so they are stated apart:
+
+**The third exit cause** (ADR-0016 §9, ruled at gate A). The daemon may exit
+because it was **asked to**, without consulting the exit test. It is the handover:
+the update replaced the ytdl binary, so this process is now running the wrong one.
+It is not an idle-exit — and it has to bypass the test rather than satisfy it,
+because the tab watching the update *is* a connected client and would otherwise
+keep this daemon alive for ever. Implemented as `handOver` in `cmd/ytdl/update.go`.
+
+**The third keep-alive clause** (found by building it, 2026-08-18; review finding
+`V1`). The daemon owes something to a party the original rule does not name: the
+**record of how the update went**. `install.sh` is `setsid`'d and survives its
+launcher, but only the process that launched it waits on it and writes the
+outcome. With the two-clause rule, closing the tab mid-update dropped the SSE
+client, the drained queue idle-exited the daemon ~20 s later, the installer
+finished anyway with nobody left to notice, and `update-run.json` stayed at
+`running` for ever — which then refused every subsequent update, with a reason
+the user could neither see nor act on.
+
+So the exit test gains **"OR an installer this process launched is still
+running"**. Two properties keep it narrow:
+
+- It is the **in-memory** answer (`update.Runner.Running`), not the run record on
+  disk. The record describes *any* process; this clause is about *ours*. A record
+  left behind by some other process must never keep this daemon alive.
+- It cannot outlive the installer, because the same goroutine that waits on the
+  child clears it. The stuck-`running` case it was introduced to prevent is
+  additionally covered at *read* time by the `abandoned` derivation
+  (ADR-0016 §16.1), so neither mechanism depends on the other holding.
+
+Both halves are **injected** from `cmd/ytdl` — `daemon.Config.LiveClients` takes
+the composed predicate — so `internal/daemon` is untouched and the parity gate
+holds.
 
 ## Alternatives considered
 

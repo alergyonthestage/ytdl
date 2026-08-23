@@ -68,13 +68,35 @@ export YTDL_OUT_DIR="/path/to/your/folder"
 ## Keeping it working
 
 yt-dlp stops working whenever YouTube changes something — expect this every few
-months. When downloads start failing:
+months. **ytdl notices for you.**
+
+It checks while you are already using it — at most once a day, never on a timer,
+never while it sits idle — and then tells you wherever you happen to be: a line
+after a download in the Terminal, a banner in the web interface. A check that
+fails is silent, and never reported as "up to date": *"I could not check"* and
+*"you are current"* stay different answers.
 
 ```bash
-ytdl --update
+ytdl --update      # updates ytdl, yt-dlp and ffmpeg together
+ytdl --version     # what you have, how each part stands, and whether an update exists
 ```
 
-That updates ytdl, yt-dlp and ffmpeg together. It is almost always the fix.
+From the web interface there is no Terminal at all: **Impostazioni → Versione e
+aggiornamenti → Aggiorna**. It starts only once the queue is empty, and if the
+update replaced ytdl itself the page closes and reopens on the new build by
+itself.
+
+ytdl decides which yt-dlp and which ffmpeg it drives — it builds an exact
+command line for them, so the working combination is a property of ytdl rather
+than a user preference. Nothing to configure, and a bad combination can be fixed
+for everyone by changing one line, without waiting for a release.
+
+To stop it checking on its own, put `update_check = false` in
+`~/.config/ytdl/config`, or untick the box in the interface. `ytdl --update` and
+the manual check keep working either way.
+
+The full picture, in Italian, is in
+[guida-uso.md](docs/guida-uso.md#tenere-ytdl-aggiornato).
 
 ## Supported systems
 

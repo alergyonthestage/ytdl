@@ -98,12 +98,13 @@ func TestSPANeverReloadsThePage(t *testing.T) {
 	js := assetText(t, "assets/app.js")
 	for _, bad := range []string{
 		"location.href =", "location.assign(", "location.replace(",
-		"location.reload(", "window.open(", "document.write(",
+		"window.open(", "document.write(",
 	} {
 		if strings.Contains(js, bad) {
 			t.Errorf("app.js navigates with %q; the document must never reload", bad)
 		}
 	}
+	assertOneReloadInTheHandover(t, js)
 	html := assetText(t, "assets/index.html")
 	// A form without a submit handler would navigate on Enter. Both forms have
 	// one; an added action= attribute would defeat it.
@@ -442,8 +443,64 @@ func TestSPAUsesTheSharedVocabulary(t *testing.T) {
 			t.Errorf("the GUI never uses the agreed label %q", word)
 		}
 	}
-	// "Riprova" belongs to the queue (a spool job), never to history.
-	if strings.Contains(js, "Riprova") {
+	// "Riprova" belongs to the queue (a spool job), never to history — see
+	// TestRiprovaStaysOffHistoryRows, which checks the region rather than the
+	// whole file.
+}
+
+// assertOneReloadInTheHandover is the NARROWED form of the reload prohibition
+// (ADR-0016 §10). The rule above is right and stays, with exactly one exception:
+// the moment the update hands over to a new binary, where the document is stale
+// BY DEFINITION because the server that will answer its next request is a
+// different build from the one that served it. The alternative is worse — a page
+// running the old script against the new server, looking updated without being
+// it — and handleIndex already sends Cache-Control: no-store for exactly this
+// pairing.
+//
+// So: exactly one location.reload(, and it must sit in the update poll. Anywhere
+// else it is the old bug back again.
+func assertOneReloadInTheHandover(t *testing.T, js string) {
+	t.Helper()
+	const reload = "location.reload("
+	if n := strings.Count(js, reload); n != 1 {
+		t.Fatalf("app.js has %d occurrences of %q; exactly one is allowed, in the update handover", n, reload)
+	}
+	body := functionBody(t, js, "async function pollUpdate() {")
+	if !strings.Contains(body, reload) {
+		t.Error("the one allowed reload is not in the update handover path; every other navigation must stay a hash route")
+	}
+}
+
+// TestRiprovaStaysOffHistoryRows is the vocabulary guard, narrowed to what it
+// actually protects. "Riprova" acts on a spool job the queue still holds, never
+// on a history record (ux-principles.md §3) — so it must not appear in the
+// history-row rendering. The update panel uses the same word for a different
+// object entirely (a failed installer run, design §7.3), which no user could
+// confuse with a download: it is in another view, under a sentence that names
+// the update.
+func TestRiprovaStaysOffHistoryRows(t *testing.T) {
+	js := assetText(t, "assets/app.js")
+	start := strings.Index(js, "function primaryAction(")
+	end := strings.Index(js, "function renderRecent(")
+	if start < 0 || end < 0 || end <= start {
+		t.Fatal("cannot locate the history-row rendering; re-anchor this guard")
+	}
+	if region := js[start:end]; strings.Contains(region, "Riprova") {
 		t.Error("the GUI offers 'Riprova' on history rows; that verb acts on spool jobs")
 	}
+}
+
+// functionBody returns the source of the function whose header is given, from
+// the header to the first line that closes it at column zero.
+func functionBody(t *testing.T, js, header string) string {
+	t.Helper()
+	i := strings.Index(js, header)
+	if i < 0 {
+		t.Fatalf("cannot find %q in app.js; re-anchor this guard", header)
+	}
+	rest := js[i:]
+	if j := strings.Index(rest, "\n}\n"); j >= 0 {
+		return rest[:j]
+	}
+	return rest
 }
