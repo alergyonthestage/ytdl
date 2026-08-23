@@ -1068,6 +1068,24 @@ Implements ADR-0014 decision 2, plus the storage work it forces.
   radii, elevation, colour **semantics** separated from the action colour,
   density, focus, motion) and then apply it. The document is the deliverable that
   outlives the restyle, exactly as `ux-principles.md` outlived Cycle 5.
+- **Plus the update surface, added 2026-08-23 by the maintainer at gate C.** The
+  update path works end to end, and the way it is *presented* is the weakest part
+  of it. Two things to take as input, not as settled requirements:
+  - [`V26`](improvements.md#V26) — while an install is running the *Conferma*
+    button stays live in the versions block, and pressing it answers «un
+    aggiornamento è già in corso». A control that cannot work is still offered,
+    which `ux-principles.md` §5 forbids. **One line closes it** (the finding names
+    it); it is deferred here because the second point subsumes it.
+  - **An update in flight probably deserves a surface of its own** — the
+    maintainer's words: "meglio una pagina ad hoc «updating», così l'utente non
+    usa ytdl o clicca altro mentre l'update è in corso". Today it is a panel
+    beside controls that keep working, on a page whose other sections stay live.
+    That is a scope question (does the whole document go into an updating state?
+    what happens to the queue?), not a styling one, so it is analysed here rather
+    than patched now.
+  - Also carried in: [`V22`](improvements.md#cycle6plus-gatec) — immediately after
+    an update the verdict reads «nessun controllo ancora eseguito», which is true
+    and reads as a failure.
 - **Hard constraints:** no external assets — the CSP is `script-src 'self'` and
   the binary is self-contained, so no CDN fonts and inline icons only; no
   `innerHTML` (a test enforces it); dark mode; one document that never reloads

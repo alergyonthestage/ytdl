@@ -1157,3 +1157,80 @@ class, and it is the right one.
 
 Worth making permanent in `.cco/Dockerfile` and running the installer suite under
 both shells — a decision for the fix pass, not for gate C.
+
+<a id="V26"></a>
+
+### V26 — during an update the *Conferma* button stays live, and pressing it answers «un aggiornamento è già in corso»
+
+**Observed by the maintainer on the Mac, 2026-08-22 and again 2026-08-23**, and
+traced to its cause here. It is the defect `ux-principles.md` §5 names first — **a
+control that cannot work is still offered** — and it is why the same session
+pressed *Aggiorna* three times believing nothing had happened.
+
+**The cause is one missing call.** Two different elements draw update actions:
+
+| element | drawn by | cleared while a run is in flight? |
+|---|---|---|
+| `updatePanelActions` (inside the panel) | `showUpdatePanel` | **yes** — `replaceChildren(actions, [])` |
+| `updateActionSlot` (in the versions block) | `renderUpdateAction` / `confirmUpdate` | **no** |
+
+`startUpdate` posts, calls `showUpdatePanel(st)` and starts polling — and never
+touches `updateActionSlot`. So the **Conferma** and **Annulla** buttons
+`confirmUpdate` put there a moment earlier stay in the document, focused and
+clickable, for the whole install. `renderUpdateAction` *would* clear them: it
+returns empty when `updateInfo.busy`. But `updateInfo` is only refreshed by
+`applyUpdate`, which runs on `loadState`, on the SSE state push and on *Controlla
+ora* — and `pollUpdate` calls `loadState` only once the run reaches `done`,
+`failed` or `abandoned`.
+
+Pressing *Conferma* again therefore re-enters `startUpdate`, the server answers
+`409` from `updateBlocked`, and the page shows «un aggiornamento è già in corso» —
+a correct message for an action that should never have been reachable.
+
+**One line closes it**, in `startUpdate`, after the POST succeeds:
+
+```js
+updateInfo.busy = true;
+renderUpdateAction();          // the slot goes empty while the run is in flight
+```
+
+**Deferred by the maintainer to the UX cycle** (2026-08-23), together with the
+larger question it raises — whether an update in flight deserves a surface of its
+own rather than a panel beside controls that keep working. Recorded here so the
+deferral is a decision and not an oversight, and pinned in the roadmap under
+Cycle 10.
+
+### C1 — the four ffmpeg `sha256` are attested, 2026-08-23
+
+Closing the checklist's one **blocking** Part-C item. It was the last thing in
+this cycle that had been *computed* and never *checked*.
+
+**arm64 — attested by execution, on the target platform.** A1b ran the real
+`install.sh` on the maintainer's Mac against the real server. It took the
+**pinned** path, and `verify_pinned_checksum` is a refusal, not a warning: a wrong
+sum aborts the install. It did not abort — the marker recorded the pinned build
+and the surface reports `ffmpeg 9.0` with **no** «non verificato» qualifier, which
+is only rendered when `ffmpeg_pinned = false`. Both arm64 sums are therefore
+correct against the bytes upstream currently serves, and both binaries were then
+**run** by `verify_install`. That is a stronger attestation than hashing by hand.
+
+**All four — re-fetched and re-hashed 2026-08-23**, from the container, against
+the live URLs `ffmpeg_url_for` builds:
+
+```
+ffmpeg_sha256_arm64_ffmpeg   = 5267ef14…73c603   [http 200, 28 440 078 bytes]
+ffmpeg_sha256_arm64_ffprobe  = 7778fbb5…41d42f50  [http 200, 28 364 088 bytes]
+ffmpeg_sha256_amd64_ffmpeg   = 79d14663…cf1c02c   [http 200, 33 842 767 bytes]
+ffmpeg_sha256_amd64_ffprobe  = a2dd3f2e…72d3898d  [http 200, 33 741 166 bytes]
+```
+
+**Four for four against `deps.conf`, and four `200`s** — so neither build has been
+withdrawn, and no sum in the file makes ytdl uninstallable. The archives were also
+unpacked and identified: the amd64 pair is `Mach-O 64-bit x86_64`, the arm64 pair
+`Mach-O 64-bit arm64`, so each build id resolves to the architecture it claims.
+
+**The recorded limit stands, narrowed.** The amd64 pair still cannot be *run* on
+an Apple Silicon Mac, so its attestation is of immutability and architecture, not
+of behaviour — which is exactly what ADR-0016 §12 claims and all it claims. If
+that ever needs closing, the cheapest route is Rosetta 2 rather than an Intel
+machine: `softwareupdate --install-rosetta` and then run the unpacked binary once.
