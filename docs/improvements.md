@@ -567,12 +567,12 @@ made the claim, so nothing normative needs amending.
 ### What this phase deliberately did not do
 
 - **It did not fix `V19`**, nor any of the seven findings deferred above.
-- **It assigned no version number.** `[Unreleased]` stays unreleased: the release
-  needs a Mac and needs the four `sha256` attested first.
-- **It did not verify anything by hand.** The by-hand pass is the maintainer's,
-  and [verifica-cycle6plus.md](verifica-cycle6plus.md) is the checklist written
-  for it — including the recipes that force the states nothing has ever reached
-  (the withdrawn build, the abandoned run, a failed probe).
+- **It assigned no version number.** `[Unreleased]` stayed unreleased until gate
+  C passed and the four `sha256` were attested; the release is `2.2.0`.
+- **It did not verify anything by hand.** The by-hand pass was the maintainer's,
+  and it ran over four sittings — its checklist was a transient document, deleted
+  at the cycle's close; its outcome is
+  [§ Gate C — esito](#cycle6plus-gatec-esito).
 
 <a id="cycle6plus-gatec"></a>
 
@@ -1339,3 +1339,128 @@ staleness (un utente che lancia `yt-dlp -U` alle spalle di ytdl), che è il moti
 per cui fu tenuta separata.
 
 Va deciso insieme a `V25`: sono la stessa causa e la stessa correzione.
+
+<a id="V29"></a>
+
+### V29 — *Controlla ora* resta attivo durante un aggiornamento, e può far ricomparire *Aggiorna*
+
+**Osservato dal maintainer il 2026-08-23**, durante `B5`, mentre un installer era
+in volo:
+
+> Rimane il bottone «Controlla ora» e dopo che ha controllato ricompare il bottone
+> «Aggiorna» cliccabile.
+
+**Quel che è certo dal codice.** `$("checkUpdate")` viene disabilitato solo per la
+durata della propria richiesta e da nient'altro: nessuno lo tocca in funzione dello
+stato del run. Quindi *Controlla ora* è **sempre** premibile, anche mentre
+un'installazione sta sostituendo i binari — un controllo che, in quel momento, non
+ha alcun senso da offrire.
+
+E la sua risposta ridisegna l'azione: `applyUpdate` chiama `renderUpdateAction`,
+che mostra *Aggiorna* quando `available && !busy`.
+
+**Quel che NON è stabilito, e va riprodotto prima di correggere.** `busy` è
+`Progress().State == "running"`, e durante il run quello è `running`, quindi il
+bottone **non dovrebbe** poter ricomparire. La finestra che il codice spiega è
+un'altra: fra l'istante in cui l'installer **finisce** e quello in cui la pagina si
+ricarica sul binario nuovo, `busy` è già falso e `available` è ancora vero, perché
+il daemon che risponde è ancora quello vecchio. Lì *Aggiorna* torna, legittimamente
+secondo il codice e assurdamente per chi guarda.
+
+Se invece è ricomparso **davvero durante** il run, allora `busy` era falso mentre
+il record diceva `running`, ed è un difetto più profondo di quello descritto qui.
+Da distinguere con un `curl /api/state | jq .update.busy` durante un'installazione
+lunga.
+
+**Stessa famiglia di [`V26`](#V26)**, e insieme dicono la stessa cosa: la pagina
+tratta un aggiornamento in corso come uno stato *di un pannello*, mentre è uno
+stato **del documento**. Il maintainer lo ha detto due volte in due sedute:
+
+> conviene disabilitare tutto e mostrare una schermata ad-hoc quando l'utente
+> avvia un update.
+
+Rinviato al Ciclo 10 insieme a `V26` e `V27`, come una decisione sola.
+
+<a id="cycle6plus-gatec-esito"></a>
+
+## Gate C — esito, 2026-08-23
+
+Quattro sedute a mano su hardware vero. **Tutto ciò che era eseguibile è stato
+eseguito**, e ha prodotto dieci finding (`V19`–`V28`) che due review, una suite
+verde sotto `-race` e 103 asserzioni bash non avevano raggiunto — fra cui tre
+bloccanti.
+
+### Passato
+
+| | esito |
+|---|---|
+| **A1** la consegna, end to end | passata: la pagina si è ricaricata da sola su `v2.2.0-rc1` |
+| **A2** installer contro la rete vera | passata al primo run; **idempotenza** passata (nessun download), costo in [`V28`](#V28) |
+| **A3a** il fallback su build ritirata scatta e lo dichiara | passata: i tre avvisi, `installed (NOT verified …)`, marker `ffmpeg_pinned = false`, `ffmpeg_build = 1787073674_9.0.1` |
+| **A3b** «non riesco a chiedere» non è «è stata ritirata» | **passata**, vedi sotto |
+| **A3c** convergenza | passata: ffmpeg ri-scaricato **una volta**, entrambi i checksum verificati, run successivo che salta tutto; superficie tornata a `ffmpeg 9.0 (verificata con questo ytdl)` |
+| **A4** un browser rende la GUI | passata per l'intero flusso di update |
+| **B5** lo stato «abbandonato» | passata: il testo esatto, *Vedi il dettaglio* e *Riprova*, e *Riprova* riavvia davvero |
+| **V17** il run adottato in una seconda scheda | passata: la seconda scheda dice «Aggiornamento in corso…» e non offre un secondo avvio |
+| **C1** i quattro `sha256` | chiusa, arm64 attestata dall'esecuzione |
+| **C2** il test di accettazione | passata: l'update è andato dalla sola GUI |
+
+**`A3b` merita la trascrizione**, perché è servito `--force` per arrivarci e due
+ricette prima erano sbagliate:
+
+```
+Reinstalling everything (--force)
+Installing ffmpeg
+▸ Downloading ffmpeg 1785863997_9.0…
+✗ Download failed: https://ffmpeg.martin-riedl.de/download/macos/arm64/1785863997_9.0/ffmpeg.zip
+  The server answered 000.
+exit=1
+```
+
+Nessun fallback, stato non zero, marker intatto: **una connessione che non
+risponde non degrada l'installazione a non verificata**, che è la proprietà
+comprata da ADR-0016 §12.
+
+**Cosa quell'`exit=1` prova, e cosa no.** Prova che il percorso di fallimento
+funziona sul bash 3.2 vero per gli abort che `install.sh` produce
+deliberatamente — cioè `fail()`, che è un `exit 1` esplicito. È esattamente la
+riga che bash 3.2 già gestiva bene ([`V23`](#V23), tabella). **Non** prova
+`V23`: quello riguarda l'abort da `set -u`, che nasce solo da un difetto come
+`V21`. Il rischio residuo è invariato — un altro difetto di quella forma verrebbe
+di nuovo registrato come successo.
+
+### Non eseguito
+
+- **Il secondo browser** (`A4`, seconda metà). Il flusso è stato reso in un solo
+  browser. Da dichiarare, non da dare per fatto.
+- **Il canary workflow** non è mai stato eseguito. Non blocca il merge.
+- La coppia ffmpeg **amd64** è hashata e identificata, non eseguita: serve un Mac
+  Intel o Rosetta 2 (limite già a verbale in `C1`).
+
+### Rinviato, per decisione del maintainer del 2026-08-23
+
+Registrato qui perché **nessuno di questi diventi «verificato» per silenzio**.
+
+| # | cosa | dove va |
+|---|---|---|
+| [`V26`](#V26) | *Conferma* resta cliccabile durante l'installazione | **Ciclo 10** |
+| [`V27`](#V27) | con un ffmpeg non attestato la GUI lo mostra due volte, la prima come «versione non registrata» — **falso** | **Ciclo 10** |
+| [`V29`](#V29) | *Controlla ora* resta attivo durante un update e può far ricomparire *Aggiorna* | **Ciclo 10** |
+| [`V23`](#V23) | l'abort da `set -u` è ancora registrato come successo; l'hardening applicato è inerte | fix pass |
+| [`V25`](#V25) | una suite lascia 91 GB in `/tmp` e dura 4 m 26 s | fix pass |
+| [`V28`](#V28) | un'installazione che non installa niente costa 45 s | fix pass, insieme a `V25` |
+| [`V19`](#cycle6plus-gatec) · [`V22`](#cycle6plus-gatec) | commento di pacchetto inesatto · «nessun controllo ancora eseguito» subito dopo un update | cosmetico · Ciclo 10 |
+
+**`V27` è un rinvio consapevole di una regola normativa.** `ux-principles.md` §5 e
+il punto 5 dei non-negoziabili di `CLAUDE.md` dicono che una superficie non
+afferma mai il falso, e «versione non registrata» su una copia la cui versione è
+nel marker è falso. Il maintainer ha deciso di trattarlo con gli altri due difetti
+della stessa superficie nel ciclo dedicato, perché la correzione giusta è la stessa
+decisione di scope: un aggiornamento in volo è uno stato del **documento**, non di
+un pannello. **La condizione perché resti accettabile è che il Ciclo 10 non parta
+senza queste tre voci**, ed è per questo che sono fissate anche nella roadmap.
+
+Vale la pena dire che `V27` si manifesta **solo** con un ffmpeg non attestato,
+stato che oggi nessuna installazione ha e che si raggiunge solo dopo il ritiro di
+una build a monte. Non è un attenuante permanente: upstream è già a `9.0.1`, quindi
+quello stato arriverà.

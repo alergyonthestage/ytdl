@@ -707,7 +707,7 @@ two findings, **G27** and **G28**, which land in this cycle. What remains is the
   which scope decided it; no per-download control is sticky by accident; the same
   rule is stated once in `ux-principles.md` §8 and holds in both channels.
 
-#### Cycle 6-plus — the update path (`F`) — **gate C: seven findings, three blocking; a fix pass is due before it can be re-run (2026-08-22)**
+#### Cycle 6-plus — the update path (`F`) — **gate C PASSED 2026-08-23; ten findings, three blocking, all closed or deferred with a reason**
 
 Not a gate-C finding: raised by the maintainer on 2026-08-09, immediately after
 installing v2.1.0 by hand. **Pulled ahead of Cycle 6 on 2026-08-12**, when ytdl
@@ -730,9 +730,9 @@ every one of those references.
 design is [design-cycle6plus-update.md](design-cycle6plus-update.md)** — read
 those first: they answer all four questions below. The design was **approved at
 gate B on 2026-08-13** and **built the same day**. It was then **reviewed twice**,
-and the session that documents it starts from
-[handoff-cycle6plus-gatec.md](handoff-cycle6plus-gatec.md), which is deleted at the
-cycle's close.
+and the session that documents it started from a gate-C handoff, since consumed;
+what follows the cycle is
+[handoff-post-cycle6plus.md](handoff-post-cycle6plus.md).
 
 **Where it stands (2026-08-19).** All eleven implementation steps are done on
 `feat/update-path/implementation`, **not yet merged**, and **both review passes
@@ -809,14 +809,23 @@ somewhere other than the installer's target. Those corrections produced
 `hack/ytdl-dev.sh` and [dev-testing.md](dev-testing.md), a **permanent** sandbox
 for running dev builds — the one artefact of this phase that outlives the cycle.
 
-**What remains**, in order: a **fix pass** for `V23` and `V25`; the maintainer
-**pushes the branch** (the container has no credentials for `origin`); `P3`'s
-content check; **re-cut `v2.2.0-rc1`** from the new head; then **A1b**, which is
-still the thing this cycle has never once completed; then the rest of the
-checklist; and **then** merge `--no-ff`. The sequence is written out in
-[verifica-cycle6plus.md](verifica-cycle6plus.md), rewritten on 2026-08-23 to
-carry only what is left to run; the session
-handoff is [handoff-cycle6plus-gatec.md](handoff-cycle6plus-gatec.md).
+**Gate C passed on 2026-08-23**, after four by-hand sittings on real hardware.
+Everything reachable was run — the handover end to end, the installer against the
+real network, its idempotence, the withdrawn-build fallback **and** the boundary
+that must not fall back, the abandoned-run state, a run adopted in a second tab,
+and the acceptance test. The full outcome, including what was **not** run and what
+was **deferred with a reason**, is
+[improvements.md § Gate C — esito](improvements.md#cycle6plus-gatec-esito).
+
+Three defects are deferred to **Cycle 10** as one decision rather than three
+(`V26` · `V27` · `V29`), and three to a **fix pass** (`V23` · `V25` · `V28`).
+`V27` is a deliberate deferral of a normative rule and is pinned under Cycle 10
+for that reason.
+
+**What remains**: merge `--no-ff`, tag the release, and re-install on the
+maintainer's own machine — the installed v2.1.0 has no update path, which is the
+gap this cycle closes, so the last manual install is also the last one ever. The
+procedure is in [handoff-post-cycle6plus.md](handoff-post-cycle6plus.md).
 
 **Two review passes, eighteen findings, all fixed.** The first reviewed the
 implementation and found nine (`V1`–`V9`,
@@ -1076,7 +1085,19 @@ Implements ADR-0014 decision 2, plus the storage work it forces.
     button stays live in the versions block, and pressing it answers «un
     aggiornamento è già in corso». A control that cannot work is still offered,
     which `ux-principles.md` §5 forbids. **One line closes it** (the finding names
-    it); it is deferred here because the second point subsumes it.
+    it); it is deferred here because the third point subsumes it.
+  - [`V27`](improvements.md#V27) — **this one is normative, and its deferral is a
+    debt rather than a preference.** With an unattested ffmpeg the page prints the
+    tool twice, the first time as «versione non registrata», while the marker holds
+    its build and the CLI prints it correctly. A surface stating something untrue
+    is what `ux-principles.md` §5 and non-negotiable #5 forbid outright. It is here
+    because the honest fix is the same scope decision as the point below — the page
+    must stop reusing the COMPARISON shape for DISPLAY — and because no
+    installation is in that state today. Upstream is already at 9.0.1, so that will
+    change. **Cycle 10 does not start without this item.**
+  - [`V29`](improvements.md#V29) — *Controlla ora* is never disabled during an
+    update, and its answer can put *Aggiorna* back on screen. Reproduce it before
+    fixing: the finding separates what the code explains from what was observed.
   - **An update in flight probably deserves a surface of its own** — the
     maintainer's words: "meglio una pagina ad hoc «updating», così l'utente non
     usa ytdl o clicca altro mentre l'update è in corso". Today it is a panel

@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.2.0] — 2026-08-23
+
 **ytdl now notices its own updates, and the web interface can apply one without a
 Terminal.** Applying an update was never the gap — `ytdl --update` has existed
 since 1.0.0. The gap was that nothing *detected* one, and that the interface built
