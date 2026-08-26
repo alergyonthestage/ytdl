@@ -12,9 +12,10 @@ provisions yt-dlp and ffmpeg itself. See
 and [go-engine.md](engine/design/go-engine.md) for the engine as built.
 
 **Where we are now.** **v2.2.0 is released, merged and installed**, and Cycle 6-plus
-is closed. The unit in progress is `DOCS-1` below; after it, **Cycle 6-launch** —
-ytdl as a double-clickable app — which starts at its own analysis. Cycle 6 (the
-scope model) has its gate A closed and resumes at design.
+is closed. `DOCS-1` below has its implementation done on a branch and awaits
+`/review-docs` and the merge. After it, **Cycle 6-launch** — ytdl as a
+double-clickable app — which starts at its own analysis. Cycle 6 (the scope model)
+has its gate A closed and resumes at design.
 
 A closed unit keeps **one line** here and its full block in
 [roadmap-history.md](roadmap-history.md). What is known, worth doing and **not**
@@ -40,20 +41,30 @@ flowchart LR
 documentation estate predates it. Every later cycle would otherwise keep adding
 documents to a shape that is about to change.
 
-| id | entry | depends on |
-|---|---|---|
-| D1 | structural link checker, green before anything moves | — |
-| D2 | the tree on the pack's two axes: audience → domain → type | D1 |
-| D3 | closed units migrated to `roadmap-history.md` | D2 |
-| D4 | `improvements.md` split into its analysis and its review reports | D2 |
-| D5 | the missing documents: glossary, release guide, rewritten index | D3 · D4 |
-| D6 | project profile and maintenance policy instantiated | — |
-| D7 | the project instructions repointed at the new tree | D2 · D5 |
+**Implementation is complete on `docs/framework/adopt-taxonomy` (24 commits, not
+merged).** What remains is the review cadence and the merge.
+
+| id | entry | depends on | status |
+|---|---|---|---|
+| D1 | structural link checker, green before anything moves | — | `done` |
+| D2 | the tree on the pack's two axes: audience → domain → type | D1 | `done` |
+| D3 | closed units migrated to `roadmap-history.md` | D2 | `done` |
+| D4 | `improvements.md` split into its analysis and its review reports | D2 | `done` |
+| D5 | the missing documents: glossary, release guide, rewritten index | D3 · D4 | `done` |
+| D6 | project profile and maintenance policy instantiated | — | `done` |
+| D7 | the project instructions repointed at the new tree | D2 · D5 | `done` |
+| **D8** | **`/review-docs` on the new tree, plus the fixes it returns** | D1–D7 | **`next`** |
+| **D9** | **merge `--no-ff` into `main`, from the Mac** | D8 | `blocked on D8` |
 
 **Constraints.** Every historical block moves **verbatim**, proved by diff before
 any link is touched. No living or historical document links **into** the handoff.
 The ADR numbering stays one global sequence across the per-domain folders, and the
 checker enforces it.
+
+⚠️ **What D1–D7 deliberately did NOT do:** judge whether any document's *contents*
+are still true. Only containers moved. That is D8's job, and at least one staleness
+is already known — `go-engine.md` advertises a ~12 s suite against a measured
+4 m 23 s.
 
 Analysis: [the estate measured against the pack](process/analysis/2026-08-26-code-docs-estate-vs-pack.md) ·
 Design: [the move](process/design/docs-reorganization.md)

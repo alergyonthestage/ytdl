@@ -41,19 +41,61 @@ flowchart LR
 - `hack/check-docs-links.sh` is the gate: links, anchors, ADR uniqueness, ADR index
   completeness, and **no document linking into this file**.
 
-## What is open
+## The next session, in order — decided by the maintainer 2026-08-26
 
-1. **The merge.** `--no-ff` into `main`, on the Mac — `.cco/` is read-only in a
-   normal session, so a merge here fails on any ref touching it. Then the push, and
-   the branch cleanup one session later (that is the recorded remote policy, not a
-   failure).
-2. **`/review-docs` has not run.** This reorganization deliberately moved documents
-   without judging whether their *contents* are still true. Several are known to be
-   stale in ways nothing here corrected — for example `go-engine.md` advertises a
-   ~12 s suite against a measured 4 m 23 s. That review is the natural next step and
-   it should run on the new tree.
-3. **Two lessons still live only in a handoff** (below). They are durable and are
-   candidates for promotion into `.cco/claude/rules/`; that is the maintainer's call.
+**Do these three, then stop and go back to the roadmap.** Do not start Cycle
+6-launch in the same session.
+
+### 1 · `/review-docs` on the new tree — this is `D8`
+
+`DOCS-1` moved **containers**, never contents: no document's claims were judged.
+That is this review's whole job, and it is why the merge waits for it.
+
+At least one staleness is already known and is not the only one — treat it as the
+first item, not the list:
+
+- `go-engine.md` § *Build, test, release* advertises **«the whole suite under
+  `-race` green in ~12 s»**. Measured on this branch: **4 m 23 s**, `cmd/ytdl` alone
+  251 s. `CLAUDE.md` repeats the same ~12 s figure.
+
+Where to look hardest, because these are the documents the move touched most:
+
+- the four Cycle 6-plus reviews and the Cycle 5 one — they are **historical**, so
+  what they assert may **not** be edited; only links and paths may. A factual
+  correction is a dated addition that leaves the original readable, never a
+  substitution.
+- [improvements.md](improvements.md) and [roadmap.md](roadmap.md), both rewritten
+  rather than moved — check they still say what is true, not what was true.
+- [docs/README.md](../README.md), regenerated from the filesystem.
+- the two Italian guides: they are user-facing and they moved.
+
+### 2 · The fixes that review returns
+
+In place for objective staleness — that is the cadence's autonomy. Anything that
+would **change a decision** stops for a "review needed" gate instead.
+
+### 3 · Merge `--no-ff` into `main`
+
+**From the Mac.** A normal session has `.cco/` read-only, so a merge here fails on
+any ref touching it — and `.cco/` is exactly what four of these commits change.
+Then the push. Branch cleanup defers by one session: that is the recorded remote
+policy (`project-profile.md` §3), not a failure.
+
+No tag and no release: this branch ships no product change. `CHANGELOG.md` gets
+nothing — it is written for whoever *uses* ytdl, and nothing user-facing moved
+except the two guides' paths.
+
+### Then: back to the roadmap
+
+`Cycle 6-launch` starts at its own **analysis**, in a session of its own. Everything
+it needs is under *Cycle 6-launch* below.
+
+## Also open, and not for the next session
+
+**Two lessons still live only in this file** — *the container is not the target
+platform*, and *a skipped test looks exactly like a passing one*. Both are durable
+and both are candidates for promotion into `.cco/claude/rules/`. Promoting a rule is
+the maintainer's call, so they stay here until asked.
 
 ## Cycle 6-launch — what the next cycle needs, carried forward
 
