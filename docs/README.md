@@ -70,6 +70,7 @@ it links out. Open it directly when resuming.
 | [2026-07-21-code-bash-as-built.md](maintainers/engine/analysis/2026-07-21-code-bash-as-built.md) | The original Bash script as built — still the golden **reference** |
 | [2026-07-21-code-initial-findings.md](maintainers/engine/analysis/2026-07-21-code-initial-findings.md) | The first register: `C`/`U`/`M` findings and the `E` evolutions asked for |
 | [2026-07-22-tech-choice-golden-tests.md](maintainers/engine/analysis/2026-07-22-tech-choice-golden-tests.md) | How the Bash argv was captured as goldens — partly superseded, and says so |
+| [2026-08-26-code-test-suite-self-replication.md](maintainers/engine/analysis/2026-08-26-code-test-suite-self-replication.md) | **`DEV-1`**: why `go test ./cmd/ytdl` re-executes itself, and what containment has to cover |
 
 ### `ux/` — the user-facing surface, both channels
 

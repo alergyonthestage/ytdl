@@ -104,7 +104,9 @@ go test -race -count=1 ./cmd/ytdl/ ; pgrep -af 'ytdl.test'
 ⚠️ Run it **only** with T0's containment in place, or on a machine that can afford
 it. Reproducing `V25` to confirm `V25` is how the fourth session was lost.
 
-Analysis: [review 004 § `V25`](distribution/reviews/004-cycle6plus-gate-c.md#V25) ·
+Analysis: [the suite re-executes itself](engine/analysis/2026-08-26-code-test-suite-self-replication.md)
+(2026-08-26 — establishes the multiplier; `T1`'s question is narrowed, not yet closed) ·
+[review 004 § `V25`](distribution/reviews/004-cycle6plus-gate-c.md#V25) ·
 [review 004 § `V28`](distribution/reviews/004-cycle6plus-gate-c.md#V28) ·
 [D8 § 5](process/reviews/001-docs1-taxonomy-adoption.md#dev1)
 
