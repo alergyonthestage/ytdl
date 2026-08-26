@@ -24,12 +24,16 @@ flowchart TD
   M --> UX["ux/"]
   M --> DI["distribution/"]
   M --> P["process/"]
-  F --> T["analysis/ · design/ · decisions/ · reviews/ · guides/"]
-  E --> T
-  UX --> T
-  DI --> T
-  P --> T
+  M --> MG["guides/"]
+  F --> FT["decisions/"]
+  E --> ET["analysis/ · design/ · decisions/"]
+  UX --> UT["design/ · decisions/ · reviews/"]
+  DI --> DT["design/ · decisions/ · guides/ · reviews/"]
+  P --> PT["analysis/ · design/ · reviews/"]
 ```
+
+The type folders differ per domain on purpose: **a domain gets one only when it has
+a document to put in it.** An empty `reviews/` would advertise a review nobody ran.
 
 The shape, and the rules that keep it that way, are in
 [the reorganization design](maintainers/process/design/docs-reorganization.md).

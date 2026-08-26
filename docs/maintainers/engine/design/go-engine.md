@@ -3,7 +3,7 @@
 Status: **as-built**. Written for Cycle 1 (Session 3, 2026-07-22); the package
 layout below is current as of Cycle 5's closing (2026-08-04). Describes the compiled Go
 `ytdl` that supersedes the Bash script at parity. The Bash tool's as-built design
-is in [architecture.md](../analysis/2026-07-21-code-bash-as-built.md) (still the golden **reference**); the
+is in [2026-07-21-code-bash-as-built.md](../analysis/2026-07-21-code-bash-as-built.md) (still the golden **reference**); the
 exact behaviour this engine reproduces is [go-port-parity-contract.md](go-port-parity-contract.md).
 Decisions: [ADR-0003](../../foundation/decisions/0003-engine-language-go.md) (Go),
 [ADR-0004](../decisions/0004-go-engine-package-layout.md) (layout),
@@ -218,9 +218,21 @@ builds and tests.
 (`.cco/Dockerfile`, selected by `docker.image` in `.cco/project.yml`): Go under
 `/usr/local/go`, plus `yt-dlp` fetched into `~/.local/bin` at every session start
 by `.cco/setup.sh` — deliberately not baked, since it is the dependency that
-breaks when YouTube changes. Measured 2026-08-04 on Go 1.26.5 / yt-dlp 2026.07.04:
-`go vet`, `gofmt` and the **whole suite under `-race` green in ~12 s from a cold
-cache**. **ffmpeg is deliberately absent** (commented out in the Dockerfile), so
+breaks when YouTube changes. `go vet` and `gofmt` are instant; the **suite is
+minutes, not seconds** — three measurements under `-race` from a cold cache span
+**2 m 24 s to 4 m 26 s** (2026-08-22 and 2026-08-26), of which `cmd/ytdl` alone is
+100–252 s. (An earlier figure of ~12 s, measured 2026-08-04, described the tree
+*before* Cycle 6-plus and is no longer reachable: the update path's tests spawn a
+real `yt-dlp`, which is also what makes them expensive — see
+[`V25`](../../improvements.md).) **Treat it as an order of magnitude, not a
+threshold**. The near-2× spread is not itself explained; `V25` is where that
+question is tracked.
+
+⚠️ **Run `rm -rf /tmp/_MEI*` after a full suite run**: each spawned `yt-dlp` is a
+PyInstaller bundle that cannot clean up its own extraction when the test kills it,
+and the leftovers have filled the container's disk more than once.
+
+**ffmpeg is deliberately absent** (commented out in the Dockerfile), so
 real conversions and end-to-end downloads are still verified on macOS, not here.
 If `go version` fails, the image was not rebuilt after a `cco build` of the base —
 the build command is in the header of `.cco/Dockerfile`.

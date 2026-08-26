@@ -5,7 +5,7 @@ outlives any single cycle: when a cycle adds a capability, it conforms to this
 document or amends it in its ADR.
 
 Established by [ADR-0013](../decisions/0013-cycle5-unified-ux.md) (Cycle 5), which
-derived it from the task analysis in [design-cycle5-ux.md](cycle5-ux.md).
+derived it from the task analysis in [cycle5-ux.md](cycle5-ux.md).
 Earlier conventions it absorbs: [ADR-0009](../decisions/0009-cycle2c-cli-ux.md)
 (command roles, windowed counts, TTY-aware colour) and
 [ADR-0012](../decisions/0012-cycle4-cli-ux-title-disambiguation.md) (titles,

@@ -12,8 +12,8 @@ provisions yt-dlp and ffmpeg itself. See
 and [go-engine.md](engine/design/go-engine.md) for the engine as built.
 
 **Where we are now.** **v2.2.0 is released, merged and installed**, and Cycle 6-plus
-is closed. `DOCS-1` below has its implementation done on a branch and awaits
-`/review-docs` and the merge. After it, **Cycle 6-launch** — ytdl as a
+is closed. `DOCS-1` below is done and reviewed on a branch, and awaits only the
+merge. After it, **Cycle 6-launch** — ytdl as a
 double-clickable app — which starts at its own analysis. Cycle 6 (the scope model)
 has its gate A closed and resumes at design.
 
@@ -41,8 +41,8 @@ flowchart LR
 documentation estate predates it. Every later cycle would otherwise keep adding
 documents to a shape that is about to change.
 
-**Implementation is complete on `docs/framework/adopt-taxonomy` (24 commits, not
-merged).** What remains is the review cadence and the merge.
+**Implementation and review are complete on `docs/framework/adopt-taxonomy`, not
+merged.** What remains is the merge.
 
 | id | entry | depends on | status |
 |---|---|---|---|
@@ -53,21 +53,108 @@ merged).** What remains is the review cadence and the merge.
 | D5 | the missing documents: glossary, release guide, rewritten index | D3 · D4 | `done` |
 | D6 | project profile and maintenance policy instantiated | — | `done` |
 | D7 | the project instructions repointed at the new tree | D2 · D5 | `done` |
-| **D8** | **`/review-docs` on the new tree, plus the fixes it returns** | D1–D7 | **`next`** |
-| **D9** | **merge `--no-ff` into `main`, from the Mac** | D8 | `blocked on D8` |
+| D8 | `/review-docs` on the new tree, plus the fixes it returns | D1–D7 | `done` |
+| **D9** | **merge `--no-ff` into `main`, from the Mac** | D8 | **`next`** |
 
 **Constraints.** Every historical block moves **verbatim**, proved by diff before
 any link is touched. No living or historical document links **into** the handoff.
 The ADR numbering stays one global sequence across the per-domain folders, and the
 checker enforces it.
 
-⚠️ **What D1–D7 deliberately did NOT do:** judge whether any document's *contents*
-are still true. Only containers moved. That is D8's job, and at least one staleness
-is already known — `go-engine.md` advertises a ~12 s suite against a measured
-4 m 23 s.
+**D1–D7 deliberately did NOT** judge whether any document's *contents* were still
+true — only containers moved. **D8 did that**, on 2026-08-26: the moves were proved
+verbatim, every gate re-run green, and five stale statements corrected in place. The
+one already known — `go-engine.md`'s ~12 s suite — is fixed; the widest was a **user
+guide telling a new user to expect two lines from `ytdl --version` when the shipped
+build prints four**. Two items were escalated rather than changed, both in
+`.cco/claude/CLAUDE.md`: see the review.
+
+The two escalations in `.cco/claude/CLAUDE.md` — the ~12 s figure and an `internal/`
+list missing `update` — were **approved and applied on 2026-08-26**, on the same
+branch: the suite line now reads `~2-5 min` and carries `rm -rf /tmp/_MEI*` as a
+command rather than a comment, and the package list is complete. A third
+inconsistency the review had left — `go-engine.md` and `improvements.md` giving
+different same-day figures for the same measurement — was reconciled to the measured
+range.
+
+⚠️ **D8 also found a defect that is not documentation.** Chasing the ~12 s figure to
+its cause surfaced a probable multiplier behind `V25`, and it is scheduled as
+[`DEV-1`](#dev-1) below rather than fixed here: this branch ships documentation only.
 
 Analysis: [the estate measured against the pack](process/analysis/2026-08-26-code-docs-estate-vs-pack.md) ·
-Design: [the move](process/design/docs-reorganization.md)
+Design: [the move](process/design/docs-reorganization.md) ·
+Review: [D8](process/reviews/001-docs1-taxonomy-adoption.md)
+
+<a id="dev-1"></a>
+
+### `DEV-1` · The suite must not be able to take the container down — `next` (opened 2026-08-26)
+
+**Why now, and why ahead of `Cycle 6-launch`.** `V25` has been paid for **four**
+times, and the fourth was not a suite run — it was a *review* session, killed
+mid-edit. The cost is no longer "a slow suite": it is that any session can be
+destroyed by running the project's own primary gate, `go test -race ./...`. On
+2026-08-26 the maintainer could not even clear it — `rm` failed inside the container
+(the overlay was already read-only) and the container's filesystem was not reachable
+from the host. **Recovery required rebuilding the image.** A gate that can do that is
+not usable, and a project whose oracle is unusable has no oracle.
+
+This is developer environment, not product: **nothing user-facing ships from it**,
+which is why it is `DEV-1` and not a cycle in the `R → M → F → S` order.
+
+**It absorbs `V25` and `V28`**, which [review 004](distribution/reviews/004-cycle6plus-gate-c.md#V25)
+already established are *"la stessa causa e la stessa correzione"*. Both leave
+[improvements.md](improvements.md) on being scheduled here.
+
+**Starts at analysis, then design, then gate B.** The maintainer asked for a sound
+mechanism rather than the first patch that stops the bleeding, and the profile puts
+`Design × Feature` on `U`. The entries below are the *problem* decomposed, not an
+approved solution — the levers named are candidates for the design to weigh, not
+decisions.
+
+| id | entry | depends on | status |
+|---|---|---|---|
+| T0 | **containment**, shipped first and on its own: the extractions must not be able to reach the overlay again. Candidate levers: `TMPDIR` per test (`testing` then deletes it), or a `TMPDIR` on a bind mount so leftovers stay reachable **from the host** — which is the specific thing that failed on 2026-08-26 | — | `next` |
+| T1 | analysis: confirm or kill the **multiplier** — see below. One command decides it | — | `next` |
+| T2 | design: the mechanism, covering the probe budget, the exec count and the spawn seam together | T1 | `planned` |
+| T3 | the **budget**: make the version-probe timeout injectable, so tests stop *killing* yt-dlp — the remedy `V25` already names | T2 | `planned` |
+| T4 | the **exec count** (`V28`): answer from `installed.conf`'s `yt_dlp_version` for a copy that is ours, keeping the exec as authority off the critical path. Carries its own staleness question — a user running `yt-dlp -U` behind ytdl — which is why it was separated once already | T2 | `planned` |
+| T5 | **prevention**: the suite proves it left nothing behind, rather than the maintainer discovering it later. A green run that leaked is the same failure class as gate C's *"a skipped test looks exactly like a passing one"* | T3 · T4 | `planned` |
+
+⚠️ **T1 is the open question, and it is not established.** `V25`'s recorded cause —
+a 30 s `versionTimeout` that kills yt-dlp before its PyInstaller bundle can remove
+its own `/tmp/_MEI…` — accounts for **3** extractions per suite run, ~150 MB.
+**1657 were measured, 77 GB.** Three orders of magnitude are unexplained by the
+cause on file.
+
+The candidate, from reading the code during D8: `TestRealMainQueueListsEnqueued`
+(`cmd/ytdl/main_test.go`) enqueues a job and calls `realMain(["queue"])`, which
+reaches `resumeIfStalled` → `daemon.Spawn()` → `os.Executable()` — **which, under
+`go test`, is the test binary**. Nothing intercepts the `__daemon` argument, so the
+child re-runs the whole `cmd/ytdl` package, detached with `Setsid`, released, and
+with none of `go test`'s timeouts. It reaches the same test about a second in.
+
+Two things in the tree already point at it: `TestRunRetryCmdRequeues` takes the
+daemon flock deliberately, commented *"so `resumeIfStalled` sees a live daemon and
+does NOT self-exec a real one from the test binary"* — the hazard is known and **one**
+test is guarded; and the other two spawn paths (`run.spawnDaemon`, `spawnQueueDaemon`)
+are stubbable variables that tests do stub, while this one is called straight on the
+package. It would also explain the near-2× spread in the suite's own wall time, and
+the 11,442 directories once found accumulated across sessions.
+
+**This is code reading, not a measurement** — the D8 session had no working shell by
+the time it surfaced. It is falsified or confirmed by one command, and T1 is that
+command:
+
+```bash
+go test -race -count=1 ./cmd/ytdl/ ; pgrep -af 'ytdl.test'
+```
+
+⚠️ Run it **only** with T0's containment in place, or on a machine that can afford
+it. Reproducing `V25` to confirm `V25` is how the fourth session was lost.
+
+Analysis: [review 004 § `V25`](distribution/reviews/004-cycle6plus-gate-c.md#V25) ·
+[review 004 § `V28`](distribution/reviews/004-cycle6plus-gate-c.md#V28) ·
+[D8 § 5](process/reviews/001-docs1-taxonomy-adoption.md#dev1)
 
 ## Closed phases
 
@@ -229,7 +316,7 @@ without a terminal and without the maintainer touching their machine again. So
 the update path and the desktop launcher are pulled **ahead** of Cycle 6, whose
 gate A is closed and which is ready to start on demand. The cycle *names* keep
 their suffixes — the numbers are pinned by the `G*` references in
-[improvements.md](ux/reviews/001-cycle5-gate-c.md#gate-c), so renumbering would falsify them —
+[the Cycle 5 gate-C register](ux/reviews/001-cycle5-gate-c.md#gate-c), so renumbering would falsify them —
 and the running order is stated here rather than implied by the names.
 
 ```mermaid

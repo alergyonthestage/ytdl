@@ -68,8 +68,12 @@ Poi scrivi:
 ytdl --version
 ```
 
-Se vedi due righe — la versione di `ytdl` (per esempio `ytdl v2.1.0`) e quella di
-`yt-dlp` — l'installazione è riuscita. Puoi passare alla [guida all'uso](guida-uso.md).
+Se vedi quattro righe — la versione di `ytdl` (per esempio `ytdl v2.2.0`), quelle
+di `yt-dlp` e di `ffmpeg`, e in fondo una riga `Aggiornamenti:` — l'installazione è
+riuscita. Puoi passare alla [guida all'uso](guida-uso.md).
+
+Che cosa vuol dire ognuna di quelle righe è spiegato nella
+[guida all'uso](guida-uso.md#tenere-ytdl-aggiornato); qui basta che ci siano.
 
 ## Se qualcosa non funziona
 
