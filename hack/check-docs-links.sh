@@ -9,7 +9,9 @@
 #   2. every "#anchor" on a local target matches a heading or an explicit
 #      <a id="..."> in that file;
 #   3. ADR numbers are unique across all decisions/ folders — the numbering is
-#      one global sequence even though the files sit under several domains;
+#      one global sequence even though the files sit under several domains, and
+#      every ADR is listed in the documentation index, which is what stopped that
+#      table silently ending at 0014;
 #   4. no document links *to* a handoff. The handoff is ephemeral and is deleted
 #      when its cycle closes, so an inbound link is a guaranteed future dangle;
 #      it links out to the durable documents, never the reverse.
@@ -186,6 +188,18 @@ while IFS= read -r dup; do
 	[ -n "$dup" ] || continue
 	report "ADR number $dup is used by more than one file: $(vcs ls-files "*/decisions/${dup}-*.md" | tr '\n' ' ')"
 done <"$tmpdir/dupes"
+
+index=docs/README.md
+
+if [ -f "$index" ]; then
+	vcs ls-files --cached --others --exclude-standard 'docs/*/decisions/*.md' |
+		while IFS= read -r adr; do
+			[ -n "$adr" ] || continue
+			rel=${adr#docs/}
+			grep -qF "($rel)" "$index" ||
+				report "$index -> $rel (ADR not listed in the index)"
+		done
+fi
 
 # ------------------------------------------------------------------- verdict
 
