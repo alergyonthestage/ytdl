@@ -768,3 +768,68 @@ replacing a *running* binary (atomic `mv`; the live process keeps its inode,
   `deps.conf` is never touched again, installs keep working.** If withdrawals turn
   out to be common, the durable fix is mirroring the four zips as ytdl release
   assets — a cycle of its own, never a quieter fallback.
+
+<a id="docs-1"></a>
+
+## `DOCS-1` — Documentation framework adoption — done, merged into `main` 2026-08-26, no release
+
+D1–D9 all closed. The block below is what the roadmap carried, and it still shows
+`DOCS-1` as `in progress` with **D9** `next`: the merge was performed from the Mac
+(`--no-ff`, merge commit `b2a10bf`, pushed) after that text was last written, and the
+roadmap was never updated before the unit closed. **D9 is done.** No tag and no
+`CHANGELOG.md` entry, deliberately: the unit shipped documentation only.
+
+One link target was rewritten on migration: the block's reference to `DEV-1` was a
+bare intra-document anchor, which resolved while the block lived in the roadmap and
+would dangle here. It now points at the roadmap's own `DEV-1` section. Nothing else
+was touched.
+
+### `DOCS-1` · Documentation framework adoption — `in progress` (opened 2026-08-26)
+
+**Why now:** the `core-dev-framework` pack was activated for this project and the
+documentation estate predates it. Every later cycle would otherwise keep adding
+documents to a shape that is about to change.
+
+**Implementation and review are complete on `docs/framework/adopt-taxonomy`, not
+merged.** What remains is the merge.
+
+| id | entry | depends on | status |
+|---|---|---|---|
+| D1 | structural link checker, green before anything moves | — | `done` |
+| D2 | the tree on the pack's two axes: audience → domain → type | D1 | `done` |
+| D3 | closed units migrated to `roadmap-history.md` | D2 | `done` |
+| D4 | `improvements.md` split into its analysis and its review reports | D2 | `done` |
+| D5 | the missing documents: glossary, release guide, rewritten index | D3 · D4 | `done` |
+| D6 | project profile and maintenance policy instantiated | — | `done` |
+| D7 | the project instructions repointed at the new tree | D2 · D5 | `done` |
+| D8 | `/review-docs` on the new tree, plus the fixes it returns | D1–D7 | `done` |
+| **D9** | **merge `--no-ff` into `main`, from the Mac** | D8 | **`next`** |
+
+**Constraints.** Every historical block moves **verbatim**, proved by diff before
+any link is touched. No living or historical document links **into** the handoff.
+The ADR numbering stays one global sequence across the per-domain folders, and the
+checker enforces it.
+
+**D1–D7 deliberately did NOT** judge whether any document's *contents* were still
+true — only containers moved. **D8 did that**, on 2026-08-26: the moves were proved
+verbatim, every gate re-run green, and five stale statements corrected in place. The
+one already known — `go-engine.md`'s ~12 s suite — is fixed; the widest was a **user
+guide telling a new user to expect two lines from `ytdl --version` when the shipped
+build prints four**. Two items were escalated rather than changed, both in
+`.cco/claude/CLAUDE.md`: see the review.
+
+The two escalations in `.cco/claude/CLAUDE.md` — the ~12 s figure and an `internal/`
+list missing `update` — were **approved and applied on 2026-08-26**, on the same
+branch: the suite line now reads `~2-5 min` and carries `rm -rf /tmp/_MEI*` as a
+command rather than a comment, and the package list is complete. A third
+inconsistency the review had left — `go-engine.md` and `improvements.md` giving
+different same-day figures for the same measurement — was reconciled to the measured
+range.
+
+⚠️ **D8 also found a defect that is not documentation.** Chasing the ~12 s figure to
+its cause surfaced a probable multiplier behind `V25`, and it is scheduled as
+[`DEV-1`](roadmap.md#dev-1) below rather than fixed here: this branch ships documentation only.
+
+Analysis: [the estate measured against the pack](process/analysis/2026-08-26-code-docs-estate-vs-pack.md) ·
+Design: [the move](process/design/docs-reorganization.md) ·
+Review: [D8](process/reviews/001-docs1-taxonomy-adoption.md)

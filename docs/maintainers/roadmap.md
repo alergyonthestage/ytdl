@@ -11,9 +11,11 @@ provisions yt-dlp and ffmpeg itself. See
 [ADR-0003](foundation/decisions/0003-engine-language-go.md) for the choice of Go
 and [go-engine.md](engine/design/go-engine.md) for the engine as built.
 
-**Where we are now.** **v2.2.0 is released, merged and installed**, and Cycle 6-plus
-is closed. `DOCS-1` below is done and reviewed on a branch, and awaits only the
-merge. After it, **Cycle 6-launch** — ytdl as a
+**Where we are now.** **v2.2.0 is released, merged and installed**, Cycle 6-plus is
+closed, and `DOCS-1` is **closed and merged** (2026-08-26, documentation only — no
+release). Open now is **`DEV-1`**, which takes precedence over every product cycle:
+the project's primary gate, `go test -race ./...`, can destroy the session that runs
+it, so the oracle is currently unusable. After it, **Cycle 6-launch** — ytdl as a
 double-clickable app — which starts at its own analysis. Cycle 6 (the scope model)
 has its gate A closed and resumes at design.
 
@@ -34,56 +36,6 @@ flowchart LR
 ```
 
 ## Open now
-
-### `DOCS-1` · Documentation framework adoption — `in progress` (opened 2026-08-26)
-
-**Why now:** the `core-dev-framework` pack was activated for this project and the
-documentation estate predates it. Every later cycle would otherwise keep adding
-documents to a shape that is about to change.
-
-**Implementation and review are complete on `docs/framework/adopt-taxonomy`, not
-merged.** What remains is the merge.
-
-| id | entry | depends on | status |
-|---|---|---|---|
-| D1 | structural link checker, green before anything moves | — | `done` |
-| D2 | the tree on the pack's two axes: audience → domain → type | D1 | `done` |
-| D3 | closed units migrated to `roadmap-history.md` | D2 | `done` |
-| D4 | `improvements.md` split into its analysis and its review reports | D2 | `done` |
-| D5 | the missing documents: glossary, release guide, rewritten index | D3 · D4 | `done` |
-| D6 | project profile and maintenance policy instantiated | — | `done` |
-| D7 | the project instructions repointed at the new tree | D2 · D5 | `done` |
-| D8 | `/review-docs` on the new tree, plus the fixes it returns | D1–D7 | `done` |
-| **D9** | **merge `--no-ff` into `main`, from the Mac** | D8 | **`next`** |
-
-**Constraints.** Every historical block moves **verbatim**, proved by diff before
-any link is touched. No living or historical document links **into** the handoff.
-The ADR numbering stays one global sequence across the per-domain folders, and the
-checker enforces it.
-
-**D1–D7 deliberately did NOT** judge whether any document's *contents* were still
-true — only containers moved. **D8 did that**, on 2026-08-26: the moves were proved
-verbatim, every gate re-run green, and five stale statements corrected in place. The
-one already known — `go-engine.md`'s ~12 s suite — is fixed; the widest was a **user
-guide telling a new user to expect two lines from `ytdl --version` when the shipped
-build prints four**. Two items were escalated rather than changed, both in
-`.cco/claude/CLAUDE.md`: see the review.
-
-The two escalations in `.cco/claude/CLAUDE.md` — the ~12 s figure and an `internal/`
-list missing `update` — were **approved and applied on 2026-08-26**, on the same
-branch: the suite line now reads `~2-5 min` and carries `rm -rf /tmp/_MEI*` as a
-command rather than a comment, and the package list is complete. A third
-inconsistency the review had left — `go-engine.md` and `improvements.md` giving
-different same-day figures for the same measurement — was reconciled to the measured
-range.
-
-⚠️ **D8 also found a defect that is not documentation.** Chasing the ~12 s figure to
-its cause surfaced a probable multiplier behind `V25`, and it is scheduled as
-[`DEV-1`](#dev-1) below rather than fixed here: this branch ships documentation only.
-
-Analysis: [the estate measured against the pack](process/analysis/2026-08-26-code-docs-estate-vs-pack.md) ·
-Design: [the move](process/design/docs-reorganization.md) ·
-Review: [D8](process/reviews/001-docs1-taxonomy-adoption.md)
 
 <a id="dev-1"></a>
 
@@ -291,9 +243,9 @@ flowchart TD
   handful of independent analysis/review tasks.
 
 
-### Closed cycles
+### Closed cycles and work units
 
-| Cycle | Outcome | Block |
+| Unit | Outcome | Block |
 |---|---|---|
 | Cycle 1 — Go engine foundations & parity | shipped as v2.0.0, 2026-07-23 | [block](roadmap-history.md#cycle-1) |
 | Cycle 2 — Backend integrations (2A · 2B-core · 2C · 2B-plus) | merged 2026-07-23/24, shipped in v2.1.0 | [block](roadmap-history.md#cycle-2) |
@@ -302,6 +254,7 @@ flowchart TD
 | Cycle 5 — Unified GUI/CLI UX | merged 2026-08-05, shipped in v2.1.0 | [block](roadmap-history.md#cycle-5) |
 | Cycle 5 closing — gate-C fixes (`R`) | released in v2.1.0, 2026-08-09 | [block](roadmap-history.md#cycle-5-closing) |
 | Cycle 6-plus — the update path (`F`) | gate C passed 2026-08-23, released as v2.2.0 | [block](roadmap-history.md#cycle-6-plus) |
+| `DOCS-1` — documentation framework adoption | merged 2026-08-26, documentation only — no tag, no release | [block](roadmap-history.md#docs-1) |
 
 ### Post-gate-C cycles — `R → M → F → S`
 
