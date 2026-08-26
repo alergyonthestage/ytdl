@@ -12,12 +12,13 @@ provisions yt-dlp and ffmpeg itself. See
 and [go-engine.md](engine/design/go-engine.md) for the engine as built.
 
 **Where we are now.** **v2.2.0 is released, merged and installed**, Cycle 6-plus is
-closed, and `DOCS-1` is **closed and merged** (2026-08-26, documentation only — no
-release). Open now is **`DEV-1`**, which takes precedence over every product cycle:
-the project's primary gate, `go test -race ./...`, can destroy the session that runs
-it, so the oracle is currently unusable. After it, **Cycle 6-launch** — ytdl as a
-double-clickable app — which starts at its own analysis. Cycle 6 (the scope model)
-has its gate A closed and resumes at design.
+closed, `DOCS-1` is **closed and merged**, and **`DEV-1` is done** — the project's
+primary gate, `go test -race ./...`, no longer destroys the session that runs it and
+returns in 8 s ([ADR-0017](foundation/decisions/0017-dev-container-oracle.md)). Its
+block below moves to the history once its branch is merged, like every closed unit.
+
+Next is **Cycle 6-launch** — ytdl as a double-clickable app — which starts at its own
+analysis. Cycle 6 (the scope model) has its gate A closed and resumes at design.
 
 A closed unit keeps **one line** here and its full block in
 [roadmap-history.md](roadmap-history.md). What is known, worth doing and **not**
@@ -39,7 +40,7 @@ flowchart LR
 
 <a id="dev-1"></a>
 
-### `DEV-1` · The suite must not be able to take the container down — `next` (opened 2026-08-26)
+### `DEV-1` · The suite must not be able to take the container down — `done` (opened and closed 2026-08-26)
 
 **Why now, and why ahead of `Cycle 6-launch`.** `V25` has been paid for **four**
 times, and the fourth was not a suite run — it was a *review* session, killed
@@ -57,26 +58,49 @@ which is why it is `DEV-1` and not a cycle in the `R → M → F → S` order.
 already established are *"la stessa causa e la stessa correzione"*. Both leave
 [improvements.md](improvements.md) on being scheduled here.
 
-**Starts at analysis, then design, then gate B.** The maintainer asked for a sound
-mechanism rather than the first patch that stops the bleeding, and the profile puts
-`Design × Feature` on `U`. The entries below are the *problem* decomposed, not an
-approved solution — the levers named are candidates for the design to weigh, not
-decisions.
+**Closed on the day it opened, with a mechanism rather than a patch.** Analysis
+established the cause; validating the proposed remedy found a better one, which the
+maintainer approved directly at that point — so the design phase was **waived, not
+skipped**, and its decision is recorded as an ADR instead of a design document:
+[ADR-0017](foundation/decisions/0017-dev-container-oracle.md).
+
+**Two causes in series, both fixed:**
+
+1. **The multiplier.** `cmd/ytdl`'s test binary re-executed the whole suite,
+   detached and unbounded, because `resumeIfStalled` self-exec'd `os.Executable()`
+   with no seam. Fixed by the seam plus a `TestMain` that refuses `__daemon`.
+2. **The object.** The container's yt-dlp was a PyInstaller bundle that unpacks
+   78 MB per invocation and leaks it when killed. Replaced by the **zipapp**, which
+   unpacks nothing — the leak class was removed, not relocated.
+
+**Measured after:** `go test -race ./...` green in **8 s** (from 2 m 24 s – 4 m 26 s),
+zero residue, zero surviving processes, disk unchanged across a full run.
 
 | id | entry | depends on | status |
 |---|---|---|---|
-| T0 | **containment**, shipped first and on its own: the extractions must not be able to reach the overlay again. Candidate levers: `TMPDIR` per test (`testing` then deletes it), or a `TMPDIR` on a bind mount so leftovers stay reachable **from the host** — which is the specific thing that failed on 2026-08-26 | — | `next` |
-| T1 | analysis: confirm or kill the **multiplier** — see below. One command decides it | — | `next` |
-| T2 | design: the mechanism, covering the probe budget, the exec count and the spawn seam together | T1 | `planned` |
-| T3 | the **budget**: make the version-probe timeout injectable, so tests stop *killing* yt-dlp — the remedy `V25` already names | T2 | `planned` |
-| T4 | the **exec count** (`V28`): answer from `installed.conf`'s `yt_dlp_version` for a copy that is ours, keeping the exec as authority off the critical path. Carries its own staleness question — a user running `yt-dlp -U` behind ytdl — which is why it was separated once already | T2 | `planned` |
-| T5 | **prevention**: the suite proves it left nothing behind, rather than the maintainer discovering it later. A green run that leaked is the same failure class as gate C's *"a skipped test looks exactly like a passing one"* | T3 · T4 | `planned` |
+| T0 | **containment.** Delivered as two independent levers: the zipapp (no extraction exists) and the spawn seam + `TestMain` guard (no replication). The `TMPDIR` levers this entry proposed were **dropped, not implemented** — they relocate the bytes without stopping the replication | — | `done` |
+| T1 | confirm or kill the **multiplier**. Confirmed, and **measured: exactly 1 self-exec per suite run** — a linear chain, not a tree, and unbounded all the same. Measured by the guard itself, so no session had to reproduce `V25` to confirm `V25` | — | `done` |
+| T2 | design the mechanism | T1 | `waived` — superseded by ADR-0017, see above |
+| T3 | the **budget**: make the version-probe timeout injectable | T2 | `dropped` — premise dissolved, see below |
+| T4 | the **exec count** (`V28`): answer from `installed.conf` for a copy that is ours | T2 | `deferred` — premise weakened, see below |
+| T5 | **prevention**: the suite proves it left nothing behind | T3 · T4 | `deferred`, and no longer urgent — the regression test proves the guard holds, which is the failure that mattered |
 
-⚠️ **T1 is the open question, and it is not established.** `V25`'s recorded cause —
-a 30 s `versionTimeout` that kills yt-dlp before its PyInstaller bundle can remove
-its own `/tmp/_MEI…` — accounts for **3** extractions per suite run, ~150 MB.
-**1657 were measured, 77 GB.** Three orders of magnitude are unexplained by the
-cause on file.
+⚠️ **`T3` and `T4` need a decision they did not need before, and it is not taken
+here.** Both were framed around the cost of exec'ing and killing a PyInstaller
+bundle. With the zipapp the probe answers in ~263 ms and leaks nothing however it
+dies, so `T3`'s stated purpose — *"so tests stop killing yt-dlp"* — no longer
+describes a problem, and `T4`'s saving is now milliseconds rather than gigabytes.
+
+They are recorded as `dropped` and `deferred` rather than silently deleted: `T4`
+retains an independent merit (`V28`'s point that an exec on the critical path is
+authority the marker could answer) and its own staleness question, and that merit
+is unchanged by any of this. Reopening either is a maintainer call, not a
+consequence of ADR-0017.
+
+**What is now settled and must not be re-litigated:** the cause (both halves), that
+the container runs a different *form* of yt-dlp from every user and why that is
+bounded, and that `rm -rf /tmp/_MEI*` is no longer part of any workflow. All in
+ADR-0017.
 
 The candidate, from reading the code during D8: `TestRealMainQueueListsEnqueued`
 (`cmd/ytdl/main_test.go`) enqueues a job and calls `realMain(["queue"])`, which

@@ -40,6 +40,15 @@ func TestRealMainQueueListsEnqueued(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", dir)
 	t.Setenv("HOME", dir)
 
+	// The spool holds pending work and no daemon is live, so `queue` resumes one.
+	// Stubbed: unstubbed this launched a REAL detached daemon from the test binary
+	// — which under `go test` is the suite itself. Asserting the request is also
+	// stronger than the silence it replaces, which checked nothing either way.
+	resumed := 0
+	old := spawnQueueDaemon
+	spawnQueueDaemon = func() error { resumed++; return nil }
+	t.Cleanup(func() { spawnQueueDaemon = old })
+
 	sp := queue.Open(config.StatePath())
 	if _, err := sp.Enqueue(queue.Job{URL: "https://youtu.be/MAIN", EnqueuedAt: time.Unix(1, 0)}); err != nil {
 		t.Fatal(err)
@@ -51,6 +60,9 @@ func TestRealMainQueueListsEnqueued(t *testing.T) {
 	}
 	if !strings.Contains(out, "youtu.be/MAIN") { // scheme trimmed by the one-row shortener
 		t.Errorf("queue output missing the enqueued job:\n%s", out)
+	}
+	if resumed != 1 {
+		t.Errorf("daemon resumes = %d, want 1: pending work with no daemon live must resume one", resumed)
 	}
 }
 
@@ -351,8 +363,11 @@ func TestRunRetryCmdRequeues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Hold the daemon lock so resumeIfStalled sees a live daemon and does NOT
-	// self-exec a real one from the test binary.
+	// Hold the daemon lock so resumeIfStalled takes its "a daemon is already
+	// live" branch and asks for no spawn at all. This once also stood in for the
+	// missing seam — resumeIfStalled called daemon.Spawn directly, and holding the
+	// lock was the only way to stop a test from self-exec'ing the suite. It now
+	// exercises the branch and nothing more; TestMain's guard covers the rest.
 	lf, err := os.OpenFile(sp.LockPath(), os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		t.Fatal(err)

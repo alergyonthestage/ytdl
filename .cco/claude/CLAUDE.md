@@ -46,8 +46,7 @@ The tree follows the `core-dev-framework` taxonomy: **audience → domain → ty
 
 ```bash
 go build ./...
-go test -race ./...                                  # whole suite, ~2-5 min (load-dependent)
-rm -rf /tmp/_MEI*                                    # ALWAYS after the suite — V25, it has taken the disk down 3x
+go test -race ./...                                  # whole suite, ~8 s. Leaves nothing behind — ADR-0017
 go vet ./... && gofmt -l .                           # gofmt output must be EMPTY
 git diff main -- internal/core/ internal/daemon/     # must stay EMPTY — the parity gate
 go test ./internal/core -update                      # regenerate goldens (needs the Bash ytdl)

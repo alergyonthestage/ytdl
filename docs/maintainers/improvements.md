@@ -35,9 +35,13 @@ from inside, and the filesystem was not reachable from the host. Recovery meant
 rebuilding the image. A defect that can destroy any session that runs the project's
 primary gate is not a cost item.
 
-D8 also found that the recorded cause accounts for ~150 MB of the 77 GB. The
-unexplained remainder, and the command that settles it, are in
-[`DEV-1`](roadmap.md#dev-1).
+D8 also found that the recorded cause accounts for only a fraction of the 77 GB.
+**The remainder was explained and closed on 2026-08-26**: the `cmd/ytdl` test binary
+re-executed the entire suite, detached and without bound, so every run multiplied
+whatever it leaked. Both defects are fixed and measured —
+[ADR-0017](foundation/decisions/0017-dev-container-oracle.md), which also replaces
+the PyInstaller bundle in the container with the zipapp, so there is no longer an
+extraction to leak at all.
 
 ## The seven minors of the fix session
 

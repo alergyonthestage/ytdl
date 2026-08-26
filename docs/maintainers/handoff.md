@@ -1,158 +1,169 @@
-# Handoff — `DOCS-1` reviewed, `DEV-1` opened and urgent
+# Handoff — `DEV-1` is done: the suite is safe, and fast
 
-**Ephemeral**, like the six before it: deleted when the next session writes its own.
-Nothing is decided here. Everything normative is in [roadmap.md](roadmap.md), the
-ADRs, [ux-principles.md](ux/design/ux-principles.md) and the rules in
-`.cco/claude/rules/`.
+**Ephemeral**, like the seven before it: deleted when the next session writes its own.
+Nothing is decided here. Everything normative is in [roadmap.md](roadmap.md),
+[ADR-0017](foundation/decisions/0017-dev-container-oracle.md),
+[ux-principles.md](ux/design/ux-principles.md) and the rules in `.cco/claude/rules/`.
 
-## ⚠️ Read this before running anything
+## ✅ The warning at the top of the last seven handoffs is withdrawn
 
-**Do not run `go test -race ./...` until [`DEV-1`](roadmap.md#dev-1) T0 is in.**
+**`go test -race ./...` is safe to run.** It no longer takes the container down, and
+it returns in **8 seconds**. `rm -rf /tmp/_MEI*` is not part of any workflow any
+more — there is nothing left to remove, so do not reintroduce it.
 
-That command has now destroyed **four** sessions, the last of them on 2026-08-26 —
-a documentation review, killed mid-edit. Once the overlay fills it goes read-only,
-and at that point `rm -rf /tmp/_MEI*` **does not work from inside the container**;
-the maintainer also could not reach the container's filesystem from the host.
-Recovery was rebuilding the image. The old advice — "clean up after the suite" — is
-what failed: by the time you want to clean up, you cannot.
-
-Targeted package runs (`go test ./internal/core`, `./internal/config`, …) are fine.
-`go build`, `go vet`, `gofmt -l .`, `bash tests/test-installer.sh` and
-`./hack/check-docs-links.sh` are all fine and cost nothing.
+If you are reading an older document that says otherwise, that document is stale;
+`.cco/claude/CLAUDE.md`, [go-engine.md](engine/design/go-engine.md) and
+[improvements.md](improvements.md) were corrected in this session.
 
 ## Where the project is
 
 ```mermaid
 flowchart LR
-  D["DOCS-1<br/>reviewed ✓<br/>awaiting merge"] --> V["DEV-1<br/>the suite must not<br/>take the container down"]
+  D["DOCS-1<br/>merged ✓"] --> V["DEV-1<br/>done ✓<br/><i>awaiting merge</i>"]
   V --> L["Cycle 6-launch<br/>starts at ANALYSIS"]
   L --> M["Cycle 6<br/>scope model<br/><i>gate A already closed</i>"]
 ```
 
 | | |
 |---|---|
-| branch | `docs/framework/adopt-taxonomy`, **not merged**, off `main` at `0f24363` |
-| `./hack/check-docs-links.sh` | **green, 53 files** — re-run after every edit of this session |
-| `go test -race ./...` | ⚠️ **not run this session, deliberately.** Last green run was 2026-08-26 before D8's edits, which are documentation only |
-| `tests/test-installer.sh` · parity gate | not re-run; untouched by this session — no code changed |
+| branch | `fix/dev1/suite-self-replication`, **not merged**, 3 commits off `main` at `95f124b` |
+| `go test -race ./...` | **green, 8 s**, run three times — 14 packages, 0 failures |
+| `go vet` · `gofmt -l .` | clean · empty |
+| `tests/test-installer.sh` | **103 / 103** |
+| parity gate | **empty** — `internal/core` and `internal/daemon` untouched |
+| `./hack/check-docs-links.sh` | green, 55 files |
+| disk across a full suite run | 8.7 G → 8.7 G, **0** residues, **0** surviving processes |
+| working tree | clean |
 
-`v2.2.0` is released, merged and installed. `DOCS-1` is complete **and now reviewed**;
-what remains is its merge.
+`DOCS-1` was merged and pushed from the Mac before this session (`95f124b`); its
+roadmap block was migrated to the history and its local branch deleted.
 
 ## What this session did
 
-**D8 — `/review-docs` on the new tree.** Report:
-[001-docs1-taxonomy-adoption.md](process/reviews/001-docs1-taxonomy-adoption.md).
+**`DEV-1`, opened and closed in a day.** Two causes in series, both fixed:
 
-The moves were proved verbatim — every renamed file diffed against `main` with link
-targets stripped, every split re-extracted from its source range. **The historical
-record came through the reorganization intact**, which was its central risk.
+1. **The multiplier.** `resumeIfStalled` called `daemon.Spawn()` directly — the only
+   spawn call site in the tree without the package-var seam the other two have.
+   `daemon.spawn` self-exec's `os.Executable()`, which under `go test` **is the test
+   binary**, and Go's generated main accepts an unknown positional argument instead
+   of rejecting it: the binary ran its whole suite and exited 0. Each run started
+   another, detached and released, outliving `go test`, `-test.timeout` and the
+   session itself.
+2. **The object.** The container's `yt-dlp` was a PyInstaller one-file bundle. It
+   unpacks **78 MB** into `$TMPDIR` at *every* invocation under a fresh random name,
+   and removes it only on a clean exit — so every probe killed by its timeout leaked
+   78 MB that nothing collected.
 
-Corrected in place, all facts rather than decisions:
+**The fix for (1)** is two layers: the seam, plus a `TestMain` that refuses
+`__daemon` outright. The guard is the backstop for any path the seam does not cover
+— and it is also what **measured** `T1`, by recording each refusal, so no session had
+to reproduce `V25` in order to confirm `V25`.
 
-1. `go-engine.md` — the suite advertised at ~12 s; it is minutes. Now the measured
-   range, 2 m 24 s – 4 m 26 s.
-2. **`guida-installazione.md` — the widest, and the only user-facing one.** Step 3
-   told a new user to expect **two lines** from `ytdl --version`; the shipped build
-   prints **four**. Stale since Cycle 6-plus, and not caused by `DOCS-1` — the file
-   moved byte-identical.
-3. Three link **labels** naming files that no longer exist.
-4. `docs/README.md`'s diagram gave all five domains the same type-folders.
-5. The roadmap's D8/D9 status, and a commit count that belongs to `git log`.
+**The fix for (2) removes the object rather than relocating it**: the container now
+provisions the **zipapp** asset, which never unpacks. 3 MB instead of 38, `--version`
+in ~263 ms instead of ~706, and zero residue however it dies. Installed by
+replacement, never alongside.
 
-Then, after the maintainer approved them:
+⚠️ **This is the decision that needed you, and you took it** — the container now runs
+a *different form* of yt-dlp from every user. The reasoning, the bound, and what
+would put it back on the table are in [ADR-0017](foundation/decisions/0017-dev-container-oracle.md) §3.
+The installer is untouched: macOS keeps the PyInstaller build, because ADR-0005's
+reasons still hold on a non-developer's Mac.
 
-6. **E1/E2 applied** to `.cco/claude/CLAUDE.md` — `~2-5 min` with `rm -rf /tmp/_MEI*`
-   promoted from comment to **command**, and `update` + `buildinfo` added to the
-   package list.
-7. A same-day inconsistency the review itself had left: `go-engine.md` and
-   `improvements.md` gave different figures for the same measurement.
-8. The link checker was **red** on the new report — a table illustrating link
-   *labels* wrote elided link syntax, which the checker read as real links and could
-   not resolve. Rewritten without link syntax; green at 53 files.
-
-**And one finding that is not documentation**, which is why `DEV-1` exists:
-[§6 of the report](process/reviews/001-docs1-taxonomy-adoption.md#dev1).
+**What fell out of it:** the suite's documented 2 m 24 s – 4 m 26 s, and the near-2×
+spread nobody could explain, had *one* cause. The suite was competing with detached
+copies of itself while waiting on 30 s timeouts against a process it was killing.
 
 ## The next session, in order
 
-### 1 · `D9` — merge `DOCS-1` into `main`, `--no-ff`, **from the Mac**
+### 1 · Merge `fix/dev1/suite-self-replication` into `main`, `--no-ff`, **from the Mac**
 
-A normal session has `.cco/` read-only, and `.cco/` is exactly what several of these
-commits change — a `git merge` here fails on those refs. Then the push. Branch
-cleanup defers by one session: that is the recorded remote policy
-([project-profile.md](../../.cco/claude/rules/project-profile.md) §3), not a failure.
+`.cco/` is what several of these commits change, and a normal session has it
+read-only — a `git merge` here fails on those refs. Then the push.
 
-No tag, no release: this branch ships no product change, so `CHANGELOG.md` gets
-nothing. The two Italian guides moved path but nothing user-facing changed except
-the `--version` line count, which is a **correction to the guide**, not to the
-product.
-
-Merge before starting `DEV-1`, so `DEV-1` branches off a `main` that already has the
-roadmap entry describing it.
-
-### 2 · `DEV-1` — start at analysis
-
-Scope, entries and the open question: [roadmap.md § `DEV-1`](roadmap.md#dev-1). It
-absorbs `V25` and `V28`, which review 004 established are one cause and one fix.
-
-**T0 first and on its own** — containment, so the rest can be worked on safely at
-all. Then **T1**, the one command that confirms or kills the multiplier hypothesis:
-
-```bash
-go test -race -count=1 ./cmd/ytdl/ ; pgrep -af 'ytdl.test'
+```
+git checkout main && git merge --no-ff fix/dev1/suite-self-replication && git push
 ```
 
-Processes surviving the suite confirm it. Run it **only behind T0**.
+**No tag, no release, no `CHANGELOG.md` entry.** Nothing user-facing changed: the
+`.cco/` work is the development container, and `resumeIfStalled` going through
+`spawnQueueDaemon` is behaviour-identical in production, since that var *is*
+`daemon.Spawn`.
 
-The maintainer asked for a designed mechanism, not the first patch that stops the
-bleeding, and `Design × Feature` is `U` in the profile — so T2 is a design with a
-gate B before any of T3–T5 is written.
+**No gate C.** It is the maintainer's hands-on verification of the *product* on real
+hardware, and this branch ships no product change. The parity gate is empty and the
+installer suite is 103/103.
 
-⚠️ **The entries in the roadmap are the problem decomposed, not an approved
-solution.** The levers named there are candidates for the design to weigh.
+⚠️ **`.cco/setup.sh` takes effect at the next `cco start`**, not on merge. Nothing
+needs rebuilding: setup.sh is not baked into the image. The current container's
+`~/.local/bin/yt-dlp` was already migrated in-session, and that path is a host mount,
+so it persists.
 
-### Then: back to the roadmap
+### 2 · Branch cleanup, deferred by one session as always
 
-`Cycle 6-launch` starts at its own analysis, in a session of its own.
+Delete `fix/dev1/suite-self-replication` locally once it is on the remote — the merge
+was its gate ([project-profile.md](../../.cco/claude/rules/project-profile.md) §3).
+
+**Five older merged branches are still lying around** and were left alone deliberately,
+since they predate this session: `docs/cycle6/gate-a-rulings`, `docs/release/v2.1.0`,
+`docs/roadmap/post-v2.1.0`, `feat/update-path/implementation`,
+`feat/ux/cycle5-unified-ux`. All are ancestors of `main`, so `git branch -d` will
+take them without argument. Say the word and they go.
+
+### 3 · Then: `Cycle 6-launch`, from its own analysis, in a session of its own
+
+The roadmap section is the scope, and the material carried forward for it is below.
 
 ## Tasks
 
 | # | Task | Roadmap entry |
 |---|---|---|
-| 1 | merge `--no-ff` into `main` from the Mac, then push | `DOCS-1` D9 |
-| 2 | delete the local branch next session (remote policy defers it by one) | `DOCS-1` D9 |
-| 3 | containment, shipped on its own before anything else | `DEV-1` T0 |
-| 4 | run the one command; record what it returned either way | `DEV-1` T1 |
-| 5 | design the mechanism; gate B before T3–T5 | `DEV-1` T2 |
+| 1 | merge `--no-ff` into `main` from the Mac, then push | `DEV-1` |
+| 2 | delete the local branch next session; optionally the five older ones | `DEV-1` |
+| 3 | migrate the `DEV-1` block to `roadmap-history.md`, leaving one line | `DEV-1` |
+| 4 | start `Cycle 6-launch` at analysis | `Cycle 6-launch` |
 
 Status lives in the roadmap, not here.
+
+## Two entries left open on purpose, and they are decisions
+
+`T3` is marked **dropped** and `T4` **deferred**, both on the roadmap with the reason
+written down rather than deleted. Their premise was the cost of exec'ing and killing
+a PyInstaller bundle, and the zipapp dissolves it. `T4` keeps an independent merit —
+`V28`'s point that an exec on the critical path is authority `installed.conf` could
+answer — and that merit is untouched by any of this. **Reopening either is your call,
+not a consequence of ADR-0017.**
 
 ## Still open, and not for the next session
 
 **Three lessons live only in this file** and are candidates for promotion into
 `.cco/claude/rules/`. Promoting a rule is the maintainer's call, so they stay here
-until asked:
+until asked. The third one was **paid off** this session and is restated as what it
+became:
 
 1. **The container is not the target platform.** Three times Cycle 6-plus got a
    truthful answer to the wrong question: a warm process where the Mac is cold
    (`V20`), bash 5 where the Mac is 3.2 (`V21`), and — widest — the working tree
-   where the network serves `origin` (`V24`).
+   where the network serves `origin` (`V24`). ADR-0017 §3 now widens this gap by one
+   more axis **knowingly**, which is the difference that matters.
 2. **A skipped test looks exactly like a passing one.** Twice in gate C a check
    "passed" while proving nothing. Put in every expectation the line that proves the
    work was **attempted**, not only the absence of failure.
-3. **New, 2026-08-26 — a remedy that requires a working machine is not a remedy.**
-   `rm -rf /tmp/_MEI*` was documented in three places and was correct; it was
-   unusable at exactly the moment it was needed, because the failure it treats is
-   what disables it. `DEV-1` T0 exists because containment beats cleanup.
+3. **A remedy that requires a working machine is not a remedy** — and the sharper
+   form this session earned: *containment beats cleanup, but removing the object
+   beats both.* `rm -rf /tmp/_MEI*` was documented in three places and was correct,
+   and it was unusable at exactly the moment it was needed. The first two candidate
+   fixes on the roadmap would have relocated the 77 GB onto the maintainer's Mac.
+   What worked was asking why the bytes existed at all.
 
 ## Debts carried, and they are NOT the next cycle
 
 The unscheduled ones are in [improvements.md](improvements.md): `V23`, `V19` and the
-seven minors. `V25` and `V28` **left that list** on being scheduled as `DEV-1`. The
-Cycle 10 ones — `V26`, `V27`, `V29`, `V22` — are on the roadmap, because they are
-that cycle's precondition. **`V27` is a normative debt, not a preference**, and
-Cycle 10 does not start without it.
+seven minors. `V25` and `V28` are **closed** by ADR-0017 — `V25` outright, `V28`'s
+disk motive with it, its authority motive surviving as the deferred `T4`. The Cycle 10
+ones — `V26`, `V27`, `V29`, `V22` — are on the roadmap, because they are that cycle's
+precondition. **`V27` is a normative debt, not a preference**, and Cycle 10 does not
+start without it.
 
 ## Cycle 6-launch — carried forward, for when it starts
 
@@ -203,7 +214,11 @@ Two verified facts worth having to hand:
   authenticated here and **not installed on the Mac**.
 - `.cco/` is read-only unless the session starts with `--cco-access edit-project`.
   A session that must edit the profile, the maintenance policy or `CLAUDE.md` has to
-  ask for it at start; it cannot be raised afterwards.
-- ⚠️ **The disk: see the top of this file.** It is no longer a gotcha, it is `DEV-1`.
+  ask for it at start; it cannot be raised afterwards. **This session had it**, which
+  is why `.cco/setup.sh` and `.cco/claude/CLAUDE.md` could be fixed.
+- cco exposes **no tmpfs and no storage quota** in `project.yml` (`docker:` offers
+  `image`, `mount_socket`, `ports`, `env`, `network`), and a session is not root, so
+  `mount` is refused. A size-capped filesystem for a runaway process is **not**
+  available from inside — worth knowing before anyone proposes one again.
 - The container **can** build bash 3.2 in two minutes; recipe and its honest limit in
   [review 004 § bash 3.2](distribution/reviews/004-cycle6plus-gate-c.md#bash32).

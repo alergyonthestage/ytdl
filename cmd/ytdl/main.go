@@ -725,10 +725,16 @@ func watchQueue(sp *queue.Spool) int {
 // (pending or orphaned-running) but none is draining. Spawn is idempotent, so a
 // harmless double-start is impossible; the IsRunning probe just avoids the churn
 // of a spawn-then-immediately-exit when a daemon is already live.
+//
+// It goes through spawnQueueDaemon, not daemon.Spawn directly. That is not a
+// stylistic preference: this was the ONLY spawn call site without the seam, and
+// under `go test` os.Executable() is the test binary, so every test that reached
+// here launched a detached copy of the whole suite. See TestMain's guard, which
+// backstops the same hazard from any path this seam does not cover.
 func resumeIfStalled(sp *queue.Spool, snap queue.Snapshot) {
 	p, r, _, _ := snap.Counts()
 	if p+r > 0 && !daemon.IsRunning(sp.LockPath()) {
-		_ = daemon.Spawn()
+		_ = spawnQueueDaemon()
 	}
 }
 
