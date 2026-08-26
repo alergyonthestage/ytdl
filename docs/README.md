@@ -100,7 +100,7 @@ it links out. Open it directly when resuming.
 
 ## Decisions
 
-One global numbering sequence across the per-domain folders; the next ADR is `0017`
+One global numbering sequence across the per-domain folders; the next ADR is `0019`
 wherever it lands. `hack/check-docs-links.sh` enforces both the uniqueness of the
 numbers and the completeness of this table.
 
@@ -123,6 +123,7 @@ numbers and the completeness of this table.
 | [0015](maintainers/ux/decisions/0015-cycle6-tab-scope-and-faithful-reruns.md) | The middle scope is the browser tab, re-runs are faithful, and no control is offered that does nothing | `ux` |
 | [0016](maintainers/distribution/decisions/0016-cycle6plus-update-path.md) | ytdl owns its dependency versions, and the update is one axis the user can see and apply | `distribution` |
 | [0017](maintainers/foundation/decisions/0017-dev-container-oracle.md) | The development container's oracle: yt-dlp as a zipapp, and a test binary that cannot become a daemon | `foundation` |
+| [0018](maintainers/distribution/decisions/0018-desktop-launcher-app-bundle.md) | ytdl ships an app bundle, built on the machine, around a linker-signed Mach-O | `distribution` |
 
 ## Reading order
 

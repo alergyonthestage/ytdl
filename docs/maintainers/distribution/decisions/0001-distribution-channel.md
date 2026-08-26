@@ -1,12 +1,17 @@
 # ADR-0001 — Distribute via a curl-based installer script
 
-- **Status:** accepted (support floor superseded in part)
+- **Status:** accepted (support floor, and the `.app` rejection, superseded in part)
 - **Date:** 2026-07-21
 - **Context:** [distribution.md](../design/distribution.md)
 - **Superseded in part:** the macOS support **floor** (10.13 → **10.15**) is
   superseded by [ADR-0005](../../foundation/decisions/0005-macos-floor-and-single-engine.md), which drops the
   legacy Python path. The distribution *channel* decided here (curl installer,
   install into `~/.local/bin`, mandatory checksum verification) stands unchanged.
+- **Superseded in part:** the rejection of **`.app` bundles** is superseded by
+  [ADR-0018](0018-desktop-launcher-app-bundle.md) for a bundle **generated on the
+  machine**, which was measured on real hardware to carry no quarantine attribute.
+  The rejection stands for a **downloaded** bundle, which is the case reasoned about
+  below, and `.pkg`/`.dmg` are not reopened at all.
 
 ## Context
 
@@ -51,6 +56,13 @@ explicit explanation.
   worst real friction: Gatekeeper blocks them, and the workaround is a multi-step
   detour through System Settings that this audience will not complete unaided.
   Revisit only alongside a paid Developer ID, most plausibly for the GUI.
+
+  > **Superseded in part by [ADR-0018](0018-desktop-launcher-app-bundle.md)
+  > (2026-08-26):** this reasoning holds for a bundle that is *downloaded* — which
+  > is what "distribute as" meant here. A bundle **generated on the user's machine
+  > by the installer** never acquires `com.apple.quarantine`, so Gatekeeper never
+  > assesses it and no Developer ID is needed. Measured on hardware, not assumed.
+  > `.pkg` and `.dmg` are unaffected: both are downloaded by construction.
 - **Third-party legacy binaries** (`alex-free/yt-dlp-macos-legacy`) — rejected as
   default. Solves Mojave in one step, but means asking non-technical users to run
   an unverifiable 43 MB binary from a one-month-old repository with 1 star and no
