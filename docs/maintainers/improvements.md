@@ -27,6 +27,16 @@ have to do — is in the review that found it; that is the link.
 | `V25` | One `go test -race ./...` leaves **91 GB** in `/tmp` and runs 4 m 26 s. This is what took the container down once | [review 004](distribution/reviews/004-cycle6plus-gate-c.md#V25) |
 | `V28` | An installation that installs nothing still costs **45 seconds** | [review 004](distribution/reviews/004-cycle6plus-gate-c.md#V28) |
 
+**`V25` — re-measured 2026-08-26, unchanged.** Verifying this branch reproduced it:
+4 m 23 s and **1657** `/tmp/_MEI*` directories, 77 GB. Nothing new — the mechanism
+and the remedy are already established in
+[review 004](distribution/reviews/004-cycle6plus-gate-c.md#V25): yt-dlp is a
+PyInstaller bundle that removes its own `/tmp/_MEI…` **on exit**, and cannot when
+the test kills it first, so the fix is to make the version-probe budget injectable
+rather than to shrink the tests. Recorded here only because it is still true one
+release later. Until it is fixed, `rm -rf /tmp/_MEI*` after a suite run reclaims all
+of it.
+
 ## The seven minors of the fix session
 
 Recorded rather than fixed by the maintainer's scoping decision of 2026-08-18. None
