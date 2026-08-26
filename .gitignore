@@ -4,6 +4,11 @@
 # compiled binary (built locally; releases ship it as a CI artifact)
 /ytdl
 
-# Scratchpad
-tmp
+# Development build output (hack/ytdl-dev.sh writes tmp/dev/). Machine-local.
 tmp/
+
+# Scratchpad - the human's own working files. The directory is ignored, but its
+# README is committed: ignoring it wholesale would make the convention invisible
+# in a clean clone, where the directory does not exist at all.
+scratchpad/*
+!scratchpad/README.md
