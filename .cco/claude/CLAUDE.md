@@ -22,7 +22,7 @@ by audience).
 
 `cmd/ytdl` is a thin entry point over `internal/`: `core` (the argv builder — the
 crown jewel), `config`, `run`, `queue` + `daemon`, `logstore`, `webui`, `jobs`,
-`open`, `notify`, `term`, `cli`. See
+`update`, `open`, `notify`, `term`, `cli`, `buildinfo`. See
 [go-engine.md](../../docs/maintainers/engine/design/go-engine.md) for the as-built
 layout and the dependency direction.
 
@@ -46,7 +46,8 @@ The tree follows the `core-dev-framework` taxonomy: **audience → domain → ty
 
 ```bash
 go build ./...
-go test -race ./...                                  # whole suite, ~12 s
+go test -race ./...                                  # whole suite, ~2-5 min (load-dependent)
+rm -rf /tmp/_MEI*                                    # ALWAYS after the suite — V25, it has taken the disk down 3x
 go vet ./... && gofmt -l .                           # gofmt output must be EMPTY
 git diff main -- internal/core/ internal/daemon/     # must stay EMPTY — the parity gate
 go test ./internal/core -update                      # regenerate goldens (needs the Bash ytdl)
