@@ -4,10 +4,10 @@
 **Purpose:** Deterministically capture Bash ytdl's yt-dlp argument vectors as golden references, then validate Go port against them  
 **Target:** Session 3, Cycle 1
 
-> **Superseded by [design-cycle1-core.md](design-cycle1-core.md) (Gate B, 2026-07-22)**
+> **Superseded by [design-cycle1-core.md](../design/cycle1-core.md) (Gate B, 2026-07-22)**
 > on two points: the **package layout** (§7/§8/§11 here sketch `package main` +
 > `cmd/ytdl/testdata`; the design mandates a reusable `internal/` core with goldens in
-> `internal/core/testdata/` — see [ADR-0004](decisions/0004-go-engine-package-layout.md)),
+> `internal/core/testdata/` — see [ADR-0004](../decisions/0004-go-engine-package-layout.md)),
 > and the **golden file format** (§2/§7 here use newline-delimited; the design uses
 > NUL-delimited with byte comparison, to represent the empty-string argument
 > unambiguously). The test **matrix** (§4) and the shim **capture** approach stand.

@@ -2,7 +2,7 @@
 
 Status: **as-built**, describing `ytdl` at commit `46421ba` (273 lines, single Bash file).
 This document records what the script does today. Proposed changes live in
-[improvements.md](improvements.md) and [roadmap.md](roadmap.md).
+[improvements.md](../../improvements.md) and [roadmap.md](../../roadmap.md).
 
 ## Purpose
 
@@ -33,7 +33,7 @@ There is no config file, no library split, no test suite, no version string.
 | `bash` | the script itself | implicit (shebang) | — |
 
 Both checks assume Homebrew is present. That assumption does not hold for the
-target audience of the distribution work — see [distribution.md](distribution.md).
+target audience of the distribution work — see [distribution.md](../../distribution/design/distribution.md).
 
 **Bash compatibility:** verified free of Bash 4+ constructs (no `declare -A`,
 `mapfile`, `${var,,}`, `&>>`, `;;&`, globstar). It therefore runs on the Bash 3.2

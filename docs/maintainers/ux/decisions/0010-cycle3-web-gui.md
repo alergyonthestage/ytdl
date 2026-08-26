@@ -2,13 +2,13 @@
 
 - **Status:** accepted
 - **Date:** 2026-07-24
-- **Context:** [ADR-0003](0003-engine-language-go.md) (one engine, web UI served by
-  the Go daemon), [ADR-0007](0007-cycle2b-queue-daemon.md) (the on-demand queue
-  daemon), [ADR-0008](0008-daemon-lifecycle.md) (session-scoped daemon lifetime),
+- **Context:** [ADR-0003](../../foundation/decisions/0003-engine-language-go.md) (one engine, web UI served by
+  the Go daemon), [ADR-0007](../../engine/decisions/0007-cycle2b-queue-daemon.md) (the on-demand queue
+  daemon), [ADR-0008](../../engine/decisions/0008-daemon-lifecycle.md) (session-scoped daemon lifetime),
   [ADR-0009](0009-cycle2c-cli-ux.md) (the spool-vs-log-store state model the GUI
-  reuses), [roadmap.md](../roadmap.md) Phase 6 / improvement
-  [E2](../improvements.md).
-- **Refines:** [ADR-0008](0008-daemon-lifecycle.md) — implements its lifetime rule
+  reuses), [roadmap.md](../../roadmap.md) Phase 6 / improvement
+  [E2](../../improvements.md).
+- **Refines:** [ADR-0008](../../engine/decisions/0008-daemon-lifecycle.md) — implements its lifetime rule
   and keeps the single-binary shape (see Decision 1).
 
 ## Context

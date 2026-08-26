@@ -4,8 +4,8 @@ The reference for the command-line surface of `ytdl`: the design principles, the
 command → action map, output conventions, the live-vs-history state model, and the
 rationale behind each UX choice. It is a **maintainer** document — for how the CLI
 is *built and extended*, not an end-user guide (that is
-[guida-uso.md](guida-uso.md), in Italian). Written against the Cycle 2C design
-([ADR-0009](decisions/0009-cycle2c-cli-ux.md)); update it when the surface changes.
+[guida-uso.md](../../../users/guides/guida-uso.md), in Italian). Written against the Cycle 2C design
+([ADR-0009](../decisions/0009-cycle2c-cli-ux.md)); update it when the surface changes.
 
 > **Interface language.** User-facing CLI strings are **Italian** (the audience);
 > code, identifiers and this document are English. Keep new messages Italian and in
@@ -23,7 +23,7 @@ is *built and extended*, not an end-user guide (that is
 - **P3 — Daemon-lifecycle-agnostic.** The CLI reads **live** work from the spool and
   **history** from the log store; daemon liveness is *informational*, never treated
   as an error. This stays correct whether the daemon is on-demand (today),
-  session-scoped, or a future start-on-work agent ([ADR-0008](decisions/0008-daemon-lifecycle.md)).
+  session-scoped, or a future start-on-work agent ([ADR-0008](../../engine/decisions/0008-daemon-lifecycle.md)).
 - **P4 — Non-invasive terminal output.** Live views update **in place** (region
   redraw), never clear the whole screen or pollute scrollback. Anything that emits
   ANSI first checks it is writing to a TTY.
@@ -35,7 +35,7 @@ is *built and extended*, not an end-user guide (that is
 - **P7 — Consistent vocabulary.** The same glyph always means the same thing (§3.1).
 - **P8 — Standard library only.** No third-party CLI/TTY/colour dependency; `isatty`
   is `os.ModeCharDevice`. Keeps the single-static-binary distribution intact
-  ([ADR-0003](decisions/0003-engine-language-go.md)).
+  ([ADR-0003](../../foundation/decisions/0003-engine-language-go.md)).
 
 ## 2. Command → action map
 
@@ -299,9 +299,9 @@ When adding a command or flag:
 
 ## 8. Updates on the CLI (Cycle 6-plus)
 
-Rulings: [ADR-0016](decisions/0016-cycle6plus-update-path.md). Design:
-[design-cycle6plus-update.md](design-cycle6plus-update.md). What the GUI does with
-the same facts is in [guida-uso.md](guida-uso.md) § *Aggiornamenti*.
+Rulings: [ADR-0016](../../distribution/decisions/0016-cycle6plus-update-path.md). Design:
+[design-cycle6plus-update.md](../../distribution/design/cycle6plus-update.md). What the GUI does with
+the same facts is in [guida-uso.md](../../../users/guides/guida-uso.md) § *Aggiornamenti*.
 
 The CLI has **one axis**: *is there a newer ytdl for me?* Whatever moved — the
 ytdl binary, the pinned yt-dlp, or both — the answer is one verdict with one

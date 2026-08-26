@@ -2,9 +2,9 @@
 
 - **Status:** accepted
 - **Date:** 2026-07-22
-- **Context:** [ADR-0003](0003-engine-language-go.md), [design-cycle1-core.md](../design-cycle1-core.md),
-  [roadmap.md](../roadmap.md) (Cycle 1)
-- **Refines:** [ADR-0003](0003-engine-language-go.md) — it settled the language (Go)
+- **Context:** [ADR-0003](../../foundation/decisions/0003-engine-language-go.md), [design-cycle1-core.md](../design/cycle1-core.md),
+  [roadmap.md](../../roadmap.md) (Cycle 1)
+- **Refines:** [ADR-0003](../../foundation/decisions/0003-engine-language-go.md) — it settled the language (Go)
   and the "one engine, two front-ends" shape; this ADR settles how the Go code is
   physically organised so that shape actually holds.
 

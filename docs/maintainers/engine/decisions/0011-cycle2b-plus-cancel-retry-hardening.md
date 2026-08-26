@@ -2,11 +2,11 @@
 
 - **Status:** accepted
 - **Date:** 2026-07-24
-- **Context:** [roadmap.md](../roadmap.md) (Phase 4 item 4.7 tail; Phase 5 hardening),
+- **Context:** [roadmap.md](../../roadmap.md) (Phase 4 item 4.7 tail; Phase 5 hardening),
   [ADR-0007](0007-cycle2b-queue-daemon.md) (the spool + on-demand daemon this cycle
   completes; the seams/deferrals it named), [ADR-0008](0008-daemon-lifecycle.md)
   (the session-scoped daemon lifetime this must not break),
-  [ADR-0010](0010-cycle3-web-gui.md) (the GUI, which stays read-only this cycle)
+  [ADR-0010](../../ux/decisions/0010-cycle3-web-gui.md) (the GUI, which stays read-only this cycle)
 - **Scope:** Cycle 2B-plus — the queue-completion + first-hardening slice. Delivers
   `cancel`/`retry`, a per-job execution timeout, a daemon diagnostics seam, and a
   "no residue in the destination" guarantee. **Deferred to a dedicated Phase-5

@@ -3,13 +3,13 @@
 - **Status:** approved at gate B (2026-07-27) — implementation may start
 - **Date:** 2026-07-27
 - **Scope:** roadmap "GUI multi-page + broader UX overhaul (CLI + GUI)"
-  ([roadmap.md](roadmap.md)), brought forward ahead of the Phase-5 hardening cycle
+  ([roadmap.md](../../roadmap.md)), brought forward ahead of the Phase-5 hardening cycle
   and the 6a AppleScript MVP by maintainer decision.
-- **Decisions:** [ADR-0013](decisions/0013-cycle5-unified-ux.md).
-- **Builds on:** [ADR-0009](decisions/0009-cycle2c-cli-ux.md) (command roles,
-  spool-vs-log-store state model), [ADR-0010](decisions/0010-cycle3-web-gui.md)
-  (single binary, SSE, local-API security), [ADR-0011](decisions/0011-cycle2b-plus-cancel-retry-hardening.md)
-  (cancel/retry mechanics), [ADR-0012](decisions/0012-cycle4-cli-ux-title-disambiguation.md)
+- **Decisions:** [ADR-0013](../decisions/0013-cycle5-unified-ux.md).
+- **Builds on:** [ADR-0009](../decisions/0009-cycle2c-cli-ux.md) (command roles,
+  spool-vs-log-store state model), [ADR-0010](../decisions/0010-cycle3-web-gui.md)
+  (single binary, SSE, local-API security), [ADR-0011](../../engine/decisions/0011-cycle2b-plus-cancel-retry-hardening.md)
+  (cancel/retry mechanics), [ADR-0012](../decisions/0012-cycle4-cli-ux-title-disambiguation.md)
   (job titles, display-width clipping).
 
 ## 1. Goals and non-goals
@@ -158,10 +158,10 @@ behaviour.
 
 ### 5.1 Why it must change
 
-`logstore.Entry` ([internal/logstore/history.go](../internal/logstore/history.go))
+`logstore.Entry` ([internal/logstore/history.go](../../../../internal/logstore/history.go))
 records `{time, url, title, mode, format, rc, success}`. The saved file's path is
 known at run time (`readSavedPaths` in
-[internal/run/runner.go](../internal/run/runner.go) returns the first path and the
+[internal/run/runner.go](../../../../internal/run/runner.go) returns the first path and the
 count) but is discarded. Without it, T3, T5-open and T6 are unimplementable. The
 record is extended **once**, covering every action this cycle introduces, rather
 than growing a field per feature.
@@ -209,7 +209,7 @@ func (e Entry) ID() string // Hash(e.Time.Format(time.RFC3339Nano) + "|" + e.URL
 func (e Entry) LogName() string // "<time>-<hash(normalised url)>-<ok|fail>.log"
 ```
 
-`Record` ([internal/logstore/logstore.go](../internal/logstore/logstore.go)) already
+`Record` ([internal/logstore/logstore.go](../../../../internal/logstore/logstore.go)) already
 composes exactly that name from the same `Job`, so the history record can point at
 its own failure log with no new field. A missing file (pruned, or never written)
 simply disables the "vedi errore" action.

@@ -7,15 +7,15 @@
   Cycle 8's destination presets retire the middle scope before either is built.
   The analysis also read the code behind every finding it touches, and three of
   the rulings below exist because of what it found there.
-- **Amends:** [ux-principles.md](../ux-principles.md) §3 (one vocabulary row) and
+- **Amends:** [ux-principles.md](../design/ux-principles.md) §3 (one vocabulary row) and
   §8 (the middle scope's name and lifetime), both established by
   [ADR-0014](0014-ux-scope-model-and-partial-outcome.md).
 - **Builds on:** [ADR-0014](0014-ux-scope-model-and-partial-outcome.md)
   (decision 1: a per-download choice is one-shot, a durable one is promoted),
   [ADR-0013](0013-cycle5-unified-ux.md) (the extended history record and its
-  derived identity), [ADR-0011](0011-cycle2b-plus-cancel-retry-hardening.md)
+  derived identity), [ADR-0011](../../engine/decisions/0011-cycle2b-plus-cancel-retry-hardening.md)
   (`cancel`/`retry` and the spool's terminal states),
-  [ADR-0008](0008-daemon-lifecycle.md) (the daemon is session-scoped and
+  [ADR-0008](../../engine/decisions/0008-daemon-lifecycle.md) (the daemon is session-scoped and
   idle-exits).
 - **Constrains:** Cycle 8 (destination presets) and the deferred Phase-5
   hardening cycle (automatic retry with backoff).

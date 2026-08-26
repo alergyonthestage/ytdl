@@ -18,10 +18,10 @@ Each of the four the second pass handed over:
 
 | Obligation | Where it landed |
 |---|---|
-| ADR-0008's lifetime rule is a three-way union | [ADR-0008](decisions/0008-daemon-lifecycle.md) — the rule restated, the mermaid given the third branch and the dotted exit edge, and a "Cycle 6-plus" section separating the **keep-alive** clause from the **exit** cause, which are easy to confuse |
-| design §7.3 says the opposite of the code | [design-cycle6plus-update.md](design-cycle6plus-update.md) §7.3 — the row corrected to `abandoned`, with what it used to say and why it was wrong kept in place rather than erased |
-| the GUI-only asymmetry is recorded nowhere | [ADR-0016](decisions/0016-cycle6plus-update-path.md) §16.4, and registered as a table in [ux-principles.md](ux-principles.md) §7 so the rule carries its own register |
-| `StateAbandoned` / `StaleAfter` are undocumented public API | [go-engine.md](go-engine.md) — a full `internal/update` entry; `CHANGELOG.md` gained the `[Unreleased]` section it did not have at all |
+| ADR-0008's lifetime rule is a three-way union | [ADR-0008](../../engine/decisions/0008-daemon-lifecycle.md) — the rule restated, the mermaid given the third branch and the dotted exit edge, and a "Cycle 6-plus" section separating the **keep-alive** clause from the **exit** cause, which are easy to confuse |
+| design §7.3 says the opposite of the code | [design-cycle6plus-update.md](../design/cycle6plus-update.md) §7.3 — the row corrected to `abandoned`, with what it used to say and why it was wrong kept in place rather than erased |
+| the GUI-only asymmetry is recorded nowhere | [ADR-0016](../decisions/0016-cycle6plus-update-path.md) §16.4, and registered as a table in [ux-principles.md](../../ux/design/ux-principles.md) §7 so the rule carries its own register |
+| `StateAbandoned` / `StaleAfter` are undocumented public API | [go-engine.md](../../engine/design/go-engine.md) — a full `internal/update` entry; `CHANGELOG.md` gained the `[Unreleased]` section it did not have at all |
 
 The four decisions ratified on 2026-08-18 are now **ADR-0016 §16**. §16.1 is
 stated as the code implements it rather than as the handoff summarised it: the
@@ -64,4 +64,4 @@ made the claim, so nothing normative needs amending.
 - **It did not verify anything by hand.** The by-hand pass was the maintainer's,
   and it ran over four sittings — its checklist was a transient document, deleted
   at the cycle's close; its outcome is
-  [§ Gate C — esito](#cycle6plus-gatec-esito).
+  [§ Gate C — esito](004-cycle6plus-gate-c.md#cycle6plus-gatec-esito).

@@ -7,7 +7,7 @@ fails with actionable messages.
 All version and URL claims below were verified against upstream sources on
 **2026-07-21**. Claims that could not be verified are marked *unverified*.
 
-> **Floor raised to macOS 10.15 (2026-07-22, [ADR-0005](decisions/0005-macos-floor-and-single-engine.md)).**
+> **Floor raised to macOS 10.15 (2026-07-22, [ADR-0005](../../foundation/decisions/0005-macos-floor-and-single-engine.md)).**
 > Cycle 1 ships a Go engine that requires macOS 10.15+, so the project **drops the
 > legacy 10.13–10.14 path and Python entirely**. The Mojave/Python analysis below is
 > retained for rationale; the **current** support floor is **10.15 Catalina**, and the
@@ -31,18 +31,18 @@ those users is "upgrade macOS, or use a Python install".
 
 That second path still works, but the project **no longer takes it**: Cycle 1's Go
 engine requires macOS 10.15+, so the floor is raised to 10.15 and the Python path is
-dropped ([ADR-0005](decisions/0005-macos-floor-and-single-engine.md)). The analysis
+dropped ([ADR-0005](../../foundation/decisions/0005-macos-floor-and-single-engine.md)). The analysis
 of that path below is kept for the record.
 
 ## Support matrix
 
-The viable combinations, all from **official or signed sources** (post-[ADR-0005](decisions/0005-macos-floor-and-single-engine.md)):
+The viable combinations, all from **official or signed sources** (post-[ADR-0005](../../foundation/decisions/0005-macos-floor-and-single-engine.md)):
 
 | Target | yt-dlp | ffmpeg | Extra step |
 |---|---|---|---|
 | macOS 11+ Apple Silicon | `yt-dlp_macos` (universal) | martin-riedl `arm64` (signed + notarized) | — |
 | macOS 10.15+ Intel | `yt-dlp_macos` (universal) | martin-riedl `amd64` (signed + notarized) | — |
-| macOS 10.14 Mojave and older | not supported | — | floor raised to 10.15 ([ADR-0005](decisions/0005-macos-floor-and-single-engine.md)) |
+| macOS 10.14 Mojave and older | not supported | — | floor raised to 10.15 ([ADR-0005](../../foundation/decisions/0005-macos-floor-and-single-engine.md)) |
 
 At the 10.15 floor, `yt-dlp_macos` (10.15+) and martin-riedl's signed arm64/amd64
 builds cover **every** supported target — no zipimport, no Python, no evermeet.
@@ -63,7 +63,7 @@ Two facts made the old-macOS row work out better than expected:
 </details>
 
 The realistic floor with official sources *was* macOS 10.13 High Sierra. Cycle 1's
-Go engine raises it to **macOS 10.15 Catalina** ([ADR-0005](decisions/0005-macos-floor-and-single-engine.md));
+Go engine raises it to **macOS 10.15 Catalina** ([ADR-0005](../../foundation/decisions/0005-macos-floor-and-single-engine.md));
 10.13–10.14 is no longer supported.
 
 ## Verified download endpoints
@@ -78,11 +78,11 @@ Each was checked with an HTTP request on 2026-07-21:
 | ffmpeg amd64 | `https://ffmpeg.martin-riedl.de/redirect/latest/macos/amd64/release/ffmpeg.zip` | 307 → asset |
 | ffmpeg Intel/legacy | `https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip` | 302 → asset |
 
-Post-[ADR-0005](decisions/0005-macos-floor-and-single-engine.md) the **yt-dlp
+Post-[ADR-0005](../../foundation/decisions/0005-macos-floor-and-single-engine.md) the **yt-dlp
 zipimport** and **evermeet** endpoints are no longer used (the legacy path is
 dropped); they are kept in the table as verified references. Cycle 1 adds our **own**
 release assets — `ytdl_macos_arm64`, `ytdl_macos_amd64` and a `SHA2-256SUMS` — fetched
-the same way (see [design-cycle1-remaining.md](design-cycle1-remaining.md)).
+the same way (see [design-cycle1-remaining.md](../../engine/design/cycle1-remaining.md)).
 
 The `releases/latest/download/…` form matters: it always resolves to the current
 release, so **no version is hardcoded** in the installer and updates need no
@@ -101,7 +101,7 @@ downloaded binary against it. This is not optional hygiene: the installer runs
 - Since Sequoia, the Control-click bypass is gone; unsigned apps need a trip
   through System Settings → Privacy & Security. `xattr -d com.apple.quarantine`
   still works. *(Sequoia/Tahoe specifics: unverified in detail — relevant only if
-  we later ship a `.app`, see [roadmap](roadmap.md) phase 4.)*
+  we later ship a `.app`, see [roadmap](../../roadmap.md) phase 4.)*
 - Signing/notarizing anything requires an Apple Developer ID at $99/year. Not
   needed for the shell-script channel; it becomes a real question only for the GUI.
 
@@ -136,7 +136,7 @@ verifiable checksums.
 
 ## Installer design
 
-Post-[ADR-0005](decisions/0005-macos-floor-and-single-engine.md), single path (no
+Post-[ADR-0005](../../foundation/decisions/0005-macos-floor-and-single-engine.md), single path (no
 Python branch); Cycle 1 (item 3.2) adds the `ytdl` binary fetch:
 
 ```mermaid

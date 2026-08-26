@@ -2,13 +2,13 @@
 
 - **Status:** accepted
 - **Date:** 2026-07-24
-- **Context:** [roadmap.md](../roadmap.md) (Cycle 4 — a second CLI UX pass),
-  [ADR-0007](0007-cycle2b-queue-daemon.md) (the spool + per-job settings snapshot
+- **Context:** [roadmap.md](../../roadmap.md) (Cycle 4 — a second CLI UX pass),
+  [ADR-0007](../../engine/decisions/0007-cycle2b-queue-daemon.md) (the spool + per-job settings snapshot
   this builds on), [ADR-0009](0009-cycle2c-cli-ux.md) (the first CLI UX pass and the
   `--watch` region redraw this must not break),
-  [ADR-0011](0011-cycle2b-plus-cancel-retry-hardening.md) (cancel/retry, whose lists
+  [ADR-0011](../../engine/decisions/0011-cycle2b-plus-cancel-retry-hardening.md) (cancel/retry, whose lists
   this cycle enriches). The Bash parity contract
-  ([go-port-parity-contract.md](../go-port-parity-contract.md)) still holds:
+  ([go-port-parity-contract.md](../../engine/design/go-port-parity-contract.md)) still holds:
   `core.BuildArgs` and every golden reference stay byte-for-byte identical.
 - **Scope:** Cycle 4 — a UX pass driven by two maintainer findings from real use.
   (1) A mistyped subcommand was forwarded to yt-dlp as a URL. (2) The queue / retry /

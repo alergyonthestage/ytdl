@@ -3,11 +3,11 @@
 Status: **as-built**. Written for Cycle 1 (Session 3, 2026-07-22); the package
 layout below is current as of Cycle 5's closing (2026-08-04). Describes the compiled Go
 `ytdl` that supersedes the Bash script at parity. The Bash tool's as-built design
-is in [architecture.md](architecture.md) (still the golden **reference**); the
+is in [architecture.md](../analysis/2026-07-21-code-bash-as-built.md) (still the golden **reference**); the
 exact behaviour this engine reproduces is [go-port-parity-contract.md](go-port-parity-contract.md).
-Decisions: [ADR-0003](decisions/0003-engine-language-go.md) (Go),
-[ADR-0004](decisions/0004-go-engine-package-layout.md) (layout),
-[ADR-0005](decisions/0005-macos-floor-and-single-engine.md) (10.15 floor).
+Decisions: [ADR-0003](../../foundation/decisions/0003-engine-language-go.md) (Go),
+[ADR-0004](../decisions/0004-go-engine-package-layout.md) (layout),
+[ADR-0005](../../foundation/decisions/0005-macos-floor-and-single-engine.md) (10.15 floor).
 
 ## One engine, thin front-ends
 
@@ -156,7 +156,7 @@ nothing in `jobs` imports `cli`, so there is no cycle.
   wrap: `DisplayWidth`, `Clip` (cut a title), `Pad` (align a column) and `Wrap`
   (never cut an instruction), plus TTY/`NO_COLOR` detection.
 - **`internal/update`** (near-leaf, Cycle 6-plus) — detection, caching and
-  application of an update ([ADR-0016](decisions/0016-cycle6plus-update-path.md)).
+  application of an update ([ADR-0016](../../distribution/decisions/0016-cycle6plus-update-path.md)).
   It imports **`internal/buildinfo` and the standard library, nothing else**: the
   state dir arrives as a parameter, never resolved here, which is what keeps it
   injectable into the daemon. Four concerns, one per file group:
@@ -239,7 +239,7 @@ Versioning starts at **2.0.0**.
 | C3 | a second positional URL is rejected, not silently dropped | `internal/cli` |
 | C5 | the failure-marker filename is sanitised beyond the Bash `tr '/:' '_'` | `internal/logstore` |
 | D1 | with `$HOME` unresolvable a **download** fails fast rather than writing to a CWD-relative dir; `-h`/`-V` stay permissive; an absolute `-o` is honoured | `cmd/ytdl/main.go` |
-| D2 | (Cycle 2A) the always-on title-derived `<title>.log` is **replaced** by the central log store (always) + an opt-out in-destination breadcrumb `"<title> — FALLITO.<hash8>.log"`; fixes the M2 title collision and keys auto-cleanup by hash. See [ADR-0006](decisions/0006-cycle2a-logs-breadcrumbs-notifications.md). | `internal/run`, `internal/logstore` |
+| D2 | (Cycle 2A) the always-on title-derived `<title>.log` is **replaced** by the central log store (always) + an opt-out in-destination breadcrumb `"<title> — FALLITO.<hash8>.log"`; fixes the M2 title collision and keys auto-cleanup by hash. See [ADR-0006](../decisions/0006-cycle2a-logs-breadcrumbs-notifications.md). | `internal/run`, `internal/logstore` |
 
 New capabilities beyond Bash (config-driven, off the golden path): the config file
 itself, the `embed_metadata`/`embed_thumbnail` toggles, and — Cycle 2A — the central

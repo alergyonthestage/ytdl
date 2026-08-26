@@ -760,7 +760,7 @@ di yt-dlp):
 
 È lo stesso costo di [`V25`](#V25) visto dall'altro lato: là riempie `/tmp` nella
 suite, qui sono 45 secondi davanti a cui **sta una persona non tecnica**, mentre
-[ADR-0016 §11](decisions/0016-cycle6plus-update-path.md) promette che
+[ADR-0016 §11](../decisions/0016-cycle6plus-update-path.md) promette che
 «l'aggiornamento comune dura secondi». Non è falso ciò che la GUI dice, quindi non
 è un difetto di onestà — è la promessa di progetto che non regge sul ferro vero.
 

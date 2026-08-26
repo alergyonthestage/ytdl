@@ -7,7 +7,7 @@
 > evolutions the maintainer asked for. It changed container, not content.
 
 Findings from the initial analysis of `ytdl`, plus the evolutions requested by
-the maintainer. Sequencing lives in [roadmap.md](roadmap.md).
+the maintainer. Sequencing lives in [roadmap.md](../../roadmap.md).
 
 Two registers live here: the **initial analysis** (findings `C*`, `U*`, `M*` and
 the requested evolutions `E*`) and the **Cycle 5 gate-C findings** (`G*`, from
@@ -17,7 +17,7 @@ analysis are numbered in the same sequence and collected in the last section.
 
 Status since the initial analysis: **E1 (distribution) is essentially done**
 (phase 1), and the engine will be rebuilt as a single Go binary — see
-[ADR-0003](decisions/0003-engine-language-go.md). That decision re-homes several
+[ADR-0003](../../foundation/decisions/0003-engine-language-go.md). That decision re-homes several
 findings below: the queue (U5), notifications (U6) and persistent logs (U7) are
 delivered by the Go engine, and the maintainability item M2 (one yt-dlp call site)
 is satisfied by the Go core rather than a Bash refactor.
@@ -92,7 +92,7 @@ because parallel connections invite YouTube throttling/429s and saturate bandwid
 and ffmpeg CPU (a resolved concurrency that is `unlimited` or well above the default
 draws an advisory warning).
 
-**Shipped in Cycle 2B-core** ([ADR-0007](decisions/0007-cycle2b-queue-daemon.md)):
+**Shipped in Cycle 2B-core** ([ADR-0007](../decisions/0007-cycle2b-queue-daemon.md)):
 the daemon is **on-demand** — the same `ytdl` binary self-exec'd into a hidden
 `__daemon` role, holding an exclusive `flock` (single instance), draining under the
 cap, and idle-exiting when the queue empties; there is no always-on service or
@@ -100,7 +100,7 @@ launchd agent (deferred to the GUI cycle). `ytdl -b` enqueues (superseding the o
 unbounded `Setsid` detach); `ytdl queue [--watch]` and `ytdl status` inspect the
 spool, and `ytdl queue` also restarts a stalled daemon.
 
-**Done in Cycle 2B-plus** ([ADR-0011](decisions/0011-cycle2b-plus-cancel-retry-hardening.md)):
+**Done in Cycle 2B-plus** ([ADR-0011](../decisions/0011-cycle2b-plus-cancel-retry-hardening.md)):
 `ytdl cancel`/`retry` (index or stable id-prefix, `--all`), a per-job execution
 timeout (`job_timeout`, default off), a daemon diagnostics log, and a "no residue in
 the destination" guarantee for failed/cancelled downloads. **Still deferred to a
@@ -128,7 +128,7 @@ across retries, the title is not); on success, compute `hash(url)` and delete th
 matching breadcrumb. Playlists: one breadcrumb per failed item, keyed by item id;
 the item's success removes its own.
 
-> **As built (Cycle 2A, [ADR-0006](decisions/0006-cycle2a-logs-breadcrumbs-notifications.md)):**
+> **As built (Cycle 2A, [ADR-0006](../decisions/0006-cycle2a-logs-breadcrumbs-notifications.md)):**
 > the breadcrumb ships **on by default** (opt-out `breadcrumb_on_failure=true`), not
 > off — auto-cleanup makes it self-limiting (the folder shows only *unresolved*
 > failures) and it is the CLI walk-away user's only in-place signal. Its name keeps a
@@ -146,7 +146,7 @@ provisions yt-dlp and ffmpeg into a user-writable location, works on older macOS
 (Mojave 10.14 is the stated floor), and fails with actionable messages — ideally
 falling back to older or alternative builds rather than erroring out.
 
-Design and constraints: [distribution.md](distribution.md).
+Design and constraints: [distribution.md](../../distribution/design/distribution.md).
 
 ### E2 — GUI for non-developer users (high value, last priority)
 
@@ -158,7 +158,7 @@ A GUI so users who do not know the Terminal can:
 - edit user settings from the GUI (not by hand-editing the config file),
 - launch **background** downloads and view the queue and in-progress jobs.
 
-Runtime is settled by [ADR-0003](decisions/0003-engine-language-go.md): a **web UI
+Runtime is settled by [ADR-0003](../../foundation/decisions/0003-engine-language-go.md): a **web UI
 served by the Go daemon** (`net/http` + SSE for live progress) — no extra runtime,
 no signing, no payment. Delivered in two stages (roadmap phase 6): an AppleScript
 MVP (paste/drop URL, pick folder, enqueue) for immediate zero-dependency value,

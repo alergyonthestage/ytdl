@@ -15,15 +15,15 @@
   to settle the probe, when it runs, consent, and where it lives — before any of
   it was built; plus the maintainer's ruling of 2026-08-13 that yt-dlp's version
   is ytdl's decision and never the user's.
-- **Amends:** [ADR-0008](0008-daemon-lifecycle.md) — the daemon gains a third
+- **Amends:** [ADR-0008](../../engine/decisions/0008-daemon-lifecycle.md) — the daemon gains a third
   exit cause (§9) and, from §16.1's review, a third **keep-alive** clause; that
   ADR states the amended lifetime rule.
-  [ADR-0005](0005-macos-floor-and-single-engine.md) — what the
+  [ADR-0005](../../foundation/decisions/0005-macos-floor-and-single-engine.md) — what the
   installer fetches is now declared by ytdl rather than by upstream's `latest`
   (§2), and the installer becomes idempotent (§11); it remains the single
   provisioning path.
-- **Builds on:** [ADR-0010](0010-cycle3-web-gui.md) (the local API, its session
-  token and its CSP), [ADR-0008](0008-daemon-lifecycle.md) (the daemon is
+- **Builds on:** [ADR-0010](../../ux/decisions/0010-cycle3-web-gui.md) (the local API, its session
+  token and its CSP), [ADR-0008](../../engine/decisions/0008-daemon-lifecycle.md) (the daemon is
   session-scoped and an open SSE connection keeps it alive), and the golden argv
   contract (`internal/core` is byte-frozen).
 - **Constrains:** Cycle 6-launch (the launcher starts the same daemon and inherits
@@ -226,7 +226,7 @@ before something breaks. A manual-only check serves only the user who already
 suspects.
 
 So the CLI reads the same cached verdict and prints **one line**, and
-[ux-principles.md](../ux-principles.md) §7's rule (a capability lands in both
+[ux-principles.md](../../ux/design/ux-principles.md) §7's rule (a capability lands in both
 channels) is satisfied rather than waived.
 
 ### 8. One axis, and a surface that never claims certainty it does not have
@@ -247,7 +247,7 @@ or behind a captive portal:
 
 A failed probe is **silent**: never an error dialog, never a red banner, never a
 line on stderr about a thing the user did not ask for. It is also never rounded
-up to "up to date" — that is [ux-principles.md](../ux-principles.md) §5 and the
+up to "up to date" — that is [ux-principles.md](../../ux/design/ux-principles.md) §5 and the
 whole reason Cycle 5's gate C existed.
 
 The installed versions are *local* facts and are always shown, in both channels,
@@ -289,7 +289,7 @@ Four properties make it work, and each is load-bearing:
   documents this scenario in its SSE reconnect comment. The handover therefore
   passes the token to the new process, and the outgoing daemon must **not** delete
   the token file it no longer owns.
-- **The daemon exits because it was asked to.** [ADR-0008](0008-daemon-lifecycle.md)'s
+- **The daemon exits because it was asked to.** [ADR-0008](../../engine/decisions/0008-daemon-lifecycle.md)'s
   lifetime rule — alive while the queue has work OR a GUI client is connected —
   would keep this daemon alive forever, since the tab watching the update *is* a
   connected client. This ADR adds a third exit cause: an **explicit user request**,
@@ -460,10 +460,10 @@ its own, recorded here so nobody reaches for a silent fallback instead.
 The implementation was reviewed twice — once against the design (`V1`–`V9`), then
 **the fix session itself** was reviewed and found nine more (`V10`–`V18`), four of
 them regressions the first pass had introduced. Both registers are in
-[improvements.md](../improvements.md#cycle6plus-review). Four rulings came out of
+[improvements.md](../reviews/001-cycle6plus-implementation.md#cycle6plus-review). Four rulings came out of
 that and were **ratified by the maintainer on 2026-08-18**; they are recorded here
 because each is a decision, not an implementation detail, and §7 of
-[ux-principles.md](../ux-principles.md) positively requires the fourth.
+[ux-principles.md](../../ux/design/ux-principles.md) positively requires the fourth.
 
 **16.1 An abandoned run is recognised by its PID, with the clock only as a
 backstop.** A record can say `running` while nothing is running it: the process
@@ -526,7 +526,7 @@ build. The maintainer's single action now **terminates** the degraded state
 instead of freezing it.
 
 **16.4 The `abandoned` state is GUI-only, and that is legitimate.** Required by
-[ux-principles.md](../ux-principles.md) §7: a capability lands in both channels,
+[ux-principles.md](../../ux/design/ux-principles.md) §7: a capability lands in both channels,
 or the cycle's ADR records the asymmetry and its reason. The reason here is that
 **the CLI has no run it could fail to follow**.
 

@@ -2,9 +2,9 @@
 
 - **Status:** accepted
 - **Date:** 2026-07-23
-- **Context:** [roadmap.md](../roadmap.md) (Phase 4, items 4.1–4.4), [improvements.md](../improvements.md)
-  (U6 notifications, U7 logs/breadcrumb), [go-engine.md](../go-engine.md) (extension points),
-  [ADR-0003](0003-engine-language-go.md) / [ADR-0004](0004-go-engine-package-layout.md)
+- **Context:** [roadmap.md](../../roadmap.md) (Phase 4, items 4.1–4.4), [improvements.md](../../improvements.md)
+  (U6 notifications, U7 logs/breadcrumb), [go-engine.md](../design/go-engine.md) (extension points),
+  [ADR-0003](../../foundation/decisions/0003-engine-language-go.md) / [ADR-0004](0004-go-engine-package-layout.md)
   (one core, thin front-ends; the golden parity gate)
 - **Scope:** Cycle 2A — the first slice of Phase 4 backend work. The queue +
   `ytdld` daemon (U5, items 4.5–4.7) is Cycle 2B and is **not** covered here.
@@ -141,7 +141,7 @@ flowchart TD
   `run` wiring.
 - **Behaviour change from the Bash tool.** The always-on `<title>.log` is
   replaced by the central store (always) + the opt-out breadcrumb. Documented as
-  a deliberate divergence in [go-engine.md](../go-engine.md).
+  a deliberate divergence in [go-engine.md](../design/go-engine.md).
 - **Seams for Cycle 2B.** The central store is the history the queue/`ytdld`
   daemon will read; the notification abstraction and breadcrumb keying carry over
   unchanged. `NormalizeURL`/`Hash` give the daemon a stable job identity.

@@ -2,14 +2,14 @@
 
 - **Status:** accepted
 - **Date:** 2026-07-23
-- **Context:** [roadmap.md](../roadmap.md) (Phase 4, Cycle 2C), [ADR-0006](0006-cycle2a-logs-breadcrumbs-notifications.md)
-  (log store + notifications), [ADR-0007](0007-cycle2b-queue-daemon.md) (queue +
-  on-demand daemon), [ADR-0008](0008-daemon-lifecycle.md) (daemon lifecycle → the
-  UX is lifecycle-agnostic), [improvements.md](../improvements.md) (U5 queue, U7 logs).
+- **Context:** [roadmap.md](../../roadmap.md) (Phase 4, Cycle 2C), [ADR-0006](../../engine/decisions/0006-cycle2a-logs-breadcrumbs-notifications.md)
+  (log store + notifications), [ADR-0007](../../engine/decisions/0007-cycle2b-queue-daemon.md) (queue +
+  on-demand daemon), [ADR-0008](../../engine/decisions/0008-daemon-lifecycle.md) (daemon lifecycle → the
+  UX is lifecycle-agnostic), [improvements.md](../../improvements.md) (U5 queue, U7 logs).
 - **Scope:** a UX polish of the CLI surface exposed by Cycle 2B-core. **Runtime/CLI
   layer only** — `internal/core` is untouched and the golden argv references stay
   byte-identical. The full principles + command→action map live in the maintainer
-  reference [cli-reference.md](../cli-reference.md).
+  reference [cli-reference.md](../design/cli-reference.md).
 
 ## Context
 

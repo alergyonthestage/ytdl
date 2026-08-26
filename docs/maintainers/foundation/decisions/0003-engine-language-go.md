@@ -2,9 +2,9 @@
 
 - **Status:** accepted
 - **Date:** 2026-07-22
-- **Context:** [improvements.md](../improvements.md) (U4, U5, E2), [roadmap.md](../roadmap.md)
+- **Context:** [improvements.md](../../improvements.md) (U4, U5, E2), [roadmap.md](../../roadmap.md)
 - **Supersedes:** nothing. Refines the runtime question left open by
-  [ADR-0001](0001-distribution-channel.md) and roadmap phase 4.
+  [ADR-0001](../../distribution/decisions/0001-distribution-channel.md) and roadmap phase 4.
 
 ## Context
 
@@ -21,7 +21,7 @@ Two hard constraints frame the choice, both inherited from the distribution work
 
 1. **Python is not universally present.** On macOS 10.15+ `yt-dlp` ships as a
    standalone binary with no interpreter; only the legacy 10.13–10.14 path
-   installs python.org Python 3.13 (see [ADR-0001](0001-distribution-channel.md)).
+   installs python.org Python 3.13 (see [ADR-0001](../../distribution/decisions/0001-distribution-channel.md)).
    Relying on Python for the engine would force it onto every user.
 2. **The shipping tool is Bash 3.2.** macOS ships Bash 3.2 — no `declare -A`, no
    `mapfile`. A bounded-concurrency queue and a local web server are both awkward
@@ -126,7 +126,7 @@ prompt and no signing. The only new cost is a CI cross-compile-and-checksum step
   strings), but it is the most valuable and most fragile part. The port is guarded
   by **golden tests** asserting that Go produces the *same* yt-dlp argument vector
   as the Bash reference, preserving the `xartist`/`xtrack` helper-field ordering
-  documented in [architecture.md](../architecture.md).
+  documented in [architecture.md](../../engine/analysis/2026-07-21-code-bash-as-built.md).
 - **A build step enters the release process** (CI cross-compile for macOS arm64 +
   Intel, checksum publication). The installer consumes the result exactly as it
   consumes yt-dlp/ffmpeg today.

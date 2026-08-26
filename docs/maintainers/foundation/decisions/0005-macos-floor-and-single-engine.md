@@ -2,9 +2,9 @@
 
 - **Status:** accepted
 - **Date:** 2026-07-22
-- **Context:** [ADR-0001](0001-distribution-channel.md), [ADR-0003](0003-engine-language-go.md),
-  [distribution.md](../distribution.md), [roadmap.md](../roadmap.md) (Cycle 1, items 3.1/3.2)
-- **Supersedes:** the **macOS support floor** of [ADR-0001](0001-distribution-channel.md)
+- **Context:** [ADR-0001](../../distribution/decisions/0001-distribution-channel.md), [ADR-0003](0003-engine-language-go.md),
+  [distribution.md](../../distribution/design/distribution.md), [roadmap.md](../../roadmap.md) (Cycle 1, items 3.1/3.2)
+- **Supersedes:** the **macOS support floor** of [ADR-0001](../../distribution/decisions/0001-distribution-channel.md)
   (10.13 High Sierra → **10.15 Catalina**). ADR-0001's distribution *channel*
   (curl-based installer, checksum verification) stands unchanged.
 
@@ -92,8 +92,8 @@ holding the main line hostage to it now. Estimated likelihood this is needed: lo
   Cycle 1, item 3.2.)
 - **Audience.** macOS 10.13–10.14 is dropped. A Mojave/High Sierra user must upgrade
   macOS, or use the unsupported Bash stop-gap from git history.
-- **Documentation.** ADR-0001's floor is superseded here; [distribution.md](../distribution.md)
-  and [roadmap.md](../roadmap.md) are revised for the 10.15 floor, and the Mojave
+- **Documentation.** ADR-0001's floor is superseded here; [distribution.md](../../distribution/design/distribution.md)
+  and [roadmap.md](../../roadmap.md) are revised for the 10.15 floor, and the Mojave
   "open question" is closed. [ADR-0003](0003-engine-language-go.md)'s note that "the
   legacy path still installs Python" no longer holds.
 - **User-facing guides** (`README.md`, `guida-installazione.md`) still describe the

@@ -3,7 +3,7 @@
 **Transient**, like the four before it: deleted when this cycle closes. Nothing is
 decided here. Everything normative is in
 [roadmap.md § Cycle 6-launch](roadmap.md#cycle-6-launch--the-desktop-launcher-f--after-the-update-path),
-the ADRs, and [ux-principles.md](ux-principles.md).
+the ADRs, and [ux-principles.md](ux/design/ux-principles.md).
 
 ## Where the project is
 
@@ -26,7 +26,7 @@ flowchart LR
 
 Gate C passed on 2026-08-23 after four by-hand sittings. Its outcome, including
 what was **not** run, is
-[improvements.md § Gate C — esito](improvements.md#cycle6plus-gatec-esito).
+[improvements.md § Gate C — esito](distribution/reviews/004-cycle6plus-gate-c.md#cycle6plus-gatec-esito).
 
 ## This cycle starts at ANALYSIS
 
@@ -91,7 +91,7 @@ Two facts worth having to hand, both verified:
   when nothing is (`cmd/ytdl/main.go`, `guiProbe`). The launcher's idempotence
   question is partly already answered by that path.
 - The documented uninstall today is three `rm -f` lines in
-  [guida-installazione.md](guida-installazione.md) § *Come disinstallare*. A
+  [guida-installazione.md](../users/guides/guida-installazione.md) § *Come disinstallare*. A
   launcher adds a fourth, and that file is user-facing Italian.
 
 ## Debts carried, and they are NOT this cycle
@@ -104,14 +104,14 @@ container down twice:
 
 | # | | |
 |---|---|---|
-| [`V23`](improvements.md#V23) | a `set -u` abort is still recorded as a **successful** run; the hardening that was applied is inert under bash 3.2 | a proven fix is written down |
-| [`V25`](improvements.md#V25) | one `go test -race ./...` leaves 1715 `/tmp/_MEI*` — **91 GB** — and takes 4 m 26 s | make `versionTimeout` injectable |
-| [`V28`](improvements.md#V28) | an install that installs nothing costs **45 s**: seven `yt-dlp --version` execs for one answer | same cause as `V25` |
+| [`V23`](distribution/reviews/004-cycle6plus-gate-c.md#V23) | a `set -u` abort is still recorded as a **successful** run; the hardening that was applied is inert under bash 3.2 | a proven fix is written down |
+| [`V25`](distribution/reviews/004-cycle6plus-gate-c.md#V25) | one `go test -race ./...` leaves 1715 `/tmp/_MEI*` — **91 GB** — and takes 4 m 26 s | make `versionTimeout` injectable |
+| [`V28`](distribution/reviews/004-cycle6plus-gate-c.md#V28) | an install that installs nothing costs **45 s**: seven `yt-dlp --version` execs for one answer | same cause as `V25` |
 
 **Cycle 10, as one decision rather than three** — the page treats an update in
 flight as the state of a *panel* when it is the state of the *document*:
-[`V26`](improvements.md#V26) · [`V27`](improvements.md#V27) ·
-[`V29`](improvements.md#V29), plus [`V22`](improvements.md#cycle6plus-gatec).
+[`V26`](distribution/reviews/004-cycle6plus-gate-c.md#V26) · [`V27`](distribution/reviews/004-cycle6plus-gate-c.md#V27) ·
+[`V29`](distribution/reviews/004-cycle6plus-gate-c.md#V29), plus [`V22`](distribution/reviews/004-cycle6plus-gate-c.md#cycle6plus-gatec).
 
 > **`V27` is a normative debt, not a preference.** With an unattested ffmpeg the
 > page prints the tool twice, the first time as «versione non registrata» while
@@ -148,4 +148,4 @@ absence of failure.
   touches it — merges happen on the Mac.
 - After any full suite run: `find /tmp -maxdepth 1 -name '_MEI*' -type d -print0 | xargs -0 -r rm -rf`
 - The container **can** build bash 3.2 in two minutes; recipe and its honest limit
-  in [improvements.md § bash 3.2](improvements.md#bash32).
+  in [improvements.md § bash 3.2](distribution/reviews/004-cycle6plus-gate-c.md#bash32).

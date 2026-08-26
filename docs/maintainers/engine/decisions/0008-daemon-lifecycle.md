@@ -2,20 +2,20 @@
 
 - **Status:** accepted
 - **Date:** 2026-07-23
-- **Context:** [ADR-0003](0003-engine-language-go.md) (one engine; `ytdld` owns the
+- **Context:** [ADR-0003](../../foundation/decisions/0003-engine-language-go.md) (one engine; `ytdld` owns the
   queue *and* serves the GUI), [ADR-0007](0007-cycle2b-queue-daemon.md) (the
   on-demand daemon shipped in Cycle 2B-core, whose always-on question was
-  explicitly deferred to Cycle 3), [roadmap.md](../roadmap.md) Phase 6 (GUI)
+  explicitly deferred to Cycle 3), [roadmap.md](../../roadmap.md) Phase 6 (GUI)
 - **Refines:** [ADR-0007](0007-cycle2b-queue-daemon.md) — resolves its deferred
   "always-on daemon? revisit in Cycle 3" question.
 - **Amended:** 2026-08-04, Cycle 5's closing (gate-C finding
-  [G10](../improvements.md#gate-c)) — the close warning this ADR prescribes is
+  [G10](../../ux/reviews/001-cycle5-gate-c.md#gate-c)) — the close warning this ADR prescribes is
   reworded below. The decision is unchanged; the old wording implied that closing
   the GUI cancelled the queue, which is the opposite of what this ADR decides.
 - **Amended again:** 2026-08-21, Cycle 6-plus's documentation phase — the
   lifetime rule below gains a **third keep-alive clause** (an installer this
   process launched is still running), alongside the third **exit** cause
-  [ADR-0016](0016-cycle6plus-update-path.md) §9 had already added. Both are
+  [ADR-0016](../../distribution/decisions/0016-cycle6plus-update-path.md) §9 had already added. Both are
   recorded in "Cycle 6-plus" below. The decision is unchanged: the daemon still
   lives only as long as it has a reason to — this names one more reason it can
   have.
@@ -87,7 +87,7 @@ installed. The default install remains plist-free.
 
 ## Cycle 6-plus — a third keep-alive clause, and a third exit cause
 
-Added 2026-08-21. [ADR-0016](0016-cycle6plus-update-path.md) gives the GUI the
+Added 2026-08-21. [ADR-0016](../../distribution/decisions/0016-cycle6plus-update-path.md) gives the GUI the
 ability to apply an update, and that touches this ADR's rule from **both** ends.
 The two are easy to confuse, so they are stated apart:
 

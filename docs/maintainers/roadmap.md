@@ -96,7 +96,7 @@ edge cases, retries/backoff, YouTube rate-limit handling, and a real test suite
 default off) that kills a hung download via a process-group teardown; a daemon
 diagnostics log surfacing the previously-invisible failures ADR-0007 flagged; and a
 "no residue in the destination" guarantee (intermediates routed to a scratch dir).
-See [ADR-0011](decisions/0011-cycle2b-plus-cancel-retry-hardening.md). **Still
+See [ADR-0011](engine/decisions/0011-cycle2b-plus-cancel-retry-hardening.md). **Still
 planned as a dedicated cycle:** automatic retries/backoff (`Attempts`/`NotBefore`)
 and YouTube rate-limit handling — the riskiest hardening, deliberately separated
 from the manual cancel/retry above.
@@ -106,7 +106,7 @@ from the manual cancel/retry above.
 A GUI for non-developer users. It is a **front-end over the Go engine** (config +
 queue + runner already built), not a reimplementation. Runtime is settled by
 ADR-0003: a web UI served by the Go daemon. Its **lifecycle** is settled by
-[ADR-0008](decisions/0008-daemon-lifecycle.md): the daemon is **long-lived but
+[ADR-0008](engine/decisions/0008-daemon-lifecycle.md): the daemon is **long-lived but
 session-scoped, not always-on** — it lives while a GUI client is connected OR the
 queue has work, and exits only when the GUI is closed AND the queue is drained
 (the CLI-only path is the no-GUI special case). No `launchd` always-on service is
@@ -116,8 +116,8 @@ installed by default.
 |---|---|---|---|
 | 6a | AppleScript/Automator MVP: paste/drop URL, pick folder, enqueue | split (2026-08-12) | its **entry point** — a double-clickable icon that brings up the GUI — is pulled out as **Cycle 6-launch** and runs next; the paste/drop-and-enqueue app stays planned, and may prove unnecessary once the GUI is one click away |
 | 6b | Web UI served by the daemon: live progress, format/settings, per-run/session/global output dir, settings editor, queue + in-progress view | done (Cycle 3) | `net/http` + SSE; single binary; authenticated local API |
-| 6c | Multi-view GUI (Download · Cronologia · Impostazioni), actionable queue and history, open/reveal the downloaded file | done (Cycle 5, shipped in v2.1.0) | designed with the CLI in one pass; [ADR-0013](decisions/0013-cycle5-unified-ux.md) |
-| 6d | GUI/CLI follow-through from the gate-C review: scope model, partial outcomes, destination presets, authentication, visual language | planned (Cycles 6–10) | [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md) · [findings](improvements.md#gate-c) |
+| 6c | Multi-view GUI (Download · Cronologia · Impostazioni), actionable queue and history, open/reveal the downloaded file | done (Cycle 5, shipped in v2.1.0) | designed with the CLI in one pass; [ADR-0013](ux/decisions/0013-cycle5-unified-ux.md) |
+| 6d | GUI/CLI follow-through from the gate-C review: scope model, partial outcomes, destination presets, authentication, visual language | planned (Cycles 6–10) | [ADR-0014](ux/decisions/0014-ux-scope-model-and-partial-outcome.md) · [findings](ux/reviews/001-cycle5-gate-c.md#gate-c) |
 
 **Cycle 3 (6b) — done, merged to `main` (2026-07-24), shipped in v2.1.0.** `ytdl gui`
 opens a self-contained embedded web page served by the same binary (a `__daemon
@@ -131,7 +131,7 @@ atomic). The queue is **read-only** by decision (`cancel`/`retry` stay Cycle
 stays headless. Adversarially reviewed (3 reviewers; the real findings —
 progress-on-stdout, a hub close-race that could kill the daemon, a CSRF→argv-
 injection path, and the port-before-lock ordering — all fixed and verified against
-real yt-dlp). See [ADR-0010](decisions/0010-cycle3-web-gui.md).
+real yt-dlp). See [ADR-0010](ux/decisions/0010-cycle3-web-gui.md).
 
 The settings editor writing the config file is safe precisely because the config
 is parsed with a whitelist, not `source`d (3.5).
@@ -150,7 +150,7 @@ second installer and dependency path, since the Go engine cross-compiles
   (browser-quarantined → one-time Privacy & Security override), a shell wrapper
   over the same installer. Not a priority.
 - **Python as a universal dependency** — evaluated and rejected
-  ([ADR-0003](decisions/0003-engine-language-go.md)): it would break the
+  ([ADR-0003](foundation/decisions/0003-engine-language-go.md)): it would break the
   non-interactive install for the majority to benefit only the GUI, which Go
   serves without a runtime dependency.
 
@@ -218,7 +218,7 @@ without a terminal and without the maintainer touching their machine again. So
 the update path and the desktop launcher are pulled **ahead** of Cycle 6, whose
 gate A is closed and which is ready to start on demand. The cycle *names* keep
 their suffixes — the numbers are pinned by the `G*` references in
-[improvements.md](improvements.md#gate-c), so renumbering would falsify them —
+[improvements.md](ux/reviews/001-cycle5-gate-c.md#gate-c), so renumbering would falsify them —
 and the running order is stated here rather than implied by the names.
 
 ```mermaid
@@ -239,12 +239,12 @@ implementation, because its findings carry no open questions.
 
 #### Cycle 6 — the scope model (`M`) — **analysis done, gate A closed (2026-08-12)**
 
-Implements [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md)
+Implements [ADR-0014](ux/decisions/0014-ux-scope-model-and-partial-outcome.md)
 decision 1 across the Download view, plus the three findings that live on the
 same controls.
 
 **Its analysis ran on 2026-08-12 and its rulings are
-[ADR-0015](decisions/0015-cycle6-tab-scope-and-faithful-reruns.md)** — read that
+[ADR-0015](ux/decisions/0015-cycle6-tab-scope-and-faithful-reruns.md)** — read that
 first: it answers the question below (presets do *not* retire the middle scope),
 renames that scope to **"in questa scheda"** and moves it into the page, rules
 G11 onto the history row, makes a re-run faithful to the original destination,
@@ -392,7 +392,7 @@ Implements ADR-0014 decision 2, plus the storage work it forces.
   not a convention), so a list needs a scheme — the leading candidate is a
   `preset_<name>` prefix rule with a validated name charset, which keeps one
   hand-editable, diffable document and lets `ytdl config` list them.
-- **Inherits from Cycle 6** ([ADR-0015](decisions/0015-cycle6-tab-scope-and-faithful-reruns.md) §1):
+- **Inherits from Cycle 6** ([ADR-0015](ux/decisions/0015-cycle6-tab-scope-and-faithful-reruns.md) §1):
   presets do **not** replace a scope. A preset is a *value*, a scope is a
   *duration*, and they compose — a preset can be used for one download, kept for
   the tab, or saved as the default. This cycle fills the affordance Cycle 6
@@ -419,12 +419,12 @@ Implements ADR-0014 decision 2, plus the storage work it forces.
 - **Plus the update surface, added 2026-08-23 by the maintainer at gate C.** The
   update path works end to end, and the way it is *presented* is the weakest part
   of it. Two things to take as input, not as settled requirements:
-  - [`V26`](improvements.md#V26) — while an install is running the *Conferma*
+  - [`V26`](distribution/reviews/004-cycle6plus-gate-c.md#V26) — while an install is running the *Conferma*
     button stays live in the versions block, and pressing it answers «un
     aggiornamento è già in corso». A control that cannot work is still offered,
     which `ux-principles.md` §5 forbids. **One line closes it** (the finding names
     it); it is deferred here because the third point subsumes it.
-  - [`V27`](improvements.md#V27) — **this one is normative, and its deferral is a
+  - [`V27`](distribution/reviews/004-cycle6plus-gate-c.md#V27) — **this one is normative, and its deferral is a
     debt rather than a preference.** With an unattested ffmpeg the page prints the
     tool twice, the first time as «versione non registrata», while the marker holds
     its build and the CLI prints it correctly. A surface stating something untrue
@@ -433,7 +433,7 @@ Implements ADR-0014 decision 2, plus the storage work it forces.
     must stop reusing the COMPARISON shape for DISPLAY — and because no
     installation is in that state today. Upstream is already at 9.0.1, so that will
     change. **Cycle 10 does not start without this item.**
-  - [`V29`](improvements.md#V29) — *Controlla ora* is never disabled during an
+  - [`V29`](distribution/reviews/004-cycle6plus-gate-c.md#V29) — *Controlla ora* is never disabled during an
     update, and its answer can put *Aggiorna* back on screen. Reproduce it before
     fixing: the finding separates what the code explains from what was observed.
   - **An update in flight probably deserves a surface of its own** — the
@@ -443,7 +443,7 @@ Implements ADR-0014 decision 2, plus the storage work it forces.
     That is a scope question (does the whole document go into an updating state?
     what happens to the queue?), not a styling one, so it is analysed here rather
     than patched now.
-  - Also carried in: [`V22`](improvements.md#cycle6plus-gatec) — immediately after
+  - Also carried in: [`V22`](distribution/reviews/004-cycle6plus-gate-c.md#cycle6plus-gatec) — immediately after
     an update the verdict reads «nessun controllo ancora eseguito», which is true
     and reads as a failure.
 - **Hard constraints:** no external assets — the CSP is `script-src 'self'` and
@@ -458,7 +458,7 @@ Implements ADR-0014 decision 2, plus the storage work it forces.
 - **Phase-5 hardening cycle** — automatic retries/backoff (`Attempts`/`NotBefore`)
   and YouTube rate-limit handling, plus the flaky
   `TestRunQueuedCancelKillsProcessGroup` timing. **Constrained by
-  [ADR-0015](decisions/0015-cycle6-tab-scope-and-faithful-reruns.md) §5:** manual
+  [ADR-0015](ux/decisions/0015-cycle6-tab-scope-and-faithful-reruns.md) §5:** manual
   and automatic retry are one feature with one state, not two features that meet
   on a row. A job awaiting an automatic attempt waits *in the queue* and says what
   for; its "Riprova" is disabled with the reason and the wait; pressing it means
@@ -481,7 +481,7 @@ Implements ADR-0014 decision 2, plus the storage work it forces.
 ## Known open questions
 
 - ~~Does the Python 3.13 install path actually work end-to-end on a real Mojave
-  machine?~~ **Closed by [ADR-0005](decisions/0005-macos-floor-and-single-engine.md):**
+  machine?~~ **Closed by [ADR-0005](foundation/decisions/0005-macos-floor-and-single-engine.md):**
   the floor is raised to macOS 10.15 and the Python/legacy path is dropped, so the
   question is moot.
 - Is ffmpeg strictly required for every format we advertise, or only for cover

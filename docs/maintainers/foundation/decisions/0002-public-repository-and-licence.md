@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-07-21
-- **Supersedes nothing; complements** [ADR-0001](0001-distribution-channel.md)
+- **Supersedes nothing; complements** [ADR-0001](../../distribution/decisions/0001-distribution-channel.md)
 
 ## Context
 
@@ -28,7 +28,7 @@ second place to keep in sync. It buys obscurity, not privacy.
 
 Publish `alergyonthestage/ytdl` as a **public repository**, and express the
 intended restriction through the **licence** rather than through visibility:
-[PolyForm Strict 1.0.0](../../LICENSE.md).
+[PolyForm Strict 1.0.0](../../../../LICENSE.md).
 
 The repository is not promoted anywhere. Discovery without a direct link is
 effectively nil.

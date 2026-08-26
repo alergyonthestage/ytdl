@@ -7,7 +7,7 @@ runner, package layout) and the config **seam**.
 **Out of scope (Session 2 design):** config file parsing + whitelist (3.5), full
 precedence with a real file (3.6), CI cross-compile (3.1), installer changes (3.2).
 **Inputs:** [go-port-parity-contract.md](go-port-parity-contract.md),
-[golden-test-design.md](golden-test-design.md), [ADR-0003](decisions/0003-engine-language-go.md).
+[golden-test-design.md](../analysis/2026-07-22-tech-choice-golden-tests.md), [ADR-0003](../../foundation/decisions/0003-engine-language-go.md).
 
 This design supersedes two sketches in the input docs: the package layout
 (`golden-test-design.md` §7/§11 put everything in `package main`) and the golden
@@ -26,7 +26,7 @@ that Go's argv equals the Bash reference argv when run with default settings.
 
 **Done when:** the Go `ytdl` reproduces the Bash tool's behaviour (golden tests
 green), and the shared core is structured so the future daemon (Phase 4) and web UI
-(Phase 6) import the same builder — "one engine, two front-ends" ([ADR-0003](decisions/0003-engine-language-go.md)).
+(Phase 6) import the same builder — "one engine, two front-ends" ([ADR-0003](../../foundation/decisions/0003-engine-language-go.md)).
 
 ## 2. Package layout (Gate B decision: Option B)
 
@@ -68,7 +68,7 @@ internal/run/runner.go            runtime behaviours the goldens don't cover
 tests/harness/capture-goldens.sh  Bash harness + fake yt-dlp/ffmpeg shims → writes testdata
 ```
 
-The decision is recorded as [ADR-0004](decisions/0004-go-engine-package-layout.md).
+The decision is recorded as [ADR-0004](../decisions/0004-go-engine-package-layout.md).
 
 ## 3. Core data structures
 
@@ -167,7 +167,7 @@ needing Bash goldens for them.
 - **Matrix (13 minimum → 20-25):** each mode × {mp3, flac, m4a} × {single, `-p`} ×
   {`-o` flag, `$YTDL_OUT_DIR`, default} + dry-run print. The silent/default
   `before_dl` divergence is a mandatory case. Full registry in
-  [golden-test-design.md](golden-test-design.md) §4.
+  [golden-test-design.md](../analysis/2026-07-22-tech-choice-golden-tests.md) §4.
 - **Environment:** this container lacks `go`, `yt-dlp`, `ffmpeg`, `bats`; the shim
   approach needs none of them, but Session 3 must provision the Go toolchain.
 

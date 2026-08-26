@@ -1,7 +1,7 @@
 # Design — Cycle 6-plus, the update path
 
 Design phase of Cycle 6-plus. It implements
-[ADR-0016](decisions/0016-cycle6plus-update-path.md) and changes none of its
+[ADR-0016](../decisions/0016-cycle6plus-update-path.md) and changes none of its
 rulings; where this document had to choose something the ADR left open, the
 choice is marked **(design choice)** and carries its reason.
 
@@ -11,7 +11,7 @@ update axis.
 
 **Built 2026-08-13.** Three things this document had wrong or left open were
 corrected while implementing it, and the corrections are rulings in their own
-right: they live in [ADR-0016 §14](decisions/0016-cycle6plus-update-path.md).
+right: they live in [ADR-0016 §14](../decisions/0016-cycle6plus-update-path.md).
 In short — ffmpeg's build id is **per architecture**, so §2's single
 `ffmpeg_build` became one key per arch (corrected below); the Go probe
 **tolerates** an unknown `deps.conf` key while `install.sh` still refuses one
@@ -19,7 +19,7 @@ In short — ffmpeg's build id is **per architecture**, so §2's single
 `core.BuildArgs`, without which §4 was simply not true for ffmpeg. Everything
 else in this document was built as written.
 
-Normative background: [ux-principles.md](ux-principles.md) §4 (an action that
+Normative background: [ux-principles.md](../../ux/design/ux-principles.md) §4 (an action that
 cannot work is disabled with a reason), §5 (a surface never states something
 untrue), §7 (a capability lands in both channels).
 

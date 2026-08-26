@@ -37,7 +37,7 @@ flowchart LR
 | 0.4 | Distribution constraints analysis + ADR-0001 | done |
 | 0.5 | This roadmap | done |
 
-Documentation lives in [docs/](README.md); user-facing install instructions are
+Documentation lives in [docs/](../README.md); user-facing install instructions are
 in the top-level [README](../README.md).
 
 <a id="phase-1"></a>
@@ -53,7 +53,7 @@ Status: **done.** With **v2.0.0 released (2026-07-23)** the compiled-binary path
 verified end to end on real hardware (Apple Silicon): one-liner install,
 checksum-verified binary, Gatekeeper launch, `ytdl --version`, and a real tagged
 download all confirmed. The legacy Intel/Python path was dropped by
-[ADR-0005](decisions/0005-macos-floor-and-single-engine.md).
+[ADR-0005](foundation/decisions/0005-macos-floor-and-single-engine.md).
 
 | # | Item | Status | Notes |
 |---|---|---|---|
@@ -69,9 +69,9 @@ download all confirmed. The legacy Intel/Python path was dropped by
 | 1.10 | Public GitHub repo, first release, documented one-liner | done | Published at `alergyonthestage/ytdl`; one-liner install confirmed working |
 | 1.11 | Real-hardware testing | done | Compiled-binary path verified end to end on Apple Silicon at v2.0.0 (below); legacy path dropped (ADR-0005) |
 | 1.12 | Licence (PolyForm Strict 1.0.0) | done | Use permitted, redistribution and derivatives are not |
-| 1.13 | Italian user guides (install + usage) | done | [installazione](guida-installazione.md), [uso](guida-uso.md) |
+| 1.13 | Italian user guides (install + usage) | done | [installazione](../users/guides/guida-installazione.md), [uso](../users/guides/guida-uso.md) |
 
-> **Superseded by [ADR-0005](decisions/0005-macos-floor-and-single-engine.md)
+> **Superseded by [ADR-0005](foundation/decisions/0005-macos-floor-and-single-engine.md)
 > (2026-07-22):** items 1.3 (zipimport per target), 1.5 (evermeet for legacy Intel),
 > 1.8 (Mojave Python path) and the legacy half of 1.11 are dropped — Cycle 1 raises
 > the floor to **macOS 10.15** and removes the Python/legacy path. They stay marked
@@ -99,7 +99,7 @@ cross-compile) were verified in the consolidation review that preceded the tag.
 
 **The legacy path is no longer a gap.** macOS 10.13–10.14 (Intel + python.org
 Python 3.13 + zipimport yt-dlp) was only ever checked on paper; rather than close
-that gap on old hardware, [ADR-0005](decisions/0005-macos-floor-and-single-engine.md)
+that gap on old hardware, [ADR-0005](foundation/decisions/0005-macos-floor-and-single-engine.md)
 **drops** the legacy path (the Go engine needs 10.15+). No old-Intel-Mac testing is
 required.
 
@@ -109,7 +109,7 @@ required.
 
 ## Phase 3 — Go engine foundations — `done`
 
-The pivot to the Go engine ([ADR-0003](decisions/0003-engine-language-go.md)).
+The pivot to the Go engine ([ADR-0003](foundation/decisions/0003-engine-language-go.md)).
 Establish the binary and reach parity with the Bash `ytdl`, so it can supersede it
 without regressions. This is "foundations" in the confirmed sequence.
 
@@ -125,12 +125,12 @@ without regressions. This is "foundations" in the confirmed sequence.
 **Implemented (Session 3, 2026-07-22)** on branch `feat/go-engine/cycle1`:
 `internal/{config,core,cli,run,buildinfo}` + `cmd/ytdl`, golden-tested for byte-exact
 argv parity against the Bash `ytdl`; CI (`.github/workflows/`) and the single-path
-installer per [ADR-0005](decisions/0005-macos-floor-and-single-engine.md). Designed in
-[design-cycle1-core.md](design-cycle1-core.md) + [design-cycle1-remaining.md](design-cycle1-remaining.md).
+installer per [ADR-0005](foundation/decisions/0005-macos-floor-and-single-engine.md). Designed in
+[design-cycle1-core.md](engine/design/cycle1-core.md) + [design-cycle1-remaining.md](engine/design/cycle1-remaining.md).
 **Released as v2.0.0 (2026-07-23)** after a consolidation review; `release.yml`
 cross-compiles and publishes the macOS binaries + `SHA2-256SUMS`.
 
-Useful config settings — the full list lives in [improvements.md](improvements.md#u4)
+Useful config settings — the full list lives in [improvements.md](engine/analysis/2026-07-21-code-initial-findings.md#u4)
 (output dir, format, name template, background-by-default, concurrency, notify,
 log dir/retention, embed options, …).
 
@@ -158,7 +158,7 @@ Cycle 2A (logs + notifications) and Cycle 2B (queue + daemon, in 2B-core then
 (central store + retention + breadcrumb + per-item playlist reconcile) and
 `internal/notify` (osascript / no-op), wired through `internal/run`; seven config
 keys added. `core.BuildArgs` and the goldens are byte-unchanged (parity preserved).
-Decisions in [ADR-0006](decisions/0006-cycle2a-logs-breadcrumbs-notifications.md).
+Decisions in [ADR-0006](engine/decisions/0006-cycle2a-logs-breadcrumbs-notifications.md).
 Shipped in v2.1.0.
 
 **Cycle 2B-core (done, merged to `main` 2026-07-23):** `internal/queue` (lock-free
@@ -171,7 +171,7 @@ jobs run in silent mode, inheriting the 2A store/breadcrumb/notify. `core.BuildA
 and the goldens are byte-unchanged (parity preserved). Adversarially reviewed (3
 reviewers; the real findings — per-job panic isolation, escaping a persistent-error
 daemon wedge, best-effort recovery, `queue`-resumes-a-stalled-daemon — fixed).
-Decisions in [ADR-0007](decisions/0007-cycle2b-queue-daemon.md). Shipped in v2.1.0.
+Decisions in [ADR-0007](engine/decisions/0007-cycle2b-queue-daemon.md). Shipped in v2.1.0.
 
 <a id="cycle-1"></a>
 
@@ -183,14 +183,14 @@ Decisions in [ADR-0007](decisions/0007-cycle2b-queue-daemon.md). Shipped in v2.1
 (2) remaining analysis + design, (3) implementation. **All three done.**
 
 - **Session 1 — core:** 3.3 + 3.4 + shared-core scaffolding + config seam. See
-  [design-cycle1-core.md](design-cycle1-core.md),
-  [ADR-0004](decisions/0004-go-engine-package-layout.md),
-  [parity contract](go-port-parity-contract.md),
-  [golden-test design](golden-test-design.md).
+  [design-cycle1-core.md](engine/design/cycle1-core.md),
+  [ADR-0004](engine/decisions/0004-go-engine-package-layout.md),
+  [parity contract](engine/design/go-port-parity-contract.md),
+  [golden-test design](engine/analysis/2026-07-22-tech-choice-golden-tests.md).
 - **Session 2 — remaining:** config file (3.5/3.6), CI (3.1), installer (3.2),
   plus the macOS floor raise. See
-  [design-cycle1-remaining.md](design-cycle1-remaining.md) and
-  [ADR-0005](decisions/0005-macos-floor-and-single-engine.md) (floor → 10.15, single
+  [design-cycle1-remaining.md](engine/design/cycle1-remaining.md) and
+  [ADR-0005](foundation/decisions/0005-macos-floor-and-single-engine.md) (floor → 10.15, single
   Go engine, Python removed).
 - **Session 3 — implementation:** the whole cycle built on branch
   `feat/go-engine/cycle1` (lead inline + adversarial review subagents). Delivered:
@@ -230,7 +230,7 @@ hash(URL) / item id with auto-cleanup; toggleable completion notifications
 `internal/notify` wired through `internal/run`, plus seven config keys — all off the
 golden argv path, so parity is preserved. Adversarially reviewed (one real bug —
 breadcrumb cleanup vs. glob metacharacters in the output folder — found and fixed);
-suite green under `-race`. See [ADR-0006](decisions/0006-cycle2a-logs-breadcrumbs-notifications.md).
+suite green under `-race`. See [ADR-0006](engine/decisions/0006-cycle2a-logs-breadcrumbs-notifications.md).
 Shipped in v2.1.0.
 
 **Cycle 2B-core — queue + on-demand daemon — done, merged to `main` (2026-07-23).**
@@ -243,7 +243,7 @@ role (no always-on service — deferred to the GUI cycle). Reuses the 2A primiti
 (the central store as job history; `NormalizeURL`/`Hash` as stable job identity;
 queued jobs run silent, inheriting store/breadcrumb/notify). Parity preserved
 (`core.BuildArgs`/goldens byte-unchanged). Adversarially reviewed (3 reviewers).
-See [ADR-0007](decisions/0007-cycle2b-queue-daemon.md). Shipped in v2.1.0.
+See [ADR-0007](engine/decisions/0007-cycle2b-queue-daemon.md). Shipped in v2.1.0.
 
 - **Entry:** Cycle 1 shipped as v2.0.0; Cycle 2A merged to `main`. Based off the
   latest `main`.
@@ -264,7 +264,7 @@ appended off the golden path; verified against real yt-dlp that an absolute `-o`
 ignores `--paths`, hence the relative-`-o` override). Adversarially reviewed (3
 reviewers; the real findings — a stale-marker delete, a raced-success mis-recorded
 as failed, retry/cancel exit codes and error surfacing — all fixed).
-[ADR-0011](decisions/0011-cycle2b-plus-cancel-retry-hardening.md). Shipped in v2.1.0.
+[ADR-0011](engine/decisions/0011-cycle2b-plus-cancel-retry-hardening.md). Shipped in v2.1.0.
 
 - **Entry:** Cycle 2B-core merged to `main`. Based off the latest `main`.
 - **Done:** failed jobs can be retried and pending/running jobs cancelled from the
@@ -279,7 +279,7 @@ feedback. Built as `internal/term` + the log-store `history.jsonl`/`Load` read-A
 + `queue.PruneTerminal`, with the `queue`/`status` redesign, the new `history`
 subcommand, and the in-place `--watch`; adversarially reviewed (3 reviewers; 1
 critical + 6 warnings, all real ones fixed). Parity preserved
-([ADR-0009](decisions/0009-cycle2c-cli-ux.md)). Shipped in v2.1.0. Scope delivered:
+([ADR-0009](ux/decisions/0009-cycle2c-cli-ux.md)). Shipped in v2.1.0. Scope delivered:
 (1) `queue --watch` redraws its region **in place** instead of clearing the whole
 screen (which wiped the terminal and spammed scrollback); (2) the completion count
 is redesigned — `queue` shows only **live** work (pending/running), `status` shows
@@ -290,7 +290,7 @@ downloads and already has timestamps + age retention), with the spool's
 are surfaced **legibly** rather than dumping raw yt-dlp output; (4) cross-cutting:
 distinct `queue`/`status`/`history` roles, TTY-aware restrained colour (off when
 piped), empty-state hints. Designed **daemon-lifecycle-agnostic**
-([ADR-0008](decisions/0008-daemon-lifecycle.md)) so it stays correct across the
+([ADR-0008](engine/decisions/0008-daemon-lifecycle.md)) so it stays correct across the
 Cycle 3 daemon.
 
 - **Entry:** Cycle 2B-core merged to `main`. Separate from 2B-plus; coordinate on
@@ -320,7 +320,7 @@ Cycle 3 daemon.
   `queue.Claim`). Standard library only; `internal/core` byte-unchanged.
 - **Security:** authenticated local API (per-session token + `Origin` +
   `application/json` + URL validation); the API is only opened by a GUI daemon.
-- **Decisions:** [ADR-0010](decisions/0010-cycle3-web-gui.md) (single binary, SSE
+- **Decisions:** [ADR-0010](ux/decisions/0010-cycle3-web-gui.md) (single binary, SSE
   progress from both streams, config write API, the local-API security model).
 - **Deferrals recorded in ADR-0010:** an editor `concurrency` change applies to the
   next GUI session; per-client ~1 Hz spool polling; `PUT /api/settings` is a
@@ -336,7 +336,7 @@ Phase 7 (Windows/Linux) stays deferred and is not a scheduled cycle.
 
 A second CLI UX pass driven by two maintainer findings from real use. Runtime/CLI
 layer only; **`internal/core` and `internal/daemon` are byte-unchanged** (parity
-held). [ADR-0012](decisions/0012-cycle4-cli-ux-title-disambiguation.md).
+held). [ADR-0012](ux/decisions/0012-cycle4-cli-ux-title-disambiguation.md).
 
 - **Scope delivered:** (1) a mistyped subcommand (`ytdl queu`) is no longer forwarded
   to yt-dlp as a URL — a bare word close to a known command gets a "did you mean"
@@ -392,9 +392,9 @@ channels in one pass so they stop diverging. Runtime/CLI/GUI layers only —
   an old one and open it, and change the settings that matter without meeting the
   advanced ones; the CLI does the same with the same words; suite green under
   `-race`; goldens byte-unchanged.
-- **Designed in:** [design-cycle5-ux.md](design-cycle5-ux.md) ·
-  [ADR-0013](decisions/0013-cycle5-unified-ux.md) ·
-  [ux-principles.md](ux-principles.md) (normative for later cycles).
+- **Designed in:** [design-cycle5-ux.md](ux/design/cycle5-ux.md) ·
+  [ADR-0013](ux/decisions/0013-cycle5-unified-ux.md) ·
+  [ux-principles.md](ux/design/ux-principles.md) (normative for later cycles).
 - **Built and reviewed (2026-07-27):** ten feature commits (one per design §14
   step) plus eight fixes from a three-reviewer adversarial pass (3 CRITICALs:
   an unvalidated URL on the new "riscarica" path, `open`/`again` acting on the
@@ -403,9 +403,9 @@ channels in one pass so they stop diverging. Runtime/CLI/GUI layers only —
   untouched.
 - **Gate C (2026-08-03): passed with findings.** The maintainer verified the GUI
   and the open/reveal actions on real hardware and returned twenty-six findings —
-  the register is [improvements.md § Gate-C findings](improvements.md#gate-c),
+  the register is [improvements.md § Gate-C findings](ux/reviews/001-cycle5-gate-c.md#gate-c),
   and the two decisions they forced are
-  [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md). The cycle does
+  [ADR-0014](ux/decisions/0014-ux-scope-model-and-partial-outcome.md). The cycle does
   **not** merge as-is: it closes on the `R` group below.
 
 <a id="cycle-5-closing"></a>
@@ -430,7 +430,7 @@ at the merge and the long-deferred release, both of which are still open.
   that exist today) · G9 (the reveal labels name the folder, not the Finder, in
   both channels) · G10 (the `beforeunload` wording stops implying that closing
   the tab cancels the queue).
-- **Rulings taken (2026-08-04, [ADR-0014](decisions/0014-ux-scope-model-and-partial-outcome.md)
+- **Rulings taken (2026-08-04, [ADR-0014](ux/decisions/0014-ux-scope-model-and-partial-outcome.md)
   §3–§4), so nothing here waits on a decision:** G9 is **in** — `ux-principles.md`
   §3 is already amended, the strings follow in `app.js` (+ the `spa_test.go`
   assertion), `cli/messages.go` and `cli/help.go`, while "Finder" stays in the
@@ -449,7 +449,7 @@ at the merge and the long-deferred release, both of which are still open.
   G7 · G6 · G1 · G5 · G3 · G4 · G2 · G8 — cheapest and most isolated first, so
   every commit is green on its own. What each one shipped, and the two judgement
   calls it took, are in
-  [improvements.md § R — delivered](improvements.md#gate-c).
+  [improvements.md § R — delivered](ux/reviews/001-cycle5-gate-c.md#gate-c).
 - **Reviewed (2026-08-04):** an adversarial pass on three lenses (the SPA, the Go
   layers, this document's contract), every finding re-verified before acting and
   every fix confirmed to fail with the fix reverted. **Seven further commits**:
@@ -465,12 +465,12 @@ at the merge and the long-deferred release, both of which are still open.
   `git diff main -- internal/core/ internal/daemon/` empty — the parity gate has
   now held for four cycles. The toolchain is baked into the project container
   image, so a session no longer spends its opening minutes provisioning Go (see
-  [go-engine.md](go-engine.md#build-test-release)).
+  [go-engine.md](engine/design/go-engine.md#build-test-release)).
 - **The release — done (2026-08-09), as v2.1.0.** The changelog's open
   `[Unreleased]` block turned out to hold six cycles and to be **missing Cycle 5
   entirely** (the closing's docs commits had touched roadmap, improvements,
   cli-reference and go-engine, never the changelog); it was written from
-  [improvements.md § R — delivered](improvements.md#gate-c) and closed as
+  [improvements.md § R — delivered](ux/reviews/001-cycle5-gate-c.md#gate-c) and closed as
   **2.1.0** — a minor, because everything since v2.0.0 is additive for valid input
   bar two recorded behaviour changes (`-b` enqueues; the failure `.log` became the
   log store). Then `main` pushed, tag pushed, workflow green, and the published
@@ -504,17 +504,17 @@ pre-release (A1b, run and passed on 2026-08-23). And this
 cycle is the **blocker** for that first install, not merely an improvement to
 it — which is the sharper reason it was pulled ahead. It keeps the name `-plus`
 rather than renumbered (the `2B-plus` precedent), because
-[improvements.md](improvements.md#gate-c) pins G19–G23 to Cycle 7, G24 to Cycle 8,
+[improvements.md](ux/reviews/001-cycle5-gate-c.md#gate-c) pins G19–G23 to Cycle 7, G24 to Cycle 8,
 G25 to Cycle 9 and the `S` group to Cycle 10 — taking a number here would falsify
 every one of those references.
 
-**Its rulings are [ADR-0016](decisions/0016-cycle6plus-update-path.md) and its
-design is [design-cycle6plus-update.md](design-cycle6plus-update.md)** — read
+**Its rulings are [ADR-0016](distribution/decisions/0016-cycle6plus-update-path.md) and its
+design is [design-cycle6plus-update.md](distribution/design/cycle6plus-update.md)** — read
 those first: they answer all four questions below. The design was **approved at
 gate B on 2026-08-13** and **built the same day**. It was then **reviewed twice**,
 and the session that documents it started from a gate-C handoff, since consumed —
 as was the closing handoff that followed it. What comes next is
-[Cycle 6-launch](#cycle-6-launch--the-desktop-launcher-f--after-the-update-path).
+[Cycle 6-launch](roadmap.md#cycle-6-launch--the-desktop-launcher-f--after-the-update-path).
 
 **Where it stands (2026-08-19).** All eleven implementation steps are done on
 `feat/update-path/implementation`, **not yet merged**, and **both review passes
@@ -526,7 +526,7 @@ a real bash 3.2 — and the parity gate
 
 **The documentation phase is done** (2026-08-21). The three normative documents
 that contradicted the code are realigned, the four ratified decisions are
-[ADR-0016](decisions/0016-cycle6plus-update-path.md) §16, and the user- and
+[ADR-0016](distribution/decisions/0016-cycle6plus-update-path.md) §16, and the user- and
 reference-facing documentation — which did not exist — is written: `guida-uso.md`
 § *Tenere ytdl aggiornato*, `guida-installazione.md`, `README.md`,
 `cli-reference.md` §8, `go-engine.md`, and the `[Unreleased]` changelog entry the
@@ -538,7 +538,7 @@ cosmetic, deliberately unfixed — the docs phase writes no code).
 maintainer asked for it explicitly — "i test passano, ma voglio verificare a mano"
 — and in two sittings it produced **four findings the suite could not reach, two
 of them blocking**, registered as
-[`V19`–`V22`](improvements.md#cycle6plus-gatec):
+[`V19`–`V22`](distribution/reviews/004-cycle6plus-gate-c.md#cycle6plus-gatec):
 
 - **`V20` (fixed, `8b80b66`)** — a *cold* `yt-dlp --version` takes 7.4 s on stock
   macOS against a 3-second budget. The surface then called a working tool
@@ -588,7 +588,7 @@ The by-hand pass also rewrote its own instructions three times: the checklist
 assumed the released `ytdl` on `$PATH` was under test, then that a rebuild
 replaces a running daemon, then that the handover could work with the binary
 somewhere other than the installer's target. Those corrections produced
-`hack/ytdl-dev.sh` and [dev-testing.md](dev-testing.md), a **permanent** sandbox
+`hack/ytdl-dev.sh` and [dev-testing.md](guides/dev-testing.md), a **permanent** sandbox
 for running dev builds — the one artefact of this phase that outlives the cycle.
 
 **Gate C passed on 2026-08-23**, after four by-hand sittings on real hardware.
@@ -597,7 +597,7 @@ real network, its idempotence, the withdrawn-build fallback **and** the boundary
 that must not fall back, the abandoned-run state, a run adopted in a second tab,
 and the acceptance test. The full outcome, including what was **not** run and what
 was **deferred with a reason**, is
-[improvements.md § Gate C — esito](improvements.md#cycle6plus-gatec-esito).
+[improvements.md § Gate C — esito](distribution/reviews/004-cycle6plus-gate-c.md#cycle6plus-gatec-esito).
 
 Three defects are deferred to **Cycle 10** as one decision rather than three
 (`V26` · `V27` · `V29`), and three to a **fix pass** (`V23` · `V25` · `V28`).
@@ -613,9 +613,9 @@ installation within a day.
 
 **Two review passes, eighteen findings, all fixed.** The first reviewed the
 implementation and found nine (`V1`–`V9`,
-[register](improvements.md#cycle6plus-review)); the second reviewed **the fix
+[register](distribution/reviews/001-cycle6plus-implementation.md#cycle6plus-review)); the second reviewed **the fix
 session itself** and found nine more (`V10`–`V18`,
-[register](improvements.md#cycle6plus-fixreview)). Every finding in both was
+[register](distribution/reviews/002-cycle6plus-fix-session.md#cycle6plus-fixreview)). Every finding in both was
 reproduced by execution, and every fix was run against the code *before* it to
 prove the test fails there.
 
@@ -658,7 +658,7 @@ to be outright **false**, and the config leaf in `go-engine.md` still claimed th
 9-key `Settings` of Cycle 1 (it has 20).
 
 Three things the implementation learned that the design could not have known, all
-carried back into [ADR-0016](decisions/0016-cycle6plus-update-path.md) §14:
+carried back into [ADR-0016](distribution/decisions/0016-cycle6plus-update-path.md) §14:
 
 - **ffmpeg's build id is per architecture** (`1785863997_9.0` on arm64,
   `1785871427_9.0` on amd64, for the same ffmpeg 9.0). A single `ffmpeg_build`,
@@ -684,7 +684,7 @@ installer is the single provisioning path — it fetches ytdl, yt-dlp and ffmpeg
 checksum-verifies **ytdl and yt-dlp only** (ffmpeg's upstream publishes no sums we
 consume — corrected 2026-08-12; the cycle closes the gap by pinning an immutable
 ffmpeg build and attesting its sha256,
-[ADR-0016](decisions/0016-cycle6plus-update-path.md) §12), and already handles
+[ADR-0016](distribution/decisions/0016-cycle6plus-update-path.md) §12), and already handles
 replacing a *running* binary (atomic `mv`; the live process keeps its inode,
 `install.sh:253`). Applying an update is not the gap. The gap is:
 
@@ -701,7 +701,7 @@ replacing a *running* binary (atomic `mv`; the live process keeps its inode,
   on it from the GUI. **Semi-automatic by maintainer decision (2026-08-09): detect,
   then ask.** Never a silent self-replacement — there is no rollback story, and
   other people depend on this tool.
-- **Widened on 2026-08-13 by the dependency ruling** ([ADR-0016](decisions/0016-cycle6plus-update-path.md)
+- **Widened on 2026-08-13 by the dependency ruling** ([ADR-0016](distribution/decisions/0016-cycle6plus-update-path.md)
   §2–§4, §11–§13): **ytdl declares what it drives** in a `deps.conf` the installer
   fetches, so which dependency a machine runs stops being an accident of when it
   was installed, and stops being a user decision. The **mechanism is a pin; the
@@ -716,7 +716,7 @@ replacing a *running* binary (atomic `mv`; the live process keeps its inode,
   quietly stops using the tool, and ytdl resolves its own binaries by absolute path
   instead of losing a `$PATH` race to a Homebrew yt-dlp it never installed.
 - ~~**Analysis must settle:**~~ **all four answered** by
-  [ADR-0016](decisions/0016-cycle6plus-update-path.md):
+  [ADR-0016](distribution/decisions/0016-cycle6plus-update-path.md):
   - ~~**The probe.**~~ The `releases/latest` redirect wins (§1). Measured: both
     components already carry locally the exact string their tag carries, so the
     comparison is **string equality**, not version ordering — no semver parser, no
@@ -731,8 +731,8 @@ replacing a *running* binary (atomic `mv`; the live process keeps its inode,
     and `internal/daemon` stays byte-unchanged. What ADR-0016 §7 *does* amend is
     ADR-0008: the daemon gains a third exit cause, an explicit user request.
 - ~~**Design must settle — applying it from the GUI**~~, the hard half: **answered
-  and built** ([ADR-0016](decisions/0016-cycle6plus-update-path.md) §9,
-  [design](design-cycle6plus-update.md) §7.2). The installer runs detached and
+  and built** ([ADR-0016](distribution/decisions/0016-cycle6plus-update-path.md) §9,
+  [design](distribution/design/cycle6plus-update.md) §7.2). The installer runs detached and
   setsid'd, so it outlives the binary it replaces; the old daemon keeps its own
   inode and therefore survives to *report* the outcome; it then closes the
   listener with `Close` (never `Shutdown`, which an SSE connection would block
@@ -744,7 +744,7 @@ replacing a *running* binary (atomic `mv`; the live process keeps its inode,
   the installer became idempotent, a re-pinned yt-dlp leaves the page where it is.
 - **Non-negotiable:** the update stays the installer. No second download-and-verify
   path in Go (item 1.9,
-  [ADR-0005](decisions/0005-macos-floor-and-single-engine.md)) — that one is what
+  [ADR-0005](foundation/decisions/0005-macos-floor-and-single-engine.md)) — that one is what
   checks the checksums.
 - **Done when:** a user on a stale build is told so in the channel they actually
   use, without ever having waited on the network to find out; a GUI-only user can

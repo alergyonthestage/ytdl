@@ -2,8 +2,8 @@
 
 - **Status:** accepted
 - **Date:** 2026-07-23
-- **Context:** [roadmap.md](../roadmap.md) (Phase 4, items 4.5–4.7), [improvements.md](../improvements.md)
-  (U5 queue), [ADR-0003](0003-engine-language-go.md) / [ADR-0004](0004-go-engine-package-layout.md)
+- **Context:** [roadmap.md](../../roadmap.md) (Phase 4, items 4.5–4.7), [improvements.md](../../improvements.md)
+  (U5 queue), [ADR-0003](../../foundation/decisions/0003-engine-language-go.md) / [ADR-0004](0004-go-engine-package-layout.md)
   (one core, thin front-ends; the daemon is `ytdld`), [ADR-0006](0006-cycle2a-logs-breadcrumbs-notifications.md)
   (the 2A seams this cycle reuses)
 - **Scope:** Cycle 2B-**core** — the substantial half of Phase 4's queue work.

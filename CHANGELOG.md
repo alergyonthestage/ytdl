@@ -14,7 +14,7 @@ Terminal.** Applying an update was never the gap — `ytdl --update` has existed
 since 1.0.0. The gap was that nothing *detected* one, and that the interface built
 for people who do not open a Terminal had no update surface at all, not even a
 version number. See
-[ADR-0016](docs/decisions/0016-cycle6plus-update-path.md).
+[ADR-0016](docs/maintainers/distribution/decisions/0016-cycle6plus-update-path.md).
 
 Additive: no command line changes meaning, and the yt-dlp argument vector is
 byte-identical (the golden parity tests are untouched). Two behaviour changes are
@@ -90,7 +90,7 @@ observable, both listed under *Changed*.
 - **The daemon has one more reason to stay alive**: an installer it launched is
   still running. Only the process that launched it can record how it went, so
   closing the tab mid-update no longer leaves a run that blocks every later one.
-  ([ADR-0008](docs/decisions/0008-daemon-lifecycle.md), amended.)
+  ([ADR-0008](docs/maintainers/engine/decisions/0008-daemon-lifecycle.md), amended.)
 - **The "never reload the document" rule is narrowed, not dropped**: exactly one
   reload, in the update handover, where the document is stale by definition
   because the server that answers its next request is a different build.
@@ -98,7 +98,7 @@ observable, both listed under *Changed*.
 There is no *Fixed* section: this is new work, and no released version carried
 any of it. The eighteen defects two review passes found in this cycle's own
 implementation were fixed before it shipped, and are recorded in
-[improvements.md](docs/improvements.md) — a changelog documents what changed for
+[improvements.md](docs/maintainers/improvements.md) — a changelog documents what changed for
 users of a release, not what a branch did to itself.
 
 ## [2.1.0] — 2026-08-09
@@ -117,7 +117,7 @@ order they were built.
 Cycle 2A — the first slice of the backend work (logs + notifications). All of it
 lives in the runtime layer and leaves the yt-dlp argument vector (and the golden
 parity tests) byte-unchanged. See
-[ADR-0006](docs/decisions/0006-cycle2a-logs-breadcrumbs-notifications.md).
+[ADR-0006](docs/maintainers/engine/decisions/0006-cycle2a-logs-breadcrumbs-notifications.md).
 
 ### Added
 
@@ -145,7 +145,7 @@ parity tests) byte-unchanged. See
 
 Cycle 2B-core — the queue + on-demand daemon slice of the backend work. Runtime
 layer only; the yt-dlp argument vector and golden parity tests stay byte-unchanged.
-See [ADR-0007](docs/decisions/0007-cycle2b-queue-daemon.md).
+See [ADR-0007](docs/maintainers/engine/decisions/0007-cycle2b-queue-daemon.md).
 
 ### Added
 
@@ -174,8 +174,8 @@ See [ADR-0007](docs/decisions/0007-cycle2b-queue-daemon.md).
 
 Cycle 2C — a UX pass over the CLI surface exposed by 2B-core. Runtime/CLI layer
 only; the yt-dlp argument vector and the golden parity tests stay byte-unchanged.
-See [ADR-0009](docs/decisions/0009-cycle2c-cli-ux.md) and the
-[CLI reference](docs/cli-reference.md).
+See [ADR-0009](docs/maintainers/ux/decisions/0009-cycle2c-cli-ux.md) and the
+[CLI reference](docs/maintainers/ux/design/cli-reference.md).
 
 ### Added
 
@@ -211,7 +211,7 @@ Cycle 3 — the web GUI (roadmap Phase 6, improvement E2): a browser interface f
 non-developer users, served by the queue daemon. A front-end over the existing
 engine (spool + config + log store), standard library only. `internal/core` stays
 byte-unchanged (golden parity holds). See
-[ADR-0010](docs/decisions/0010-cycle3-web-gui.md).
+[ADR-0010](docs/maintainers/ux/decisions/0010-cycle3-web-gui.md).
 
 ### Added
 
@@ -248,7 +248,7 @@ byte-unchanged (golden parity holds). See
 Cycle 2B-plus — queue completion (cancel/retry) + phase-5 hardening. Runtime/CLI
 layer; `core.BuildArgs` and the golden parity tests stay byte-unchanged (the
 residue redirect is appended off the golden path). See
-[ADR-0011](docs/decisions/0011-cycle2b-plus-cancel-retry-hardening.md).
+[ADR-0011](docs/maintainers/engine/decisions/0011-cycle2b-plus-cancel-retry-hardening.md).
 
 ### Added
 
@@ -278,7 +278,7 @@ residue redirect is appended off the golden path). See
 Cycle 4 — a second CLI UX pass (command/URL disambiguation + job titles). Runtime/CLI
 layer only; the yt-dlp argument vector, the golden parity tests, and the daemon
 package are all unchanged. See
-[ADR-0012](docs/decisions/0012-cycle4-cli-ux-title-disambiguation.md).
+[ADR-0012](docs/maintainers/ux/decisions/0012-cycle4-cli-ux-title-disambiguation.md).
 
 ### Added
 
@@ -305,9 +305,9 @@ Cycle 5 — a unified GUI/CLI UX pass, designed from the user's task model rathe
 from the existing commands, so the two front-ends stop diverging. Runtime/CLI/GUI
 layers only; the yt-dlp argument vector, the golden parity tests and the daemon
 package are unchanged. See
-[ADR-0013](docs/decisions/0013-cycle5-unified-ux.md),
-[ADR-0014](docs/decisions/0014-ux-scope-model-and-partial-outcome.md) and the
-normative [ux-principles.md](docs/ux-principles.md).
+[ADR-0013](docs/maintainers/ux/decisions/0013-cycle5-unified-ux.md),
+[ADR-0014](docs/maintainers/ux/decisions/0014-ux-scope-model-and-partial-outcome.md) and the
+normative [ux-principles.md](docs/maintainers/ux/design/ux-principles.md).
 
 ### Added
 
@@ -379,7 +379,7 @@ parity with the Bash tool for valid inputs, verified by golden tests.
 
 - **Go engine** — a reusable `internal/` core (config, yt-dlp arg builder, runner)
   behind a thin `cmd/ytdl` CLI, so the future daemon and web UI share one metadata
-  pipeline ([ADR-0004](docs/decisions/0004-go-engine-package-layout.md)).
+  pipeline ([ADR-0004](docs/maintainers/engine/decisions/0004-go-engine-package-layout.md)).
 - **Config file** at `${XDG_CONFIG_HOME:-~/.config}/ytdl/config`, **parsed, never
   `source`d**, with a tolerant 9-key whitelist and precedence
   flag > env > config > default. Unknown/malformed/invalid entries warn and fall
@@ -397,7 +397,7 @@ parity with the Bash tool for valid inputs, verified by golden tests.
 - The **installer** downloads the compiled, checksum-verified `ytdl` binary instead
   of the raw Bash script.
 - **Minimum macOS raised to 10.15 Catalina**; the installer collapses to a single
-  provisioning path ([ADR-0005](docs/decisions/0005-macos-floor-and-single-engine.md)).
+  provisioning path ([ADR-0005](docs/maintainers/foundation/decisions/0005-macos-floor-and-single-engine.md)).
 
 ### Fixed
 

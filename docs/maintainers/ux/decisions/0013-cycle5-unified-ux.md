@@ -2,14 +2,14 @@
 
 - **Status:** accepted
 - **Date:** 2026-07-27
-- **Context:** [roadmap.md](../roadmap.md) ("GUI multi-page + broader UX
+- **Context:** [roadmap.md](../../roadmap.md) ("GUI multi-page + broader UX
   overhaul", brought forward), [ADR-0009](0009-cycle2c-cli-ux.md) (command roles
   and the spool-vs-log-store state model), [ADR-0010](0010-cycle3-web-gui.md)
   (single binary, SSE, the local-API security model),
-  [ADR-0011](0011-cycle2b-plus-cancel-retry-hardening.md) (cancel/retry
+  [ADR-0011](../../engine/decisions/0011-cycle2b-plus-cancel-retry-hardening.md) (cancel/retry
   mechanics), [ADR-0012](0012-cycle4-cli-ux-title-disambiguation.md) (job titles,
   display-width clipping). Full design:
-  [design-cycle5-ux.md](../design-cycle5-ux.md).
+  [design-cycle5-ux.md](../design/cycle5-ux.md).
 - **Refines:** [ADR-0010](0010-cycle3-web-gui.md) — lifts its "the GUI queue is
   read-only" decision and its deferred settings/job-timeout workaround.
 
@@ -115,7 +115,7 @@ from `script-src 'unsafe-inline'` to `script-src 'self'`.
   implemented, foreground-only and off by default.
 - **The conventions become normative and durable.** The vocabulary, the
   information hierarchy, the action-ranking rule and the message conventions are
-  extracted into [ux-principles.md](../ux-principles.md), which every later cycle
+  extracted into [ux-principles.md](../design/ux-principles.md), which every later cycle
   either conforms to or amends in its own ADR — including the rule that a new
   capability lands in both channels or records why it does not.
 - **The history file grows** by roughly a hundred bytes per record. At the

@@ -3,16 +3,16 @@
 - **Status:** accepted
 - **Date:** 2026-08-03
 - **Context:** the maintainer's hands-on verification of Cycle 5 at **gate C**.
-  The findings register is [improvements.md § Gate-C findings](../improvements.md#gate-c);
-  sequencing is in [roadmap.md](../roadmap.md).
-- **Amends:** [ux-principles.md](../ux-principles.md) §3 (vocabulary), §4 (a new
+  The findings register is [improvements.md § Gate-C findings](../reviews/001-cycle5-gate-c.md#gate-c);
+  sequencing is in [roadmap.md](../../roadmap.md).
+- **Amends:** [ux-principles.md](../design/ux-principles.md) §3 (vocabulary), §4 (a new
   scope rule) and §5 (marks) — the normative document established by
   [ADR-0013](0013-cycle5-unified-ux.md), which requires that any cycle either
   conform to it or amend it here.
 - **Builds on:** [ADR-0013](0013-cycle5-unified-ux.md) (task model, shared
   vocabulary, the extended history record and its derived identity),
-  [ADR-0011](0011-cycle2b-plus-cancel-retry-hardening.md) (cancel/retry, no
-  residue), [ADR-0006](0006-cycle2a-logs-breadcrumbs-notifications.md) (per-item
+  [ADR-0011](../../engine/decisions/0011-cycle2b-plus-cancel-retry-hardening.md) (cancel/retry, no
+  residue), [ADR-0006](../../engine/decisions/0006-cycle2a-logs-breadcrumbs-notifications.md) (per-item
   breadcrumbs).
 
 ## Context

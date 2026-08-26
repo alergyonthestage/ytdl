@@ -5,17 +5,17 @@
 never `source`), **3.6** (precedence: flag > env > session > config > default),
 **3.1** (Go module + CI cross-compile + checksum publication), **3.2** (installer
 provisions the `ytdl` binary from a release). Completes the Cycle 1 design begun in
-[design-cycle1-core.md](design-cycle1-core.md).
+[design-cycle1-core.md](cycle1-core.md).
 **Out of scope:** the core arg builder / golden tests / CLI parser / runner (done in
-[design-cycle1-core.md](design-cycle1-core.md)); all Cycle 2/3 config keys and features.
-**Inputs:** [design-cycle1-core.md](design-cycle1-core.md),
-[improvements.md](improvements.md#u4), [distribution.md](distribution.md),
-[ADR-0003](decisions/0003-engine-language-go.md),
-[ADR-0004](decisions/0004-go-engine-package-layout.md),
-[ADR-0005](decisions/0005-macos-floor-and-single-engine.md).
+[design-cycle1-core.md](cycle1-core.md)); all Cycle 2/3 config keys and features.
+**Inputs:** [design-cycle1-core.md](cycle1-core.md),
+[improvements.md](../analysis/2026-07-21-code-initial-findings.md#u4), [distribution.md](../../distribution/design/distribution.md),
+[ADR-0003](../../foundation/decisions/0003-engine-language-go.md),
+[ADR-0004](../decisions/0004-go-engine-package-layout.md),
+[ADR-0005](../../foundation/decisions/0005-macos-floor-and-single-engine.md).
 
 This design assumes the **10.15 floor / single Go engine / no Python** decision of
-[ADR-0005](decisions/0005-macos-floor-and-single-engine.md); the installer section
+[ADR-0005](../../foundation/decisions/0005-macos-floor-and-single-engine.md); the installer section
 below is written against that simplified target.
 
 ---
@@ -73,7 +73,7 @@ parity**, so they are excluded here.
 |---|---|---|
 | `output_dir` | `OutputDir` | string; expand a leading `~/` or bare `~` to `$HOME`; **no** `$VAR` expansion |
 | `format` | `Format` | enum `mp3\|flac\|m4a\|opus\|wav` (C1) |
-| `audio_quality` | `AudioQuality` | numeric string `0`–`9` *(widened to `0`–`10`, yt-dlp's real scale, by gate-C finding [G7](improvements.md#gate-c); `config.ValidAudioQuality` is the one authority)* |
+| `audio_quality` | `AudioQuality` | numeric string `0`–`9` *(widened to `0`–`10`, yt-dlp's real scale, by gate-C finding [G7](../../ux/reviews/001-cycle5-gate-c.md#gate-c); `config.ValidAudioQuality` is the one authority)* |
 | `playlist_default` | `PlaylistDefault` | bool `true\|false` (case-insensitive) |
 | `name_template` | `NameTemplate` | raw string |
 | `strip_brackets` | `StripBrackets` | raw string (regex) |
@@ -172,7 +172,7 @@ tests:
 
 ## 4. Release CI (3.1)
 
-Module and layout are already fixed by [ADR-0004](decisions/0004-go-engine-package-layout.md):
+Module and layout are already fixed by [ADR-0004](../decisions/0004-go-engine-package-layout.md):
 `github.com/alergyonthestage/ytdl`, Go 1.22+, standard library only,
 `CGO_ENABLED=0` (static binary). This section specifies the pipeline that builds and
 publishes it. `.github/` is greenfield.
@@ -220,7 +220,7 @@ flowchart TD
 
 The installer stops fetching the raw Bash script and instead downloads the compiled
 binary from the release, verifying it the same way it already verifies yt-dlp and
-ffmpeg. Per [ADR-0005](decisions/0005-macos-floor-and-single-engine.md) the legacy
+ffmpeg. Per [ADR-0005](../../foundation/decisions/0005-macos-floor-and-single-engine.md) the legacy
 tier and Python path are removed at the same time.
 
 ### 5.1 `detect_platform` — floor 10.15
@@ -309,12 +309,12 @@ orthogonal and can be built in parallel by the Session-3 workflow.
 ## 8. Reconciliation with prior docs
 
 - **Config seam**: this design realises the file layer the
-  [core design](design-cycle1-core.md) §3 reserved; `Resolve`'s signature gains the
+  [core design](cycle1-core.md) §3 reserved; `Resolve`'s signature gains the
   `session` and `file` `Partial` arguments (previously described as "present but
   no-op"). No change to `Settings`, `Defaults`, `BuildArgs`, or the goldens.
 - **Installer & floor**: written against
-  [ADR-0005](decisions/0005-macos-floor-and-single-engine.md); supersedes the
-  Mojave/Python installer design in [distribution.md](distribution.md), which is
+  [ADR-0005](../../foundation/decisions/0005-macos-floor-and-single-engine.md); supersedes the
+  Mojave/Python installer design in [distribution.md](../../distribution/design/distribution.md), which is
   revised alongside this document.
 - **Golden format / package layout**: unchanged from
-  [ADR-0004](decisions/0004-go-engine-package-layout.md) and the core design.
+  [ADR-0004](../decisions/0004-go-engine-package-layout.md) and the core design.
