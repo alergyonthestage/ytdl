@@ -7,6 +7,22 @@ and states what `T0` must contain before `T1` may be run at all.
 **Nothing here is a decision.** The mechanism is established; the remedy is `T2`'s
 design, and gate B stands between this document and any of `T3`–`T5`.
 
+> **Addendum, 2026-08-26 (same day).** The remedy was decided and shipped:
+> [ADR-0017](../../foundation/decisions/0017-dev-container-oracle.md). Two of this
+> document's conclusions were **overtaken by a better option found while validating
+> them**, and the original text below is left as written:
+>
+> - §4 concludes that `T0` needs a *location* lever alongside the process one. It
+>   does not. The container now provisions yt-dlp as the **zipapp**, which never
+>   unpacks, so there is no extraction to place anywhere — the object was removed
+>   rather than relocated. The location lever was dropped, not implemented.
+> - §7 records the branching factor as unmeasured. It was then **measured: 1** per
+>   suite run — a linear chain, not a tree, and unbounded all the same. The guard
+>   described in §5 is what measured it, exactly as proposed there.
+>
+> Everything else in this document held, including the mechanism in §2, which is the
+> part the fix rests on.
+
 ## 1. What this establishes
 
 `go test ./cmd/ytdl` starts a process that **re-runs the entire `cmd/ytdl` test
