@@ -38,101 +38,22 @@ flowchart LR
 
 ## Open now
 
-<a id="dev-1"></a>
+**Nothing is in flight.** `DOCS-1` and `DEV-1` both closed and merged on 2026-08-26,
+and no work unit is open between them and the next cycle.
 
-### `DEV-1` · The suite must not be able to take the container down — `done` (opened and closed 2026-08-26)
+**Next: [`Cycle 6-launch`](#cycle-6-launch) — the desktop launcher**, which starts at
+its **own analysis**, in a session of its own. Its scope, the maintainer's
+clarification of what "desktop launcher" means, and the four questions the analysis
+must settle are in that section. Cycle 6 (the scope model) keeps its closed gate A and
+resumes at design after it.
 
-**Why now, and why ahead of `Cycle 6-launch`.** `V25` has been paid for **four**
-times, and the fourth was not a suite run — it was a *review* session, killed
-mid-edit. The cost is no longer "a slow suite": it is that any session can be
-destroyed by running the project's own primary gate, `go test -race ./...`. On
-2026-08-26 the maintainer could not even clear it — `rm` failed inside the container
-(the overlay was already read-only) and the container's filesystem was not reachable
-from the host. **Recovery required rebuilding the image.** A gate that can do that is
-not usable, and a project whose oracle is unusable has no oracle.
-
-This is developer environment, not product: **nothing user-facing ships from it**,
-which is why it is `DEV-1` and not a cycle in the `R → M → F → S` order.
-
-**It absorbs `V25` and `V28`**, which [review 004](distribution/reviews/004-cycle6plus-gate-c.md#V25)
-already established are *"la stessa causa e la stessa correzione"*. Both leave
-[improvements.md](improvements.md) on being scheduled here.
-
-**Closed on the day it opened, with a mechanism rather than a patch.** Analysis
-established the cause; validating the proposed remedy found a better one, which the
-maintainer approved directly at that point — so the design phase was **waived, not
-skipped**, and its decision is recorded as an ADR instead of a design document:
-[ADR-0017](foundation/decisions/0017-dev-container-oracle.md).
-
-**Two causes in series, both fixed:**
-
-1. **The multiplier.** `cmd/ytdl`'s test binary re-executed the whole suite,
-   detached and unbounded, because `resumeIfStalled` self-exec'd `os.Executable()`
-   with no seam. Fixed by the seam plus a `TestMain` that refuses `__daemon`.
-2. **The object.** The container's yt-dlp was a PyInstaller bundle that unpacks
-   78 MB per invocation and leaks it when killed. Replaced by the **zipapp**, which
-   unpacks nothing — the leak class was removed, not relocated.
-
-**Measured after:** `go test -race ./...` green in **8 s** (from 2 m 24 s – 4 m 26 s),
-zero residue, zero surviving processes, disk unchanged across a full run.
-
-| id | entry | depends on | status |
-|---|---|---|---|
-| T0 | **containment.** Delivered as two independent levers: the zipapp (no extraction exists) and the spawn seam + `TestMain` guard (no replication). The `TMPDIR` levers this entry proposed were **dropped, not implemented** — they relocate the bytes without stopping the replication | — | `done` |
-| T1 | confirm or kill the **multiplier**. Confirmed, and **measured: exactly 1 self-exec per suite run** — a linear chain, not a tree, and unbounded all the same. Measured by the guard itself, so no session had to reproduce `V25` to confirm `V25` | — | `done` |
-| T2 | design the mechanism | T1 | `waived` — superseded by ADR-0017, see above |
-| T3 | the **budget**: make the version-probe timeout injectable | T2 | `dropped` — premise dissolved, see below |
-| T4 | the **exec count** (`V28`): answer from `installed.conf` for a copy that is ours | T2 | `deferred` — premise weakened, see below |
-| T5 | **prevention**: the suite proves it left nothing behind | T3 · T4 | `deferred`, and no longer urgent — the regression test proves the guard holds, which is the failure that mattered |
-
-⚠️ **`T3` and `T4` need a decision they did not need before, and it is not taken
-here.** Both were framed around the cost of exec'ing and killing a PyInstaller
-bundle. With the zipapp the probe answers in ~263 ms and leaks nothing however it
-dies, so `T3`'s stated purpose — *"so tests stop killing yt-dlp"* — no longer
-describes a problem, and `T4`'s saving is now milliseconds rather than gigabytes.
-
-They are recorded as `dropped` and `deferred` rather than silently deleted: `T4`
-retains an independent merit (`V28`'s point that an exec on the critical path is
-authority the marker could answer) and its own staleness question, and that merit
-is unchanged by any of this. Reopening either is a maintainer call, not a
-consequence of ADR-0017.
-
-**What is now settled and must not be re-litigated:** the cause (both halves), that
-the container runs a different *form* of yt-dlp from every user and why that is
-bounded, and that `rm -rf /tmp/_MEI*` is no longer part of any workflow. All in
-ADR-0017.
-
-The candidate, from reading the code during D8: `TestRealMainQueueListsEnqueued`
-(`cmd/ytdl/main_test.go`) enqueues a job and calls `realMain(["queue"])`, which
-reaches `resumeIfStalled` → `daemon.Spawn()` → `os.Executable()` — **which, under
-`go test`, is the test binary**. Nothing intercepts the `__daemon` argument, so the
-child re-runs the whole `cmd/ytdl` package, detached with `Setsid`, released, and
-with none of `go test`'s timeouts. It reaches the same test about a second in.
-
-Two things in the tree already point at it: `TestRunRetryCmdRequeues` takes the
-daemon flock deliberately, commented *"so `resumeIfStalled` sees a live daemon and
-does NOT self-exec a real one from the test binary"* — the hazard is known and **one**
-test is guarded; and the other two spawn paths (`run.spawnDaemon`, `spawnQueueDaemon`)
-are stubbable variables that tests do stub, while this one is called straight on the
-package. It would also explain the near-2× spread in the suite's own wall time, and
-the 11,442 directories once found accumulated across sessions.
-
-**This is code reading, not a measurement** — the D8 session had no working shell by
-the time it surfaced. It is falsified or confirmed by one command, and T1 is that
-command:
-
-```bash
-go test -race -count=1 ./cmd/ytdl/ ; pgrep -af 'ytdl.test'
-```
-
-⚠️ Run it **only** with T0's containment in place, or on a machine that can afford
-it. Reproducing `V25` to confirm `V25` is how the fourth session was lost.
-
-Analysis: [the suite re-executes itself](engine/analysis/2026-08-26-code-test-suite-self-replication.md)
-(2026-08-26 — establishes the multiplier; `T1`'s question is narrowed, not yet closed) ·
-[review 004 § `V25`](distribution/reviews/004-cycle6plus-gate-c.md#V25) ·
-[review 004 § `V28`](distribution/reviews/004-cycle6plus-gate-c.md#V28) ·
-[D8 § 5](process/reviews/001-docs1-taxonomy-adoption.md#dev1)
+⚠️ **The decisive unknown is Gatekeeper**, and it is a *verification*, not an
+assumption: [ADR-0001](distribution/decisions/0001-distribution-channel.md) rejected
+`.pkg`/`.dmg`/`.app` because Gatekeeper blocks unsigned **downloaded** bundles, and
+this cycle rests on the claim that a bundle **generated on the machine** carries no
+quarantine attribute and is a different case. If the claim holds, ADR-0001 gets an
+amendment or a successor; if it does not, the cycle's premise is gone and the
+analysis must say so early rather than late.
 
 ## Closed phases
 
@@ -281,6 +202,7 @@ flowchart TD
 | Cycle 5 closing — gate-C fixes (`R`) | released in v2.1.0, 2026-08-09 | [block](roadmap-history.md#cycle-5-closing) |
 | Cycle 6-plus — the update path (`F`) | gate C passed 2026-08-23, released as v2.2.0 | [block](roadmap-history.md#cycle-6-plus) |
 | `DOCS-1` — documentation framework adoption | merged 2026-08-26, documentation only — no tag, no release | [block](roadmap-history.md#docs-1) |
+| <a id="dev-1"></a>`DEV-1` — the suite must not be able to take the container down | merged 2026-08-26, development environment only — no release | [block](roadmap-history.md#dev-1) |
 
 ### Post-gate-C cycles — `R → M → F → S`
 
@@ -361,7 +283,9 @@ two findings, **G27** and **G28**, which land in this cycle. What remains is the
   which scope decided it; no per-download control is sticky by accident; the same
   rule is stated once in `ux-principles.md` §8 and holds in both channels.
 
-#### Cycle 6-launch — the desktop launcher (`F`) — **after the update path**
+<a id="cycle-6-launch"></a>
+
+#### Cycle 6-launch — the desktop launcher (`F`) — **next**
 
 Also not a gate-C finding, and the same trigger: today the only way to start the
 interface is `ytdl gui` in a Terminal, which for the audience the GUI exists for
