@@ -4,7 +4,7 @@ package cli
 // has always been, kept current with every command the tool has grown. Since
 // Cycle 5 it is no longer what `-h` prints — that is ShortUsage — but the body
 // of `ytdl help tutto`. Nothing was deleted in the restructuring; it moved one
-// step away (design §9.1), and this text is what keeps docs/cli-reference.md
+// step away (design §9.1), and this text is what keeps docs/maintainers/ux/design/cli-reference.md
 // honest.
 const Usage = `ytdl — scarica musica da YouTube / YT Music con yt-dlp, naming e tag puliti.
 

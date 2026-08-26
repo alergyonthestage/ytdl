@@ -608,7 +608,7 @@ func TestTopicIndexListsTheTopics(t *testing.T) {
 }
 
 // TestHelpTuttoIsTheFullReference: nothing was deleted in the restructuring, it
-// moved one step away — and this is the text docs/cli-reference.md tracks.
+// moved one step away — and this is the text docs/maintainers/ux/design/cli-reference.md tracks.
 func TestHelpTuttoIsTheFullReference(t *testing.T) {
 	p, err := Parse([]string{"help", "tutto"})
 	if err != nil {
