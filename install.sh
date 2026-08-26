@@ -4,7 +4,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/alergyonthestage/ytdl/main/install.sh | bash
 #
-# Installs into ~/.local/bin without sudo. See docs/distribution.md for the
+# Installs into ~/.local/bin without sudo. See docs/maintainers/distribution/design/distribution.md for the
 # constraints behind the choices made here.
 #
 set -euo pipefail
@@ -30,7 +30,7 @@ FFMPEG_BASE="https://ffmpeg.martin-riedl.de/download/macos"
 # install_ffmpeg). Keeping ytdl installable outranks keeping it verifiable.
 FFMPEG_REDIRECT="https://ffmpeg.martin-riedl.de/redirect/latest/macos"
 # The compiled ytdl binaries are published per release; /latest/ gives the
-# newest without pinning a version (see docs/decisions/0005).
+# newest without pinning a version (see docs/maintainers/foundation/decisions/0005).
 RELEASE_BASE="https://github.com/$REPO_SLUG/releases/latest/download"
 
 # --force (or YTDL_FORCE=1) reinstalls every component regardless of what is
@@ -109,7 +109,7 @@ fail() {
 # macOS changed its version scheme at 11: "10.15.7" then "11.0", "26.1".
 # Reading only the first component misreads 10.15 as "10", so we compare the
 # minor too while the major is 10. The floor is 10.15 Catalina — the Go engine
-# needs it (docs/decisions/0005).
+# needs it (docs/maintainers/foundation/decisions/0005).
 detect_platform() {
   command -v sw_vers >/dev/null 2>&1 || fail \
     "This installer only supports macOS." \
@@ -578,7 +578,7 @@ install_ytdlp() {
 #  ffmpeg
 # ──────────────────────────────────────────────────────────────────
 # ffmpeg is required, not optional: ytdl extracts audio and embeds cover art.
-# Source depends on the target — see docs/distribution.md.
+# Source depends on the target — see docs/maintainers/distribution/design/distribution.md.
 # The URL now names an exact, immutable build rather than following a "latest"
 # redirect. That is what makes the checksum in deps.conf mean something: a
 # redirect can point somewhere new tomorrow, a build id cannot (ADR-0016 §12).

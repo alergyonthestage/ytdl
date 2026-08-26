@@ -1,8 +1,8 @@
 # Custom image for this project, declared as docker.image in .cco/project.yml.
 # Rebuild it after every `cco build` of the base image, or the session runs on a
 # stale entrypoint:
-#
-#   docker build -t claude-orchestrator-ytdl:latest -f <repo>/.cco/Dockerfile <repo>
+#   cd yt-download
+#   docker build -t claude-orchestrator-ytdl:latest -f .cco/Dockerfile .
 #
 FROM claude-orchestrator:latest
 

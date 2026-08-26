@@ -7,8 +7,8 @@ already embedded — ready for your music library.
 A wrapper around [yt-dlp](https://github.com/yt-dlp/yt-dlp) that handles the
 metadata work for you.
 
-> 🇮🇹 **Guide in italiano:** [installazione](docs/guida-installazione.md) ·
-> [uso quotidiano](docs/guida-uso.md) — scritte per chi non ha mai aperto il
+> 🇮🇹 **Guide in italiano:** [installazione](docs/users/guides/guida-installazione.md) ·
+> [uso quotidiano](docs/users/guides/guida-uso.md) — scritte per chi non ha mai aperto il
 > Terminale.
 
 ## Install
@@ -96,7 +96,7 @@ To stop it checking on its own, put `update_check = false` in
 the manual check keep working either way.
 
 The full picture, in Italian, is in
-[guida-uso.md](docs/guida-uso.md#tenere-ytdl-aggiornato).
+[guida-uso.md](docs/users/guides/guida-uso.md#tenere-ytdl-aggiornato).
 
 ## Supported systems
 

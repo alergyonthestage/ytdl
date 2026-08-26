@@ -183,3 +183,6 @@ auth:
 #     }
 #   }
 # See: https://modelcontextprotocol.io/docs
+
+packs:
+  - name: core-dev-framework

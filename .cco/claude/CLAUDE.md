@@ -10,7 +10,8 @@ core: a CLI, an on-demand queue daemon, and a local web GUI. Its audience is
 that provisions yt-dlp and ffmpeg itself.
 
 User-facing text is **Italian**; code, comments, identifiers and documentation
-are **English** (`docs/guida-*.md` are the deliberate exceptions, by audience).
+are **English** (`docs/users/guides/guida-*.md` are the deliberate exceptions,
+by audience).
 
 ## Repositories
 
@@ -21,28 +22,37 @@ are **English** (`docs/guida-*.md` are the deliberate exceptions, by audience).
 
 `cmd/ytdl` is a thin entry point over `internal/`: `core` (the argv builder — the
 crown jewel), `config`, `run`, `queue` + `daemon`, `logstore`, `webui`, `jobs`,
-`open`, `notify`, `term`, `cli`. See [docs/go-engine.md](../../docs/go-engine.md)
-for the as-built layout and the dependency direction.
+`update`, `open`, `notify`, `term`, `cli`, `buildinfo`. See
+[go-engine.md](../../docs/maintainers/engine/design/go-engine.md) for the as-built
+layout and the dependency direction.
 
 ## Where to look before starting anything
 
+The tree follows the `core-dev-framework` taxonomy: **audience → domain → type**.
+
 | Document | Why |
 |---|---|
-| `docs/roadmap.md` | **Single source of truth** for what is planned, which cycle is running, and in what order |
-| `docs/improvements.md` | Findings registers — the initial analysis, and the Cycle 5 gate-C findings `G1`–`G26` |
-| `docs/ux-principles.md` | **Normative** for GUI and CLI alike: conform to it, or amend it in the cycle's ADR |
-| `docs/decisions/` | ADRs. Read before re-opening a settled question |
-| `docs/go-engine.md` · `docs/cli-reference.md` | As-built engine and CLI surface |
+| [`docs/README.md`](../../docs/README.md) | The index: two audiences, five domains, and every ADR |
+| `docs/maintainers/roadmap.md` | **Single source of truth** for where the work stands and what comes next |
+| `docs/maintainers/glossary.md` | The shared vocabulary. Use a term, or add it — never introduce a synonym silently |
+| `docs/maintainers/ux/design/ux-principles.md` | **Normative** for GUI and CLI alike: conform to it, or amend it in the cycle's ADR |
+| `docs/maintainers/<domain>/decisions/` | ADRs, per domain plus `foundation/` for the project-level ones. Read before re-opening a settled question |
+| `docs/maintainers/engine/design/go-engine.md` · `.../ux/design/cli-reference.md` | As-built engine and CLI surface |
+| `docs/maintainers/improvements.md` | Known, worth doing, **not** scheduled. Scheduled work is on the roadmap instead |
+| `docs/maintainers/<domain>/reviews/` | What each review found, including the four of Cycle 6-plus |
+| `docs/maintainers/handoff.md` | Where the last session left off. **Ephemeral** — nothing links to it, and it is deleted when its cycle closes |
 
 ## Key Commands
 
 ```bash
 go build ./...
-go test -race ./...                                  # whole suite, ~12 s
+go test -race ./...                                  # whole suite, ~2-5 min (load-dependent)
+rm -rf /tmp/_MEI*                                    # ALWAYS after the suite — V25, it has taken the disk down 3x
 go vet ./... && gofmt -l .                           # gofmt output must be EMPTY
 git diff main -- internal/core/ internal/daemon/     # must stay EMPTY — the parity gate
 go test ./internal/core -update                      # regenerate goldens (needs the Bash ytdl)
 bash tests/test-installer.sh                         # installer logic, pure bash
+./hack/check-docs-links.sh                           # documentation links + ADR index
 ```
 
 ## Infrastructure
@@ -78,3 +88,13 @@ Non-negotiables. Each one either cost a real bug or prevents one:
 6. **Cycles run analysis → gate A → design → gate B → implementation → review →
    gate C → docs.** No implementation before gate B, and no phase advances without
    the maintainer saying so.
+7. **A document goes where its audience and domain put it**, with the type as the
+   leaf — never a new top-level bucket by kind. A closed unit leaves the roadmap
+   for `roadmap-history.md` and keeps one line; a review report goes to its
+   domain's `reviews/`; `decisions/` holds ADRs and nothing else. Historical
+   documents move container, never content: a factual correction is a dated
+   addition that leaves the original readable.
+8. **`./hack/check-docs-links.sh` must be green before a documentation commit.**
+   It also enforces that no document links *into* the ephemeral handoff, that ADR
+   numbers stay unique across the per-domain folders, and that every ADR is listed
+   in `docs/README.md`.
