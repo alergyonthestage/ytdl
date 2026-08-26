@@ -732,7 +732,7 @@ those first: they answer all four questions below. The design was **approved at
 gate B on 2026-08-13** and **built the same day**. It was then **reviewed twice**,
 and the session that documents it started from a gate-C handoff, since consumed —
 as was the closing handoff that followed it. What comes next is
-[handoff-cycle6launch.md](handoff-cycle6launch.md).
+[Cycle 6-launch](#cycle-6-launch--the-desktop-launcher-f--after-the-update-path).
 
 **Where it stands (2026-08-19).** All eleven implementation steps are done on
 `feat/update-path/implementation`, **not yet merged**, and **both review passes

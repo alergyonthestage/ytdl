@@ -938,6 +938,8 @@ run that reports success without advancing the marker's `installed_at` did not
 finish — an invariant the runner could check instead of inferring, and one that
 would have caught this regardless of the shell.
 
+<a id="V23"></a>
+
 ### V23 — RESOLVED as to mechanism, and the applied hardening does **not** fix it
 
 **Established in the container, 2026-08-22**, by building **GNU bash 3.2 from
