@@ -2,7 +2,8 @@
 #
 # Structural link checker for the documentation tree.
 #
-# Verifies four things across every tracked Markdown file:
+# Verifies four things across every Markdown file in the repo - tracked ones and
+# newly written ones alike:
 #
 #   1. every relative link target resolves to a file that exists;
 #   2. every "#anchor" on a local target matches a heading or an explicit
@@ -116,7 +117,10 @@ is_handoff() {
 
 # ------------------------------------------------------------- checks 1, 2, 4
 
-vcs ls-files '*.md' >"$tmpdir/files"
+# --cached --others --exclude-standard: a document that has just been written is
+# exactly the one most likely to carry a bad link, and checking only tracked files
+# would let it through until after it was committed. Ignored paths stay out.
+vcs ls-files --cached --others --exclude-standard '*.md' >"$tmpdir/files"
 
 while IFS= read -r src; do
 	src_dir=${src%/*}
