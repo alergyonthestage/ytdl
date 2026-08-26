@@ -514,7 +514,7 @@ those first: they answer all four questions below. The design was **approved at
 gate B on 2026-08-13** and **built the same day**. It was then **reviewed twice**,
 and the session that documents it started from a gate-C handoff, since consumed —
 as was the closing handoff that followed it. What comes next is
-[Cycle 6-launch](roadmap.md#cycle-6-launch--the-desktop-launcher-f--after-the-update-path).
+[Cycle 6-launch](roadmap.md#cycle-6-launch).
 
 **Where it stands (2026-08-19).** All eleven implementation steps are done on
 `feat/update-path/implementation`, **not yet merged**, and **both review passes
@@ -833,3 +833,98 @@ its cause surfaced a probable multiplier behind `V25`, and it is scheduled as
 Analysis: [the estate measured against the pack](process/analysis/2026-08-26-code-docs-estate-vs-pack.md) ·
 Design: [the move](process/design/docs-reorganization.md) ·
 Review: [D8](process/reviews/001-docs1-taxonomy-adoption.md)
+
+
+<a id="dev-1"></a>
+
+## `DEV-1` — The suite must not be able to take the container down — done, merged into `main` 2026-08-26, no release
+
+Opened and closed on the same day. The project's primary gate, `go test -race ./...`,
+could destroy the session that ran it and had done so four times; it now returns green
+in 8 s and leaves nothing behind. Two causes in series, both fixed: the `cmd/ytdl` test
+binary re-executed the whole suite detached and unbounded, and the container's yt-dlp
+was a PyInstaller bundle that unpacked 78 MB per invocation. The decision and every
+measurement are in
+[ADR-0017](foundation/decisions/0017-dev-container-oracle.md); no product change, so
+no tag, no release and no `CHANGELOG.md` entry.
+
+The block below is what the roadmap carried at closure, unchanged.
+
+### `DEV-1` · The suite must not be able to take the container down — `done` (opened and closed 2026-08-26)
+
+**Why now, and why ahead of `Cycle 6-launch`.** `V25` has been paid for **four**
+times, and the fourth was not a suite run — it was a *review* session, killed
+mid-edit. The cost is no longer "a slow suite": it is that any session can be
+destroyed by running the project's own primary gate, `go test -race ./...`. On
+2026-08-26 the maintainer could not even clear it — `rm` failed inside the container
+(the overlay was already read-only) and the container's filesystem was not reachable
+from the host. **Recovery required rebuilding the image.** A gate that can do that is
+not usable, and a project whose oracle is unusable has no oracle.
+
+This is developer environment, not product: **nothing user-facing ships from it**,
+which is why it is `DEV-1` and not a cycle in the `R → M → F → S` order.
+
+**It absorbs `V25` and `V28`**, which [review 004](distribution/reviews/004-cycle6plus-gate-c.md#V25)
+already established are *"la stessa causa e la stessa correzione"*. Both leave
+[improvements.md](improvements.md) on being scheduled here.
+
+**Closed on the day it opened, with a mechanism rather than a patch.** Analysis
+established the cause; validating the proposed remedy found a better one, which the
+maintainer approved directly at that point — so the design phase was **waived, not
+skipped**, and its decision is recorded as an ADR instead of a design document:
+[ADR-0017](foundation/decisions/0017-dev-container-oracle.md).
+
+**Two causes in series, both fixed:**
+
+1. **The multiplier.** `cmd/ytdl`'s test binary re-executed the whole suite,
+   detached and unbounded, because `resumeIfStalled` self-exec'd `os.Executable()`
+   with no seam. Fixed by the seam plus a `TestMain` that refuses `__daemon`.
+2. **The object.** The container's yt-dlp was a PyInstaller bundle that unpacks
+   78 MB per invocation and leaks it when killed. Replaced by the **zipapp**, which
+   unpacks nothing — the leak class was removed, not relocated.
+
+**Measured after:** `go test -race ./...` green in **8 s** (from 2 m 24 s – 4 m 26 s),
+zero residue, zero surviving processes, disk unchanged across a full run.
+
+| id | entry | depends on | status |
+|---|---|---|---|
+| T0 | **containment.** Delivered as two independent levers: the zipapp (no extraction exists) and the spawn seam + `TestMain` guard (no replication). The `TMPDIR` levers this entry proposed were **dropped, not implemented** — they relocate the bytes without stopping the replication | — | `done` |
+| T1 | confirm or kill the **multiplier**. Confirmed, and **measured: exactly 1 self-exec per suite run** — a linear chain, not a tree, and unbounded all the same. Measured by the guard itself, so no session had to reproduce `V25` to confirm `V25` | — | `done` |
+| T2 | design the mechanism | T1 | `waived` — superseded by ADR-0017, see above |
+| T3 | the **budget**: make the version-probe timeout injectable | T2 | `dropped` — premise dissolved, see below |
+| T4 | the **exec count** (`V28`): answer from `installed.conf` for a copy that is ours | T2 | `deferred` — premise weakened, see below |
+| T5 | **prevention**: the suite proves it left nothing behind | T3 · T4 | `deferred`, and no longer urgent — the regression test proves the guard holds, which is the failure that mattered |
+
+⚠️ **`T3` and `T4` need a decision they did not need before, and it is not taken
+here.** Both were framed around the cost of exec'ing and killing a PyInstaller
+bundle. With the zipapp the probe answers in ~263 ms and leaks nothing however it
+dies, so `T3`'s stated purpose — *"so tests stop killing yt-dlp"* — no longer
+describes a problem, and `T4`'s saving is now milliseconds rather than gigabytes.
+
+They are recorded as `dropped` and `deferred` rather than silently deleted: `T4`
+retains an independent merit (`V28`'s point that an exec on the critical path is
+authority the marker could answer) and its own staleness question, and that merit
+is unchanged by any of this. Reopening either is a maintainer call, not a
+consequence of ADR-0017.
+
+**What is now settled and must not be re-litigated:** the cause (both halves), that
+the container runs a different *form* of yt-dlp from every user and why that is
+bounded, and that `rm -rf /tmp/_MEI*` is no longer part of any workflow. All in
+ADR-0017.
+
+**Confirmed, then fixed.** The candidate named by D8's code reading was exactly
+right: `TestRealMainQueueListsEnqueued` reached `resumeIfStalled` → `daemon.Spawn()`
+→ `os.Executable()`, which under `go test` is the test binary, and nothing
+intercepted the `__daemon` argument. `TestRunRetryCmdRequeues` had been holding the
+daemon flock by hand for precisely this reason, so the hazard was known and exactly
+one test was immunised — which is why a per-test convention was not enough.
+
+The mechanism in full is in the analysis; the decision and the measurements are in
+[ADR-0017](foundation/decisions/0017-dev-container-oracle.md).
+
+Analysis: [the suite re-executes itself](engine/analysis/2026-08-26-code-test-suite-self-replication.md)
+(2026-08-26, with a same-day addendum recording what the fix overtook) ·
+Decision: [ADR-0017](foundation/decisions/0017-dev-container-oracle.md) ·
+[review 004 § `V25`](distribution/reviews/004-cycle6plus-gate-c.md#V25) ·
+[review 004 § `V28`](distribution/reviews/004-cycle6plus-gate-c.md#V28) ·
+[D8 § 5](process/reviews/001-docs1-taxonomy-adoption.md#dev1)
