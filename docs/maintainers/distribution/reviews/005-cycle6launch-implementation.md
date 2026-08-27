@@ -281,3 +281,53 @@ Not a courtesy list — each of these was a candidate defect that survived the c
   line to write; `V33`–`V35` are one-line corrections it can absorb.
 - The branch is otherwise ready for `L10`. `V32` is the only open question, and it
   does not block the merge.
+
+---
+
+## Dated addition — 2026-08-27, after the report was written
+
+The report above is unchanged; this records what happened to the findings it left
+open, on the same day and the same branch.
+
+**`V33`, `V34`, `V35`, `V36` are fixed** — not by `/review-docs`, which cannot
+touch code, but by the maintainer's instruction to close the minor findings too.
+Two commits: `fbc8f9e` (installer) and `da74e81` (launcher).
+
+- `V33` — the comment on `APP_INSTALLED` now says what the flag records: whether
+  **this run** wrote or confirmed the bundle, and that under-reporting is the
+  deliberate safe side of the gap.
+- `V34` — the closing note is `app_closing_note()` and derives its folder from
+  `app_dir()`. Extracting it made both of its failure modes testable without an
+  install: the silence when nothing was written, and the folder it names.
+- `V35` — `app_launcher_verified` answers **2** when there is nothing to compare
+  against (no such asset in the sums file, or no `shasum`/`openssl` on the
+  machine) and **1** for a real mismatch; the caller words the two differently.
+  The effect is unchanged: nothing unverified is ever written.
+- `V36` — `launcher.log` is capped at 256 KiB and truncated past it, which is the
+  rule `internal/daemon` already applies to `daemon.log`. Not a size problem
+  solved; two logs in one state dir now grow by one rule instead of two.
+
+**`V37` — minor — `install.sh`, two call sites — found while fixing `V34`.** The
+report credits the `ok` line with *"correctly prints `${dir/#$HOME/~}`"*. It does
+not: bash tilde-expands the **replacement**, so `~` becomes `$HOME` again and the
+substitution puts back exactly what it took out. Measured:
+
+```
+HOME=/tmp/fh; p=/tmp/fh/App
+${p/#$HOME/~}   -> /tmp/fh/App      (unchanged — the fold never happened)
+${p/#$HOME/\~}  -> ~/App
+```
+
+Both sites — the `ok` line of the bundle step and `setup_path`'s *"Updated …"* —
+now go through `home_display`, which spells the fold out with `case` and gets the
+sibling-prefix case right (`$HOME-extra/App` is not inside `$HOME`). Cosmetic in
+effect: what was shown was always a true path, just not the intended one.
+
+**Oracles after the fixes**: `go test -race ./...` green over 15 packages;
+`go vet` clean and `gofmt -l .` empty; `bash tests/test-installer.sh`
+**169/169**; parity gate empty. Six mutations were run against the new
+contracts — the no-tool code, the caller's wording, the note's guard, the note's
+folder, the fold, and the fold's boundary — and each was rejected by the check
+that must reject it, plus two against the launcher's cap.
+
+**`V32` remains open and undecided.** Nothing above touches it.
