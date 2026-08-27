@@ -137,6 +137,55 @@ ffmpeg_sha256_amd64_ffmpeg  = cccc
 ffmpeg_sha256_amd64_ffprobe = dddd
 `
 
+// fixtureBuild is the build id validDeps declares for ONE architecture.
+//
+// FetchPin resolves the pin for THIS MACHINE (probe.go), so a test that hard-codes
+// one architecture's id passes wherever it was written and fails everywhere else.
+// Three of them did exactly that: green on the maintainer's arm64 container, red on
+// CI's amd64 runner, from the day the pin gained per-architecture keys — and the
+// local gate could not see it, because the local gate only ever runs one
+// architecture.
+func fixtureBuild(goarch string) string {
+	return map[string]string{
+		"arm64": "1785863997_9.0",
+		"amd64": "1785871427_9.0",
+	}[goarch]
+}
+
+// wantBuild is fixtureBuild for the architecture the test is running on. A machine
+// the fixture does not describe cannot judge the selection, so it skips rather than
+// asserting something it cannot know.
+func wantBuild(t *testing.T) string {
+	t.Helper()
+	b := fixtureBuild(runtime.GOARCH)
+	if b == "" {
+		t.Skipf("no fixture build id for GOARCH=%s", runtime.GOARCH)
+	}
+	return b
+}
+
+// The expectation above must describe the fixture the hub actually serves, or the
+// two would agree with each other while describing nothing. This also EXECUTES the
+// architecture branch this machine does not run — the one that was wrong — instead
+// of trusting it.
+func TestTheFixtureDeclaresADistinctBuildPerArchitecture(t *testing.T) {
+	arm, amd := fixtureBuild("arm64"), fixtureBuild("amd64")
+	if arm == "" || amd == "" {
+		t.Fatalf("fixtureBuild is missing an architecture: arm64=%q amd64=%q", arm, amd)
+	}
+	if arm == amd {
+		t.Errorf("both architectures expect %q: the fixture would pass whichever one FetchPin picked", arm)
+	}
+	for _, want := range []string{arm, amd} {
+		if !strings.Contains(validDeps, want) {
+			t.Errorf("validDeps does not declare %q: the expectation describes no fixture", want)
+		}
+	}
+	if fixtureBuild("riscv64") != "" {
+		t.Error("fixtureBuild answers for an architecture the fixture does not declare")
+	}
+}
+
 func ctxT(t *testing.T) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -226,7 +275,7 @@ func TestFetchPinReadsAnExplicitTag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchPin: %v", err)
 	}
-	if pin.YtDlp != "2026.07.04" || pin.FFmpeg != "1785863997_9.0" {
+	if pin.YtDlp != "2026.07.04" || pin.FFmpeg != wantBuild(t) {
 		t.Errorf("pin = %+v", pin)
 	}
 	// An explicit tag needs no redirect read: the file already answered.
@@ -311,7 +360,7 @@ func TestFetchPinToleratesAKeyItDoesNotKnowYet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a future key made the pin unreadable: %v", err)
 	}
-	if pin.YtDlp != "2026.07.04" || pin.FFmpeg != "1785863997_9.0" {
+	if pin.YtDlp != "2026.07.04" || pin.FFmpeg != wantBuild(t) {
 		t.Errorf("pin = %+v", pin)
 	}
 }
@@ -334,7 +383,7 @@ func TestFetchPinToleratesCommentsAndSpacing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchPin: %v", err)
 	}
-	if pin.YtDlp != "2026.07.04" || pin.FFmpeg != "1785863997_9.0" {
+	if pin.YtDlp != "2026.07.04" || pin.FFmpeg != wantBuild(t) {
 		t.Errorf("pin = %+v", pin)
 	}
 }
@@ -420,13 +469,7 @@ func TestFetchPinResolvesTheBuildForThisArchitecture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchPin: %v", err)
 	}
-	want := map[string]string{
-		"arm64": "1785863997_9.0",
-		"amd64": "1785871427_9.0",
-	}[runtime.GOARCH]
-	if want == "" {
-		t.Skipf("no fixture build id for GOARCH=%s", runtime.GOARCH)
-	}
+	want := wantBuild(t)
 	if pin.FFmpeg != want {
 		t.Errorf("FFmpeg = %q, want %q for GOARCH=%s", pin.FFmpeg, want, runtime.GOARCH)
 	}
