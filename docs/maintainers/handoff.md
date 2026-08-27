@@ -143,6 +143,22 @@ anything is left to decide.
   not three, so ADR-0018's *"a fourth line"* is off by one. ADR-0018 stands as written
   — it is historical, and the count was never the obligation.
 
+### The install channel was questioned and confirmed — do not re-open it
+
+Late in the session the maintainer asked whether the *install* could also start from a
+double-click, now that the *launch* does: a file downloaded from the repository,
+linked from the README, that runs the installer. **The answer is no**, and it is
+recorded where it belongs — a dated addition at the end of
+[ADR-0001](distribution/decisions/0001-distribution-channel.md), not here, because
+this file is deleted.
+
+The short of it: anything executable downloaded through a browser acquires
+`com.apple.quarantine` and `spctl` rejects it without a Developer ID, the
+right-click → *Open* escape hatch is gone on current macOS, and the Terminal cost is
+paid **once per machine** anyway — `ytdl --update` re-runs `install.sh` by itself.
+`curl` remains the only channel that never meets Gatekeeper, which is why ADR-0001
+chose it.
+
 ### Three facts the ADR rests on, verified in this container
 
 Re-deriving them costs an hour; they are cheap to record.
