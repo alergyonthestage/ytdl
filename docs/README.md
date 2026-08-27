@@ -89,7 +89,7 @@ it links out. Open it directly when resuming.
 | [cycle6plus-update.md](maintainers/distribution/design/cycle6plus-update.md) | The update-path design approved at gate B |
 | [cycle6launch-launcher.md](maintainers/distribution/design/cycle6launch-launcher.md) | The desktop launcher design approved at gate B: the bundle, the launcher, and the cold-start remedy |
 | [guides/releasing.md](maintainers/distribution/guides/releasing.md) | How a release is cut, and the two failures that taught the order |
-| [reviews/](maintainers/distribution/reviews/) | Four Cycle 6-plus reviews: implementation, fix session, documentation, gate C |
+| [reviews/](maintainers/distribution/reviews/) | Four Cycle 6-plus reviews — implementation, fix session, documentation, gate C — and Cycle 6-launch's implementation review |
 
 ### `foundation/` · `process/` · cross-cutting guides
 
