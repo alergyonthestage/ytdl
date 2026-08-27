@@ -3,7 +3,7 @@
 Notable changes to ytdl. The format follows [Keep a Changelog](https://keepachangelog.com/),
 and versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [2.3.0] — 2026-08-27
 
 **ytdl can now be opened without a Terminal.** The installer builds an app called
 **YTDL** in your Applications folder; a double-click brings up the web interface.
