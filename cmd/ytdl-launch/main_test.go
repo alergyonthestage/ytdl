@@ -64,6 +64,7 @@ func testLauncher(t *testing.T, exe string) (*launcher, *string) {
 		exe:       exe,
 		stateDir:  t.TempDir(),
 		timeout:   10 * time.Second,
+		waitDelay: 500 * time.Millisecond,
 		now:       func() time.Time { return time.Date(2026, 8, 27, 9, 0, 0, 0, time.UTC) },
 		showAlert: func(script string) { shown = script },
 	}
@@ -193,6 +194,50 @@ func TestLauncherIsSilentOnSuccess(t *testing.T) {
 	}
 	if *shown != "" {
 		t.Errorf("an alert was built on success: %q", *shown)
+	}
+}
+
+// A child that SUCCEEDED is a success, whatever Wait had to say about the pipe.
+//
+// CombinedOutput reads through an os.Pipe, so anything the child spawned that
+// inherited that pipe keeps Wait reading after the child is gone; WaitDelay ends
+// the read and returns exec.ErrWaitDelay, which is NOT an *exec.ExitError.
+// Deciding the status from the error's type therefore reported exit 1 for a
+// launch that worked — a critical alert, in Italian, on top of a browser that
+// had just opened. The status comes from the process (design §3.2: "the
+// launcher's exit status mirrors the child's").
+//
+// `ytdl gui` does not do this today — daemon.spawn gives its child /dev/null
+// stdio and openBrowser leaves Stdout nil, which Go also sends to /dev/null —
+// so this pins the launcher's half of the contract, which must not depend on
+// that staying true.
+func TestLauncherIsSilentWhenAGrandchildHoldsThePipe(t *testing.T) {
+	exe, resources := bundle(t)
+	dir := t.TempDir()
+	ytdl := filepath.Join(dir, "ytdl")
+	// Exits 0 immediately, leaving a background process holding stdout.
+	script := "#!/bin/sh\n( /bin/sleep 30 ) &\necho 'interfaccia aperta'\nexit 0\n"
+	if err := os.WriteFile(ytdl, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSidecar(t, resources, ytdl+"\n")
+
+	l, shown := testLauncher(t, exe)
+
+	code := l.run()
+
+	if code != 0 {
+		t.Errorf("run = %d: the child exited 0, so the launcher must too", code)
+	}
+	if *shown != "" {
+		t.Errorf("an alert was shown for a launch that succeeded: %q", *shown)
+	}
+	raw, err := os.ReadFile(filepath.Join(l.stateDir, logName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "exit=0") {
+		t.Errorf("the log recorded a failure for a successful launch: %q", string(raw))
 	}
 }
 

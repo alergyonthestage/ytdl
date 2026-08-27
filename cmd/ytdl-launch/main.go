@@ -18,7 +18,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -46,6 +45,11 @@ const (
 	// exists only so a hung engine cannot leave a Dock tile that never goes away.
 	guiCmdTimeout = 60 * time.Second
 
+	// guiWaitDelay bounds how long we keep reading the child's output after the
+	// child itself is gone. A grandchild that inherited the pipe must not keep
+	// this process — and its Dock tile — alive.
+	guiWaitDelay = 5 * time.Second
+
 	alertHeading  = "YTDL non è riuscito ad aprire l'interfaccia"
 	alertFallback = "Il motore non ha risposto. Riprova; se il problema resta, apri il Terminale e scrivi: ytdl gui"
 )
@@ -61,6 +65,7 @@ func main() {
 		exe:       exe,
 		stateDir:  config.StatePath(),
 		timeout:   guiCmdTimeout,
+		waitDelay: guiWaitDelay,
 		now:       time.Now,
 		showAlert: showAlert,
 	}
@@ -73,6 +78,7 @@ type launcher struct {
 	exe       string // this binary's own path, from os.Executable
 	stateDir  string // where launcher.log is appended
 	timeout   time.Duration
+	waitDelay time.Duration
 	now       func() time.Time
 	showAlert func(script string)
 }
@@ -95,15 +101,19 @@ func (l *launcher) run() int {
 	cmd := exec.CommandContext(ctx, ytdl, "gui")
 	// A grandchild holding the pipe must not keep this process — and its Dock
 	// tile — alive after the child itself is killed.
-	cmd.WaitDelay = 5 * time.Second
+	cmd.WaitDelay = l.waitDelay
 	out, err := cmd.CombinedOutput()
 
 	code := 0
 	if err != nil {
+		// The status comes from the PROCESS, not from the error's type. Wait
+		// reports ErrWaitDelay — which is not an *ExitError — when the child
+		// exited but something it spawned still held the pipe; reading the error
+		// alone would call that failure and pop a critical alert on a launch that
+		// worked. ProcessState is nil only when the child never started at all.
 		code = 1
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			code = ee.ExitCode()
+		if st := cmd.ProcessState; st != nil {
+			code = st.ExitCode()
 		}
 		if ctx.Err() != nil {
 			// A timeout is our verdict, not the child's: say so rather than
