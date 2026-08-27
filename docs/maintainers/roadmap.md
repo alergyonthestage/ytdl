@@ -347,7 +347,8 @@ means, and what the user sees while it starts. None is reopened here.
 | L7 | `install.sh`: `install_app_bundle`, wired after `verify_install` and before `write_marker`, non-fatal | L6 | `done` |
 | L8 | the Italian surfaces — both user guides, `YTDL_APP_DIR` in `hack/ytdl-dev.sh` and `dev-testing.md`, `CHANGELOG.md` under `[Unreleased]` | L3 · L7 | `done` |
 | L9 | [`/review-implementation`](distribution/reviews/005-cycle6launch-implementation.md), then [`/review-docs`](distribution/reviews/006-cycle6launch-documentation.md) on the same branch | L1–L8 | `done` |
-| L10 | merge `--no-ff` into `main` | L9 | `planned` |
+| L9b | `V32`: the advisory is pushed over SSE — the `update` frame on connect and on reconcile, the guard that yields while the user is mid-flow, and the dated addition to ADR-0019 §2 | L9 | `done` |
+| L10 | merge `--no-ff` into `main` | L9b | `planned` |
 | L11 | **cut the release**, so `releases/latest` carries the launcher assets | L10 | `planned` |
 | L12 | **gate C** on hardware — the eight items in [design §9](distribution/design/cycle6launch-launcher.md), plus the ninth `V32` adds below | L11 | `planned` |
 
@@ -378,20 +379,17 @@ path and installs **no app**. Non-fatal by design, and still a user meeting a
 warning for something that is merely not released yet. **Gate C's four
 bundle items cannot be observed before L11.**
 
-⚠️ **One decision is open, and it does not block the merge** —
-[`V32`](distribution/reviews/005-cycle6launch-implementation.md#v32), raised by the
-implementation review. The cold-start reconcile of
+**[`V32`](distribution/reviews/005-cycle6launch-implementation.md#v32) is decided
+and built** (`L9b`, 2026-08-27). The cold-start reconcile of
 [ADR-0019 §2](distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md)
-replaces the recorded version with the probed one **in the daemon's memory**, and
-nothing carries it to a page that is already open — so `/api/state` answers from the
-record for the life of that page load. It is visible only to a foreign or a stale
-yt-dlp, and it states no falsehood; it shows *less* than the page used to. Options,
-one line each: push the reconciled state to the page over SSE (a new capability) ·
-probe foreign copies only on the startup walk (contradicts design §5.3 and the test
-that pins *no exec on the startup path*) · accept it and record the choice, which
-costs nothing. **The maintainer picks one** — the review sets out what each costs.
-Either way gate C gains one item: open *Aggiornamenti* on a Mac with a Homebrew
-yt-dlp and read what it says.
+replaced the recorded version with the probed one **in the daemon's memory only**, so
+a page already open kept the record's answer for the life of that load — visible to a
+foreign or a stale yt-dlp, and stating nothing false, only *less* than was known. The
+maintainer chose to **push the advisory over SSE**, option A of the four priced in
+[the analysis](distribution/analysis/2026-08-27-tech-choice-v32-advisory-freshness.md);
+the ADR carries a dated addition saying so. Gate C keeps the item the decision does
+not remove: open *Aggiornamenti* on a Mac with a Homebrew yt-dlp and read what it
+says — that is the only machine where any of this is visible.
 
 - **Done when:** a non-developer starts ytdl **as an app** — from the Applications
   folder, the Dock, or wherever they chose to put it — twice in a row, without a

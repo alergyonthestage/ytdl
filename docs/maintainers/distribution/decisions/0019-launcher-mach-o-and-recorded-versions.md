@@ -144,3 +144,36 @@ becomes a large margin and stays exactly as it is.
   and Launchpad, macOS 26, a Mac that is not the maintainer's — and now also
   whether an `osascript` alert launched from Finder reaches the front of the
   screen. The launcher's log does not depend on that answer.
+
+---
+
+## Dated addition — 2026-08-27: §2 was true of the daemon, not of the page
+
+The decision above is unchanged and was implemented as written. What this records
+is a gap between what §2 asserts and what the surface did, found by
+[review 005](../reviews/005-cycle6launch-implementation.md#v32) as `V32` and closed
+the same day by the maintainer's choice.
+
+**What §2 says, and what it left out.** *"Replaces the recorded answer with the
+measured one"* — in the **daemon's memory**. The page is handed the advisory once,
+inside the state it loads with, about a second after the port opens; the probe
+finishes about six seconds later and reached nobody. A page already open therefore
+kept the record's answer for the life of that load, and for a copy the record cannot
+vouch for — a Homebrew `yt-dlp`, a tool installed before the marker existed — it read
+*versione non registrata* while the daemon, in that same second, knew the version.
+
+Nothing untrue was displayed, which is why it was not a blocker: the record really
+had no version. It was **less than what was known**.
+
+**Decided: the advisory is pushed over SSE** — option A of the four priced in
+[the analysis](../analysis/2026-08-27-tech-choice-v32-advisory-freshness.md), chosen
+by the maintainer on 2026-08-27. `/api/events` carries an `update` frame on connect
+and again when the reconcile completes; the page applies it unless the user is inside
+the update flow. The three alternatives are recorded there with what each gives up —
+in particular **probing only the copies the record cannot vouch for was rejected**,
+because the record is silent precisely *because* the tool is foreign, so it would
+hand the 7.5 s cold start back to exactly the users this cycle's remedy was for.
+
+So §2 now reads, end to end: the daemon answers from the record, probes once the port
+is open, and **tells whoever is already looking**. The run panel is unaffected and
+still polls — the handover closes the stream by construction (design §6.2).

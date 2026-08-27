@@ -213,3 +213,14 @@ option, A included — it is only its content that changes.
 - **Independently of the answer:** gate C gains one step — open the Aggiornamenti
   view on a Mac with a Homebrew yt-dlp, which is the only machine where any of this
   is visible.
+
+---
+
+## Dated addition — 2026-08-27: the maintainer chose A
+
+**A — the SSE `update` event** — chosen the same day this was written, and built as
+`L9b`, with the two conditions this document made part of the option: the frame on
+connect, and the guard that yields while the user is inside the update flow. The
+decision itself is recorded where decisions live: the
+[dated addition to ADR-0019](../decisions/0019-launcher-mach-o-and-recorded-versions.md).
+The three rejected options keep their reasoning above, unedited.

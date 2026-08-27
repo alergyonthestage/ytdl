@@ -387,6 +387,18 @@ that disappears exactly when the news matters is the wrong transport. Independen
 polls fail during the gap and succeed after it, which is precisely the signal the
 page needs.
 
+**The ADVISORY is pushed, and that is not the same rule reversed.** The rule above
+is about the **run** — the one moment the server replaces itself, taking the stream
+with it. The advisory has no handover: it changes when the daemon finishes probing
+the local versions a few seconds after the port opens, and the page is already
+connected and already listening. So `/api/events` carries an `update` frame — on
+connect, and again whenever the daemon learns something the page was not told
+([ADR-0019 §2](../decisions/0019-launcher-mach-o-and-recorded-versions.md#2-the-gui-daemon-fills-the-local-facts-from-the-installers-record-and-reconciles-with-a-probe-once-the-port-is-open)).
+A pushed frame **yields to the user**: it is dropped, not queued, while a run's
+panel is on screen or the confirmation is open, because applying it would rebuild
+the control under their hands (`ux-principles.md` §4) and whatever ends the flow
+re-reads the state anyway.
+
 Two surfaces, because noticing and checking are different jobs:
 
 - **A banner**, above the view container so it shows on all three views, rendered
