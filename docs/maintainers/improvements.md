@@ -19,6 +19,7 @@ have to do — is in the review that found it; that is the link.
 |---|---|---|
 | `V23` | An installer aborted by `set -u` is still recorded as a **successful** run, and the hardening that was applied is inert under bash 3.2. A fix proven under both shells is written down and was not applied | [review 004](distribution/reviews/004-cycle6plus-gate-c.md#V23) |
 | `V19` | A package comment claims an import the package does not have — `internal/update` imports `buildinfo` plus stdlib, not `config`. Cosmetic, and recorded rather than corrected because the documentation phase does not touch code | [review 003](distribution/reviews/003-cycle6plus-documentation.md#cycle6plus-docs) |
+| `V47` | A `YTDL.app` **moved or copied** out of `~/Applications` is never updated again, and the next install creates a second one at the canonical path. Gate C chose to fix the sentence that invited it (option A, done); **following the bundle wherever it went** — recording its path in the marker — is option B and is not scheduled | [review 007](distribution/reviews/007-cycle6launch-gate-c.md#v47) |
 
 ## Cost, not correctness
 
