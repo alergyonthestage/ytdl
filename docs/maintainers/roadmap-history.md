@@ -939,3 +939,103 @@ Decision: [ADR-0017](foundation/decisions/0017-dev-container-oracle.md) ·
 [review 004 § `V25`](distribution/reviews/004-cycle6plus-gate-c.md#V25) ·
 [review 004 § `V28`](distribution/reviews/004-cycle6plus-gate-c.md#V28) ·
 [D8 § 5](process/reviews/001-docs1-taxonomy-adoption.md#dev1)
+
+---
+
+### `Cycle 6-launch` — the desktop launcher (`F`) — **gate C passed 2026-08-27; released as v2.3.0; one finding, `V47`, closed**
+
+Migrated from the roadmap on 2026-08-27, when gate C closed it. The block below is what the roadmap carried, unchanged.
+
+<a id="cycle-6-launch"></a>
+
+#### `Cycle 6-launch` · The desktop launcher (`F`) — `done` (opened 2026-08-23, closed 2026-08-27: planned · implemented · reviewed · merged · **released as v2.3.0** · **gate C passed**)
+
+**Why now.** Cycle 6-plus's gate C passed with exactly one recorded exception,
+`C2`: the update no longer needed a Terminal, but **opening the interface still
+did** — for an audience the GUI exists to spare a Terminal, the one thing it was
+built to avoid. This cycle delivers the **entry point** half of phase item `6a`
+and leaves 6a's paste/drop-and-enqueue app to a later pass, if it is still wanted
+once the interface is one click away.
+
+**Read in this order:**
+[ADR-0018](distribution/decisions/0018-desktop-launcher-app-bundle.md) (gate A —
+the artefact, `~/Applications/YTDL.app`, the name, Gatekeeper measured on
+hardware) →
+[ADR-0019](distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md)
+(gate B — a dedicated launcher, and the cold start answered from `installed.conf`)
+→ [the design](distribution/design/cycle6launch-launcher.md), §8 for the steps and
+§5 for the cold start. Every measurement behind the three is in the
+[analysis](distribution/analysis/2026-08-26-tech-choice-desktop-launcher.md).
+**The questions this entry used to hold open are all answered there** — the
+artefact, the name, idempotence, the port and the headless daemon, what "quit"
+means, and what the user sees while it starts. None is reopened here.
+
+| id | entry | depends on | status |
+|---|---|---|---|
+| L1 | the design, ADR-0019, and their two rows in `docs/README.md` | — | `done` |
+| L2 | `internal/update`: the recorded version walk, `RecordedDependencies`, and the two comments the measurements falsified | — | `done` |
+| L3 | `cmd/ytdl`: the constructor reads the record; `runDaemon` reconciles with a probe after `startWebUI` | L2 | `done` |
+| L4 | `cmd/ytdl-launch`: resolve `ytdl` absolutely, run `ytdl gui`, always log, alert only on failure | — | `done` |
+| L5 | `.github/workflows/release.yml`: the two launcher assets, in `SHA2-256SUMS`, with the arm64 `LC_CODE_SIGNATURE` asserted | L4 | `done` |
+| L6 | `install.sh` pure functions: `app_dir`, `launcher_asset_for`, `render_app_plist`, `app_is_current`, `app_sidecar_path` | L4 | `done` |
+| L7 | `install.sh`: `install_app_bundle`, wired after `verify_install` and before `write_marker`, non-fatal | L6 | `done` |
+| L8 | the Italian surfaces — both user guides, `YTDL_APP_DIR` in `hack/ytdl-dev.sh` and `dev-testing.md`, `CHANGELOG.md` under `[Unreleased]` | L3 · L7 | `done` |
+| L9 | [`/review-implementation`](distribution/reviews/005-cycle6launch-implementation.md), then [`/review-docs`](distribution/reviews/006-cycle6launch-documentation.md) on the same branch | L1–L8 | `done` |
+| L9b | `V32`: the advisory is pushed over SSE — the `update` frame on connect and on reconcile, the guard that yields while the user is mid-flow, and the dated addition to ADR-0019 §2 | L9 | `done` |
+| L10 | merge `--no-ff` into `main` | L9b | `done` |
+| L11 | **cut the release**, so `releases/latest` carries the launcher assets | L10 | `done` — `v2.3.0`, four assets in one `SHA2-256SUMS` |
+| L12 | **gate C** on hardware — the eight items in [design §9](distribution/design/cycle6launch-launcher.md), plus the ninth `V32` adds below | L11 | `done` — [report 007](distribution/reviews/007-cycle6launch-gate-c.md), 8/9 pass, 3 exceptions |
+
+**Two independent halves, in this order.** L2–L3 are the cold-start remedy and
+ship without the bundle; L4–L7 are the bundle, which without the remedy would ship
+the defect ADR-0018 pulled into scope. Neither half depends on the other; they land
+in this order so the diff reads as two coherent halves.
+
+**Constraints.**
+
+- `internal/core` stays **byte-unchanged** and `internal/daemon` untouched. The
+  parity gate `git diff main -- internal/core/ internal/daemon/` comes back empty
+  at **every** commit, not only at the end.
+- Every step ends green on the **whole** gate, not just its own oracle:
+  `go test -race ./...` · `go vet ./...` and `gofmt -l` empty ·
+  `bash tests/test-installer.sh` · `./hack/check-docs-links.sh` · the parity gate.
+- **Tests are written from the design, by the independent tester role.**
+  [Appendix C](distribution/design/cycle6launch-launcher.md) is the contract list;
+  it is not derived from the implementation.
+- **The bundle step never fails the install** (design §4.4) — an app that cannot be
+  written is warned about, never aborted on.
+
+⚠️ **L11 is not optional, and the L10 → L11 gap is a surface.** `install.sh` is
+served from `main` while assets come from `releases/latest`, so in that window the
+newest release carries no launcher. Any run of the installer in it — a fresh
+install, a `deps.conf` change, a forced `ytdl --update` — takes the warn-and-continue
+path and installs **no app**. Non-fatal by design, and still a user meeting a
+warning for something that is merely not released yet. **Gate C's four
+bundle items cannot be observed before L11.**
+
+**[`V32`](distribution/reviews/005-cycle6launch-implementation.md#v32) is decided
+and built** (`L9b`, 2026-08-27). The cold-start reconcile of
+[ADR-0019 §2](distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md)
+replaced the recorded version with the probed one **in the daemon's memory only**, so
+a page already open kept the record's answer for the life of that load — visible to a
+foreign or a stale yt-dlp, and stating nothing false, only *less* than was known. The
+maintainer chose to **push the advisory over SSE**, option A of the four priced in
+[the analysis](distribution/analysis/2026-08-27-tech-choice-v32-advisory-freshness.md);
+the ADR carries a dated addition saying so. Gate C keeps the item the decision does
+not remove: open *Aggiornamenti* on a Mac with a Homebrew yt-dlp and read what it
+says — that is the only machine where any of this is visible.
+
+**Closed 2026-08-27.** [Gate C](distribution/reviews/007-cycle6launch-gate-c.md)
+passed on real hardware: the first click on the first bundle ever installed opened
+the interface in under a second, twice, with no Terminal — the scenario that failed
+at gate A. Three exceptions are recorded rather than waived: `V32`'s effect is
+built, tested and **unobserved** (it shows only where yt-dlp is a copy ytdl did not
+install), a real download with a real conversion moves to a second Mac, and macOS 26
+stays unexercised. One finding, `V47` — a moved or copied `YTDL.app` is never
+updated again — closed by correcting the three surfaces that invited the move;
+following the bundle instead is in [improvements.md](improvements.md), unscheduled.
+
+- **Done when:** a non-developer starts ytdl **as an app** — from the Applications
+  folder, the Dock, or wherever they chose to put it — twice in a row, without a
+  Terminal ever appearing, and uninstalling removes it. That closes `C2`, the
+  single exception Cycle 6-plus's gate C recorded. **Met.**
