@@ -75,6 +75,22 @@ riuscita. Puoi passare alla [guida all'uso](guida-uso.md).
 Che cosa vuol dire ognuna di quelle righe è spiegato nella
 [guida all'uso](guida-uso.md#tenere-ytdl-aggiornato); qui basta che ci siano.
 
+## Passo 4 — L'app YTDL
+
+L'installazione mette anche un'app che si chiama **YTDL** nella tua cartella
+**Applicazioni**. Serve ad aprire l'interfaccia grafica **senza passare dal
+Terminale**: basta un doppio clic.
+
+Se la vuoi più a portata di mano, trascinala sul **Dock** o sulla **Scrivania** —
+continua a funzionare da qualsiasi posizione tu la metta.
+
+Che cosa succede quando la apri è spiegato nella
+[guida all'uso](guida-uso.md#linterfaccia-grafica-senza-terminale).
+
+> Se dopo l'installazione l'app non c'è, non è un problema dell'installazione:
+> `ytdl` funziona lo stesso dal Terminale. Riprova ad aggiornare più tardi con
+> `ytdl --update`.
+
 ## Se qualcosa non funziona
 
 ### «command not found: ytdl»
@@ -189,6 +205,11 @@ Nel Terminale:
 ```
 rm -f ~/.local/bin/ytdl ~/.local/bin/yt-dlp
 rm -f ~/.local/bin/ffmpeg ~/.local/bin/ffprobe
+rm -rf ~/Applications/YTDL.app
 ```
+
+La terza riga toglie l'app **YTDL** dalla cartella Applicazioni. Se l'avevi
+trascinata anche sul Dock, l'icona rimasta lì si toglie da sola al primo clic, o
+trascinandola fuori dal Dock.
 
 La musica che hai già scaricato non viene toccata.

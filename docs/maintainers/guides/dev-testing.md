@@ -71,17 +71,20 @@ flowchart LR
     R2["~/.config/ytdl"]
     R3["~/.local/bin"]
     R4["127.0.0.1:8765"]
+    R5["~/Applications/YTDL.app"]
   end
   subgraph DEV["the dev build"]
     D1["~/.ytdl-dev/state"]
     D2["~/.ytdl-dev/config"]
     D3["~/.ytdl-dev/bin"]
     D4["localhost:8790"]
+    D5["~/.ytdl-dev/Applications"]
   end
   R1 -. XDG_STATE_HOME .-> D1
   R2 -. XDG_CONFIG_HOME .-> D2
   R3 -. "YTDL_BIN_DIR + YTDL_INSTALL_DIR" .-> D3
   R4 -. YTDL_GUI_PORT .-> D4
+  R5 -. YTDL_APP_DIR .-> D5
 ```
 
 | Variable | Governs |
@@ -92,7 +95,15 @@ flowchart LR
 | `YTDL_BIN_DIR` | where **the engine reads** its dependencies |
 | `YTDL_OUT_DIR` | where downloads land |
 | `YTDL_GUI_PORT` | the GUI's loopback port |
+| `YTDL_APP_DIR` | the **parent** of `YTDL.app` — where `install.sh` builds the double-clickable app |
 | `YTDL_REPO` · `YTDL_BRANCH` | which repository and branch are probed and installed from |
+
+**`YTDL_APP_DIR` is a sandbox boundary, not a convenience.** The bundle's launcher
+resolves `ytdl` from a sidecar file written beside it, so a dev bundle built into
+`~/Applications` would carry a sidecar pointing at the sandbox — and the *installed*
+app would then start the *dev* engine, or the reverse, depending on which run wrote
+last. Pointing the bundle at `$DEV_HOME/Applications` keeps the two apart the same
+way the other five variables keep the rest apart.
 
 **The one directory with two names.** `YTDL_INSTALL_DIR` (installer) and
 `YTDL_BIN_DIR` (engine) address the same place and must be set to the same value.

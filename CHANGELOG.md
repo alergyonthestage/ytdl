@@ -5,7 +5,39 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-Nothing yet.
+**ytdl can now be opened without a Terminal.** The installer builds an app called
+**YTDL** in your Applications folder; a double-click brings up the web interface.
+Drag it to the Dock or the Desktop if you prefer — it keeps working from anywhere.
+See [ADR-0018](docs/maintainers/distribution/decisions/0018-desktop-launcher-app-bundle.md)
+and [ADR-0019](docs/maintainers/distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md).
+
+### Added
+
+- **`YTDL.app` in `~/Applications`**, built by `install.sh` on your own machine —
+  which is why it needs no security exception: an app that was never downloaded is
+  never assessed by Gatekeeper. It bounces in the Dock while the interface starts
+  and then leaves; the browser page is the interface, and closing that page is
+  what closes ytdl.
+- **A visible failure when the app cannot start.** An on-screen message carrying
+  the engine's own words, plus a line appended to
+  `~/.local/state/ytdl/launcher.log` on every launch — because from an icon there
+  is no Terminal to read an error in.
+- **`YTDL_APP_DIR`**, so a development sandbox gets its own bundle and can never
+  launch the installed ytdl.
+
+### Fixed
+
+- **The web interface starts in well under a second instead of ~7.5 s.** Its
+  daemon asked `yt-dlp` for its version *before* opening its port, and on macOS
+  that call costs 7.33 s every time — close enough to the 10 s limit that the
+  first attempt sometimes failed with nothing shown. Versions now come from what
+  the installer recorded, and are checked against the tools once the interface is
+  already up.
+
+### Changed
+
+- **Uninstalling takes one more line**, `rm -rf ~/Applications/YTDL.app` — it is
+  in the [installation guide](docs/users/guides/guida-installazione.md).
 
 ## [2.2.0] — 2026-08-23
 
