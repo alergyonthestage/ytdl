@@ -11,7 +11,25 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # TWO ARCHITECTURES, and the second one is not symmetry for its own sake.
+    #
+    # FetchPin resolves the ffmpeg build for the machine it runs on
+    # (internal/update/probe.go), and three tests asserted one architecture's build
+    # id unconditionally. They were green on the maintainer's arm64 container and
+    # red here from the day the pin gained per-architecture keys — main's CI was red
+    # for ten days and the local gate could not see it, because the local gate runs
+    # ONE architecture and always the same one.
+    #
+    # The maintainer develops on arm64 and CI ran amd64: whichever single one is
+    # chosen, the other is the blind spot. Running both is what removes the class
+    # rather than remembering it.
+    strategy:
+      # Never stop the other architecture: which one fails, and whether BOTH do, is
+      # the whole diagnostic value here.
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
