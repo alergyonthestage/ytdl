@@ -83,6 +83,8 @@ zipimport** and **evermeet** endpoints are no longer used (the legacy path is
 dropped); they are kept in the table as verified references. Cycle 1 adds our **own**
 release assets — `ytdl_macos_arm64`, `ytdl_macos_amd64` and a `SHA2-256SUMS` — fetched
 the same way (see [design-cycle1-remaining.md](../../engine/design/cycle1-remaining.md)).
+Cycle 6-launch adds `ytdl_launch_macos_{arm64,amd64}` to that same release and the
+same sums file ([ADR-0019 §1](../decisions/0019-launcher-mach-o-and-recorded-versions.md)).
 
 The `releases/latest/download/…` form matters: it always resolves to the current
 release, so **no version is hardcoded** in the installer and updates need no
@@ -100,10 +102,21 @@ downloaded binary against it. This is not optional hygiene: the installer runs
   over any `.pkg`/`.dmg`.
 - Since Sequoia, the Control-click bypass is gone; unsigned apps need a trip
   through System Settings → Privacy & Security. `xattr -d com.apple.quarantine`
-  still works. *(Sequoia/Tahoe specifics: unverified in detail — relevant only if
-  we later ship a `.app`, see [roadmap](../../roadmap.md) phase 4.)*
+  still works. *(Sequoia/Tahoe specifics: unverified in detail — relevant only to a
+  **downloaded** artefact, which is what the next note draws the line around.)*
 - Signing/notarizing anything requires an Apple Developer ID at $99/year. Not
   needed for the shell-script channel; it becomes a real question only for the GUI.
+
+> **Measured on hardware, 2026-08-26 — a bundle *generated* on the machine is a
+> different case ([ADR-0018](../decisions/0018-desktop-launcher-app-bundle.md)).**
+> Since Cycle 6-launch the installer builds `~/Applications/YTDL.app`. No locally
+> created bundle carried `com.apple.quarantine`, so Gatekeeper never assesses it and
+> no Developer ID is needed — `spctl` does reject it, and nothing ever asks `spctl`.
+> This does **not** soften the `.dmg`/`.app` row in the channel table below: that row
+> is about a **downloaded** artefact, and ADR-0018 §4 makes *never downloaded* an
+> invariant to protect rather than a happy accident. The same reasoning closed the
+> downloadable-installer question a second time — see the addition of 2026-08-27 at
+> the end of [ADR-0001](../decisions/0001-distribution-channel.md).
 
 ## Channel comparison
 
@@ -150,6 +163,7 @@ flowchart TD
     Y --> L["install into ~/.local/bin"]
     L --> M["add to PATH: .zprofile + .bash_profile"]
     M --> N["verify: ytdl --version"]
+    N --> P["build ~/Applications/YTDL.app<br/>(Cycle 6-launch · warns, never aborts)"]
 ```
 
 Design commitments:
@@ -165,6 +179,16 @@ Design commitments:
 - **Checksum verification before install**, using the published `SHA2-256SUMS`.
 - **Every failure names the next action** — never `brew install …`, which the
   audience cannot act on.
+- **The app bundle is built on the machine, and never fails the install.** Since
+  Cycle 6-launch `install.sh` also writes `~/Applications/YTDL.app` around a
+  per-architecture launcher fetched from the same release and verified against the
+  same `SHA2-256SUMS`. It is created when absent, **left alone when unchanged** —
+  the installer runs on every update, and churning the bundle would churn the Dock
+  entry, the Spotlight index and any alias the user made — and every failure it can
+  meet warns and continues, because keeping ytdl installable outranks the icon
+  ([the launcher design](cycle6launch-launcher.md) §4.3–§4.4). It runs **after** the
+  `ytdl --version` verification: an icon must never exist for an installation that
+  does not work.
 - **Updates ship with the first version**, not later: `ytdl --update` refreshes
   yt-dlp and the script itself. yt-dlp breaks whenever YouTube changes, and a
   user with no update path is a user with a broken tool within months. This is the

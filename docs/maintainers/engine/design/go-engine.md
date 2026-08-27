@@ -1,7 +1,7 @@
 # ytdl — Go Engine Architecture (as-built)
 
 Status: **as-built**. Written for Cycle 1 (Session 3, 2026-07-22); the package
-layout below is current as of Cycle 5's closing (2026-08-04). Describes the compiled Go
+layout below is current as of Cycle 6-launch (2026-08-27). Describes the compiled Go
 `ytdl` that supersedes the Bash script at parity. The Bash tool's as-built design
 is in [2026-07-21-code-bash-as-built.md](../analysis/2026-07-21-code-bash-as-built.md) (still the golden **reference**); the
 exact behaviour this engine reproduces is [go-port-parity-contract.md](go-port-parity-contract.md).
@@ -18,6 +18,11 @@ front-end; the Phase-4 daemon (`ytdld`) and Phase-6 web UI import the **same**
 
 Module `github.com/alergyonthestage/ytdl`, **Go 1.22+, standard library only,
 `CGO_ENABLED=0`** (static binary).
+
+Since Cycle 6-launch the module builds a **second command**, `cmd/ytdl-launch`. It
+is not a fourth front-end: it opens one. It contains no engine code, drives
+nothing, and has no flags
+([ADR-0019 §1](../../distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md)).
 
 ## Package layout & dependency direction
 
@@ -173,15 +178,38 @@ nothing in `jobs` imports `cli`, so there is no cycle.
     (24 h), `RefreshBudget` (30 s), `RefreshAsync`. Every surface reads the cache;
     no probe is ever on a path a user waits on.
   - **local facts + runner** (`install.go`, `runner.go`) — `Resolve`/`ToolPath`
-    (ours vs `$PATH`), `Dependencies`/`InstalledFrom`, the installer marker, and
+    (ours vs `$PATH`), `Dependencies`/`RecordedDependencies`/`InstalledFrom`, the installer marker, and
     `Runner` with `Start`/`Progress`/`Running`/`OnFinish`. Public API added by the
     review: **`StateAbandoned`** — a run that claims to be running while nothing
     is, **derived at read time and never written** — and **`StaleAfter`** (2 h),
-    the clock backstop behind the pid test (ADR-0016 §16.1).
+    the clock backstop behind the pid test (ADR-0016 §16.1). Since Cycle 6-launch
+    that walk carries a **version source** — `none` · `recorded` · `probed` — so
+    the SHOW and the COMPARE shape stay one walk: `RecordedDependencies` answers
+    from the installer's marker and execs nothing, which is what took a 7.33 s
+    `yt-dlp --version` off the GUI daemon's startup
+    ([ADR-0019 §2](../../distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md)).
+    As for ffmpeg, a recorded version is attributed **only to a copy that is
+    ours** — our number is never printed beside somebody else's binary.
 - **`cmd/ytdl`** — wires it together and owns `os.Exit` codes. Since Cycle 6-plus it
   is also where the **handover** lives (`handOver`, `spawnGUIWithToken`,
   `daemonAlive`, `guiUpdater`): composition-root work by ADR-0016's own account,
-  which is what keeps `internal/daemon` untouched.
+  which is what keeps `internal/daemon` untouched. Since Cycle 6-launch `runDaemon`
+  also schedules `go upd.refreshLocal()` **after `startWebUI` returns** — the
+  reconcile is deliberately behind the bound port, because in front of it is the
+  cold start it was written to remove.
+- **`cmd/ytdl-launch`** (Cycle 6-launch) — the Mach-O inside
+  `~/Applications/YTDL.app`, and the only binary here that is not the engine. It
+  resolves the installed `ytdl` by **absolute path** — the `Contents/Resources/ytdl-path`
+  sidecar `install.sh` writes, else `~/.local/bin/ytdl` — runs `ytdl gui`, and makes
+  the failure visible to somebody with no Terminal: one line appended to
+  `launcher.log` in the state dir on **every** launch — capped at 256 KiB and
+  truncated past it, the rule `internal/daemon` already applies to `daemon.log`, so
+  the two append-only files in that directory grow by one rule — plus an `osascript` alert
+  carrying **the child's own message** when the exit status is non-zero. It imports
+  `internal/config` (for `StatePath`) and nothing else of the engine, and it owns no
+  policy — ports, tokens, daemons and browsers all stay in `ytdl gui`, which both
+  channels already share
+  ([ADR-0019 §1](../../distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md)).
 
 Runtime strings live in `run`, parse strings in `cli` — so `run` does not import
 `cli` and there is no cycle (a minor consolidation of the design's `cli/dispatch.go`).
@@ -243,7 +271,13 @@ the build command is in the header of `.cco/Dockerfile`.
 Release (`.github/workflows/release.yml`, on a `v*` tag): cross-compiles from Linux,
 `CGO_ENABLED=0 GOOS=darwin GOARCH={arm64,amd64}`, `-trimpath`,
 `-ldflags "-s -w -X …/internal/buildinfo.Version=$TAG"`, publishes
-`ytdl_macos_{arm64,amd64}` + a yt-dlp-format `SHA2-256SUMS`, marked `--latest`.
+`ytdl_macos_{arm64,amd64}` and — since Cycle 6-launch —
+`ytdl_launch_macos_{arm64,amd64}`, all four in one yt-dlp-format `SHA2-256SUMS`,
+marked `--latest`. A release step **refuses to publish an arm64 launcher that
+carries no `LC_CODE_SIGNATURE`**: the Go linker signs `darwin/arm64` and not
+`darwin/amd64` (x86_64 macOS requires no signature), and macOS refuses an unsigned
+Mach-O as a bundle executable
+([ADR-0019 §1](../../distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md)).
 Versioning starts at **2.0.0**.
 
 ## Deliberate divergences from the Bash tool (documented, not bugs)

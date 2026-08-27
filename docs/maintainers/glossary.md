@@ -40,6 +40,10 @@ apart; use the term, or add the new one explicitly.
 | **attested** · **unattested** | Whether a dependency copy's bytes were checksummed against `deps.conf`. An **unattested copy is UNCOMPARED, not stale** — it is excluded from the comparison rather than reported out of date | [ADR-0016](distribution/decisions/0016-cycle6plus-update-path.md) |
 | **foreign** | A dependency copy ytdl did not install (Homebrew's, say): described as foreign, never dragged into *unattested* | [ADR-0016](distribution/decisions/0016-cycle6plus-update-path.md) |
 | **verdict** | The cached answer to *is there an update*, and what the surfaces render | [ADR-0016](distribution/decisions/0016-cycle6plus-update-path.md) |
+| **recorded** · **probed** | Where a local version came from: the installer's marker (a file read) or the tool itself (an exec — 7.33 s for `yt-dlp` on macOS). A different axis from *attested*, which is about bytes rather than versions | [ADR-0019](distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md) |
+| **`YTDL.app`** · the bundle | The double-clickable app `install.sh` builds at `~/Applications/YTDL.app`. **Generated on the machine, never downloaded** — which is the whole reason Gatekeeper never assesses it | [ADR-0018](distribution/decisions/0018-desktop-launcher-app-bundle.md) |
+| **launcher** | The small Mach-O inside the bundle, built from `cmd/ytdl-launch`: it resolves `ytdl`, runs `ytdl gui`, and transports that command's own message to a surface Finder can show. It is not the engine and owns no policy | [ADR-0019](distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md) |
+| **sidecar** | `Contents/Resources/ytdl-path` — the file the installer writes beside the launcher holding the absolute path of the `ytdl` that bundle must start. A **path**, never a command line | [the launcher design](distribution/design/cycle6launch-launcher.md) |
 
 ## How the work runs
 

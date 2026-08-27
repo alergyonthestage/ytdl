@@ -89,7 +89,7 @@ flowchart LR
 
 | Variable | Governs |
 |---|---|
-| `XDG_STATE_HOME` | the spool, the log store, `update.json`, `update-run.json`, `update.log`, `installed.conf`, the GUI token, `daemon.log` |
+| `XDG_STATE_HOME` | the spool, the log store, `update.json`, `update-run.json`, `update.log`, `installed.conf`, the GUI token, `daemon.log`, `launcher.log` |
 | `XDG_CONFIG_HOME` | the config file |
 | `YTDL_INSTALL_DIR` | where **`install.sh` writes** |
 | `YTDL_BIN_DIR` | where **the engine reads** its dependencies |

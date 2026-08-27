@@ -28,7 +28,7 @@ flowchart TD
   F --> FT["decisions/"]
   E --> ET["analysis/ · design/ · decisions/"]
   UX --> UT["design/ · decisions/ · reviews/"]
-  DI --> DT["design/ · decisions/ · guides/ · reviews/"]
+  DI --> DT["analysis/ · design/ · decisions/ · guides/ · reviews/"]
   P --> PT["analysis/ · design/ · reviews/"]
 ```
 
@@ -88,8 +88,9 @@ it links out. Open it directly when resuming.
 | [distribution.md](maintainers/distribution/design/distribution.md) | Constraints and design for shipping to non-developer macOS users |
 | [cycle6plus-update.md](maintainers/distribution/design/cycle6plus-update.md) | The update-path design approved at gate B |
 | [cycle6launch-launcher.md](maintainers/distribution/design/cycle6launch-launcher.md) | The desktop launcher design approved at gate B: the bundle, the launcher, and the cold-start remedy |
+| [2026-08-26-tech-choice-desktop-launcher.md](maintainers/distribution/analysis/2026-08-26-tech-choice-desktop-launcher.md) | The gate-A measurements behind ADR-0018 and ADR-0019: three candidate bundles on real hardware, Gatekeeper, and the 7.33 s version probe |
 | [guides/releasing.md](maintainers/distribution/guides/releasing.md) | How a release is cut, and the two failures that taught the order |
-| [reviews/](maintainers/distribution/reviews/) | Four Cycle 6-plus reviews — implementation, fix session, documentation, gate C — and Cycle 6-launch's implementation review |
+| [reviews/](maintainers/distribution/reviews/) | Four Cycle 6-plus reviews — implementation, fix session, documentation, gate C — and Cycle 6-launch's two, implementation and documentation |
 
 ### `foundation/` · `process/` · cross-cutting guides
 
