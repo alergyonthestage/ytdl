@@ -12,7 +12,7 @@ flowchart TD
   B --> C["CI green on the default branch<br/>(this is what registers release.yml)"]
   C --> D["CHANGELOG.md assembled<br/>from the conventional commits"]
   D --> E["annotated tag vX.Y.Z"]
-  E --> F["tag pushed → release.yml<br/>cross-compiles and publishes"]
+  E --> F["tag pushed → release.yml<br/>re-runs the suite on the TAGGED tree,<br/>then cross-compiles and publishes"]
   F --> G["install on the maintainer's Mac<br/>from the published release"]
   G --> H["verify by hand: the app, the GUI,<br/>a real download, --version"]
 ```
@@ -29,6 +29,16 @@ git diff main -- internal/core/ internal/daemon/     # the parity gate — must 
 bash tests/test-installer.sh                         # installer logic, pure bash
 ./hack/check-docs-links.sh                           # documentation links
 ```
+
+**Since 2026-08-27 the release runs these same checks itself**, on the tagged tree,
+and refuses to publish if they fail: `release.yml`'s publishing job `needs` a job
+that calls `ci.yml`. It is the same definition, not a copy, so the two cannot drift.
+
+The reason it was added is worth keeping: `ci.yml` and `release.yml` are independent
+workflows, so a tag push starts the release immediately whatever CI is doing on the
+same commit — and v2.3.0 was published from a tree whose suite was red. What shipped
+was sound (the failure was in three architecture-dependent tests, not in the
+product), but that was luck, not a property.
 
 ⚠️ **A green suite is not a passed gate C.** Cycle 6-plus's hands-on verification
 returned ten findings, three of them blocking, on a tree whose suite was green —
@@ -71,6 +81,12 @@ git checkout main && git merge --no-ff <branch>
 git push origin main                    # registers the workflows; let CI go green
 git tag -a vX.Y.Z -m "…" && git push origin vX.Y.Z
 ```
+
+**CI runs on two architectures** — `ubuntu-latest` (amd64) and `ubuntu-24.04-arm`.
+That is not symmetry for its own sake: the pin resolves ffmpeg's build id per
+architecture, and a test that hard-codes one was green on the maintainer's arm64
+container and red on the amd64 runner for ten days. Whichever single architecture is
+chosen, the other is the blind spot.
 
 `release.yml` fires on a `v*` tag: it cross-compiles from Linux with
 `CGO_ENABLED=0 GOOS=darwin GOARCH={arm64,amd64}`, `-trimpath` and

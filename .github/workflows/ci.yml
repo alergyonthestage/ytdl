@@ -8,6 +8,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Called by release.yml before it publishes anything. The release verifies the
+  # tagged tree with THESE checks rather than a copy of them: a duplicated gate
+  # drifts, and the half that drifts is the one nobody runs by hand.
+  workflow_call:
 
 jobs:
   test:

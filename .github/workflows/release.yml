@@ -12,7 +12,21 @@ permissions:
   contents: write
 
 jobs:
+  # The suite, on the TAGGED tree, before anything is published.
+  #
+  # ci.yml and release.yml are independent workflows: a tag push starts this one
+  # immediately, whatever CI is doing on the same commit — so a red tree could be,
+  # and was, released. What was released was sound (the failure was in three tests,
+  # not in the product), but that was luck rather than a property.
+  #
+  # This does not replace the human gate. `releasing.md` says the suite is a
+  # precondition and never the evidence, and gate C is still the maintainer's hands
+  # on real hardware. It only makes the precondition actually precede.
+  verify:
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
