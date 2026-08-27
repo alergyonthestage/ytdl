@@ -30,11 +30,55 @@ jobs:
           for arch in arm64 amd64; do
             CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" \
               go build -trimpath -ldflags "$ldflags" -o "dist/ytdl_macos_${arch}" ./cmd/ytdl
+            # The launcher inside YTDL.app. It carries no version: install.sh
+            # compares it by CHECKSUM, so a release that does not change its bytes
+            # must not change them (ADR-0019 §1, design §4.3).
+            CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" \
+              go build -trimpath -ldflags "-s -w" -o "dist/ytdl_launch_macos_${arch}" ./cmd/ytdl-launch
           done
+
+      # macOS 26 refuses an unsigned arm64 Mach-O as a bundle executable, and the
+      # only signature this pipeline can produce is the ad-hoc one the Go linker
+      # applies to darwin/arm64 by itself. If a toolchain change ever stopped
+      # emitting it, YTDL.app would be published dead and nothing before gate C
+      # would say so — so the release fails here instead.
+      #
+      # darwin/amd64 is deliberately NOT checked: x86_64 macOS requires no
+      # signature and the linker emits none, which is why ytdl_macos_amd64 has
+      # shipped unsigned since 2.0.0 and runs (ADR-0019 §1).
+      - name: Assert the arm64 launcher is linker-signed
+        run: |
+          python3 - <<'EOF'
+          import struct, sys
+
+          LC_CODE_SIGNATURE = 0x1D
+          path = "dist/ytdl_launch_macos_arm64"
+          data = open(path, "rb").read()
+
+          magic, = struct.unpack("<I", data[:4])
+          if magic != 0xFEEDFACF:
+              sys.exit(f"{path}: not a 64-bit little-endian Mach-O ({magic:#x})")
+
+          ncmds, = struct.unpack("<I", data[16:20])
+          off, signed = 32, False
+          for _ in range(ncmds):
+              cmd, size = struct.unpack("<II", data[off:off + 8])
+              if size == 0:
+                  sys.exit(f"{path}: malformed load command at {off}")
+              signed = signed or cmd == LC_CODE_SIGNATURE
+              off += size
+
+          if not signed:
+              sys.exit(f"{path}: no LC_CODE_SIGNATURE — macOS would refuse it as a bundle executable")
+          print(f"{path}: LC_CODE_SIGNATURE present")
+          EOF
 
       - name: Checksums (yt-dlp SHA2-256SUMS format)
         working-directory: dist
-        run: sha256sum ytdl_macos_arm64 ytdl_macos_amd64 > SHA2-256SUMS
+        run: |
+          sha256sum \
+            ytdl_macos_arm64 ytdl_macos_amd64 \
+            ytdl_launch_macos_arm64 ytdl_launch_macos_amd64 > SHA2-256SUMS
 
       - name: Publish release
         env:
@@ -44,4 +88,6 @@ jobs:
             --latest \
             --title "${GITHUB_REF_NAME}" \
             --generate-notes \
-            dist/ytdl_macos_arm64 dist/ytdl_macos_amd64 dist/SHA2-256SUMS
+            dist/ytdl_macos_arm64 dist/ytdl_macos_amd64 \
+            dist/ytdl_launch_macos_arm64 dist/ytdl_launch_macos_amd64 \
+            dist/SHA2-256SUMS

@@ -504,3 +504,37 @@ func functionBody(t *testing.T, js, header string) string {
 	}
 	return rest
 }
+
+// The pushed advisory's guard reads the run panel's visibility, and the panel is
+// only ever made visible — never hidden again — so its initial state is the
+// document's to state. If index.html stopped shipping it hidden, updateFlowBusy
+// would be true from the first paint and every pushed advisory would be dropped
+// in silence: a page that quietly stops learning, which no runtime test would
+// notice because nothing would fail (V32).
+func TestTheRunPanelShipsHidden(t *testing.T) {
+	html := assetText(t, "assets/index.html")
+	i := strings.Index(html, `id="updatePanel"`)
+	if i < 0 {
+		t.Fatal("index.html has no updatePanel")
+	}
+	end := strings.Index(html[i:], ">")
+	if end < 0 || !strings.Contains(html[i:i+end], "hidden") {
+		t.Errorf("updatePanel does not ship hidden: %q", html[i:i+end+1])
+	}
+}
+
+// A pushed advisory arrives on the stream, so a listener that is not wired is a
+// capability that silently does not exist — the daemon publishes, nobody hears,
+// and no test fails. Grepped deliberately: connect() cannot be executed without an
+// EventSource, and a deleted listener is exactly what a grep does see.
+func TestTheStreamsUpdateListenerIsWired(t *testing.T) {
+	js := assetText(t, "assets/app.js")
+	if !strings.Contains(js, `es.addEventListener("update"`) {
+		t.Error("no update listener on the SSE stream: the daemon's reconcile would reach nobody")
+	}
+	// And through the guard, never straight into applyUpdate: that is what keeps a
+	// push from rebuilding a control the user is inside.
+	if !strings.Contains(js, "applyPushedUpdate(JSON.parse(e.data))") {
+		t.Error("the update listener does not go through applyPushedUpdate")
+	}
+}

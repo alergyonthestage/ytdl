@@ -324,6 +324,14 @@ func runDaemon(daemonArgs []string) int {
 		upd.setWeb(hs)
 		defer stopWeb()
 
+		// The port is open, so the browser is no longer waiting on us: NOW ask the
+		// tools what they actually are, and replace the versions the constructor
+		// read out of the installer's record. This is the half that makes that
+		// record safe to believe — a marker can be stale, and only a probe finds
+		// out (ADR-0019 §2). It is deliberately after startWebUI, not before it:
+		// before, it is the 7.5 s cold start gate A measured.
+		go reconcileAndPublish(upd, srv)
+
 		return serveGUI(cfg, alive)
 	}
 

@@ -1,11 +1,14 @@
 package webui
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +21,7 @@ import (
 // SEAM — what the routes answer and what the state carries — rather than about
 // probing or installing.
 type fakeUpdater struct {
+	mu       sync.Mutex
 	verdict  update.Verdict
 	have     bool
 	enabled  bool
@@ -39,7 +43,22 @@ type fakeUpdater struct {
 	deps []update.Dependency
 }
 
-func (f *fakeUpdater) Verdict() (update.Verdict, bool) { return f.verdict, f.have }
+// mu guards verdict alone, and only because of the SSE tests: there the connect
+// frame is built on the handler's goroutine while the pushed one is built on the
+// test's, so the fake is genuinely shared. Everything else here is single-threaded.
+func (f *fakeUpdater) Verdict() (update.Verdict, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.verdict, f.have
+}
+
+// setInstalledYtDlp is what the probe finding a different version looks like from
+// outside: the daemon's answer changes while a page is already connected.
+func (f *fakeUpdater) setInstalledYtDlp(v string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.verdict.Installed.YtDlp = v
+}
 
 func (f *fakeUpdater) Check(ctx context.Context) (update.Verdict, error) {
 	f.checked++
@@ -63,7 +82,14 @@ func (f *fakeUpdater) Start(force bool) error {
 	return nil
 }
 
-func (f *fakeUpdater) Progress() update.Progress { f.progressed++; return f.progress }
+// Under the same lock as Verdict, and for the same reason: buildUpdateDTO calls
+// both, and with a stream open it is called from two goroutines.
+func (f *fakeUpdater) Progress() update.Progress {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.progressed++
+	return f.progress
+}
 func (f *fakeUpdater) Deps() []update.Dependency { return f.deps }
 func (f *fakeUpdater) Enabled() bool             { return f.enabled }
 
@@ -552,5 +578,116 @@ func TestStateCarriesOnlyARunThePageMustActOn(t *testing.T) {
 				t.Errorf("run.state = %v, want %q", got, tc.state)
 			}
 		})
+	}
+}
+
+// ── V32: the advisory reaches a page that is already open ──────────────────
+
+// readFramesUntil collects every SSE line up to and including the one containing
+// marker, so a test can assert what did NOT arrive before it as well as what did.
+func readFramesUntil(t *testing.T, body io.Reader, marker string, timeout time.Duration) []string {
+	t.Helper()
+	lines := make(chan string, 256)
+	go func() {
+		sc := bufio.NewScanner(body)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+	}()
+	var seen []string
+	deadline := time.After(timeout)
+	for {
+		select {
+		case l := <-lines:
+			seen = append(seen, l)
+			if strings.Contains(l, marker) {
+				return seen
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for %q; saw:\n%s", marker, strings.Join(seen, "\n"))
+			return seen
+		}
+	}
+}
+
+// The daemon answers /api/state from the installer's RECORD and measures the real
+// versions only once the port is open, because that probe costs 7.33 s on macOS
+// (ADR-0019 §2). A page already open therefore has to be TOLD, or it keeps the
+// record's answer for the life of that load (V32).
+func TestPublishUpdateReachesAPageThatIsAlreadyOpen(t *testing.T) {
+	v := upToDateVerdict()
+	f := &fakeUpdater{verdict: v, have: true, enabled: true}
+	srv, _ := serverWithUpdater(t, f)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	waitFor(t, srv.HasClients, time.Second, "an SSE client to register")
+
+	// What the probe learns: the page was told the record's version, and this is
+	// the measured one arriving afterwards.
+	f.setInstalledYtDlp("2026.08.02")
+	srv.PublishUpdate()
+
+	seen := readFramesUntil(t, resp.Body, "2026.08.02", 2*time.Second)
+	joined := strings.Join(seen, "\n")
+	if !strings.Contains(joined, "event: update") {
+		t.Errorf("the measured version did not arrive as an update event:\n%s", joined)
+	}
+}
+
+// The page fetches /api/state and only THEN opens the stream. A probe finishing
+// between those two calls would be broadcast to a client that is not connected
+// yet, and the page would keep the record's answer with no second chance — so the
+// stream states the advisory on connect, exactly as it states the queue.
+func TestTheStreamStatesTheAdvisoryOnConnect(t *testing.T) {
+	v := upToDateVerdict()
+	v.Installed.YtDlp = "2026.08.02"
+	srv, _ := serverWithUpdater(t, &fakeUpdater{verdict: v, have: true, enabled: true})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Nothing is published: whatever arrives, arrives because the connection was
+	// opened.
+	seen := readFramesUntil(t, resp.Body, "2026.08.02", 2*time.Second)
+	if joined := strings.Join(seen, "\n"); !strings.Contains(joined, "event: update") {
+		t.Errorf("the advisory arrived, but not as an update event:\n%s", joined)
+	}
+}
+
+// A capability that is not there says nothing at all — on this stream too, never
+// an empty advisory that the page would render as a dead control
+// (ux-principles.md §4).
+func TestNoUpdaterMeansNoUpdateFrame(t *testing.T) {
+	srv, _, _ := newTestServer(t)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	waitFor(t, srv.HasClients, time.Second, "an SSE client to register")
+
+	// PublishUpdate must be a no-op rather than a panic or an empty frame; the
+	// progress event that follows it is the ordering marker proving the stream got
+	// that far.
+	srv.PublishUpdate()
+	srv.PublishProgress("job1", Progress{Status: "downloading", Percent: 1})
+
+	seen := readFramesUntil(t, resp.Body, `"id":"job1"`, 2*time.Second)
+	if joined := strings.Join(seen, "\n"); strings.Contains(joined, "event: update") {
+		t.Errorf("a server with no Updater still sent an update frame:\n%s", joined)
 	}
 }

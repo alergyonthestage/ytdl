@@ -240,6 +240,39 @@ func (s *Server) PublishProgress(id string, p Progress) {
 	s.hub.broadcast(sseMsg{event: "progress", data: data})
 }
 
+// PublishUpdate pushes the update advisory to every connected page.
+//
+// The advisory otherwise reaches the browser exactly once, inside the state it
+// loads with. The daemon answers from the installer's record and probes the real
+// versions only after the port is open, because that probe costs 7.33 s on macOS
+// (ADR-0019 §2) — so what the page was told is what the RECORD said, and what the
+// daemon measured a few seconds later used to reach nobody until the user pressed
+// Controlla aggiornamenti (V32). This is that news, on the stream the page already
+// holds open for its own liveness.
+//
+// It is the advisory, never the run: a run's panel polls, because the handover
+// closes this stream by construction (design §6.2).
+func (s *Server) PublishUpdate() {
+	if data, ok := s.updateFrame(); ok {
+		s.hub.broadcast(sseMsg{event: "update", data: data})
+	}
+}
+
+// updateFrame encodes the advisory exactly as /api/state carries it — the same
+// builder, so the pushed frame and the loaded one cannot drift into two shapes —
+// or reports false when no Updater was injected and there is nothing to say.
+func (s *Server) updateFrame() ([]byte, bool) {
+	dto := s.buildUpdateDTO()
+	if dto == nil {
+		return nil, false
+	}
+	data, err := json.Marshal(dto)
+	if err != nil {
+		return nil, false
+	}
+	return data, true
+}
+
 // guardLocalHost rejects any request whose Host header is not loopback, the
 // standard defence against DNS-rebinding: a malicious web page can point a
 // hostname it controls at 127.0.0.1, but the browser then sends THAT hostname as

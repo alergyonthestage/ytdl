@@ -14,7 +14,7 @@ flowchart TD
   D --> E["annotated tag vX.Y.Z"]
   E --> F["tag pushed → release.yml<br/>cross-compiles and publishes"]
   F --> G["install on the maintainer's Mac<br/>from the published release"]
-  G --> H["verify by hand: GUI, a real download, --version"]
+  G --> H["verify by hand: the app, the GUI,<br/>a real download, --version"]
 ```
 
 ## Before anything: the gates the release does not replace
@@ -75,13 +75,24 @@ git tag -a vX.Y.Z -m "…" && git push origin vX.Y.Z
 `release.yml` fires on a `v*` tag: it cross-compiles from Linux with
 `CGO_ENABLED=0 GOOS=darwin GOARCH={arm64,amd64}`, `-trimpath` and
 `-ldflags "-s -w -X …/internal/buildinfo.Version=$TAG"`, then publishes
-`ytdl_macos_{arm64,amd64}` and a yt-dlp-format `SHA2-256SUMS`, marked `--latest`.
+`ytdl_macos_{arm64,amd64}` and — since Cycle 6-launch — the two launcher binaries
+`ytdl_launch_macos_{arm64,amd64}`, all four in one yt-dlp-format `SHA2-256SUMS`,
+marked `--latest`.
+
+⚠️ **A step refuses to publish an arm64 launcher carrying no `LC_CODE_SIGNATURE`.**
+The Go linker signs `darwin/arm64` and not `darwin/amd64` (x86_64 macOS requires no
+signature), and macOS refuses an unsigned Mach-O as a bundle executable — an
+unsigned launcher would ship a `YTDL.app` that cannot open. The assertion runs
+**before** `SHA2-256SUMS` is written, so a rejected launcher never reaches the sums
+file ([ADR-0019 §1](../decisions/0019-launcher-mach-o-and-recorded-versions.md)).
 
 ## Verifying, and the cache that makes a good push look broken
 
 Install from the published release the way a user would, then exercise what the
 container cannot: the GUI, a real download with a real conversion, and
-`ytdl --version` against the installed dependencies.
+`ytdl --version` against the installed dependencies — and, since Cycle 6-launch,
+`~/Applications/YTDL.app` itself: double-click it twice in a row and check that the
+browser opens and no Terminal ever appears.
 
 ⚠️ **`raw.githubusercontent.com` serves through a CDN that caches a branch path.**
 
@@ -100,6 +111,21 @@ installation within a day — it is **not** gated on a tag. That is deliberate
 ([ADR-0016](../decisions/0016-cycle6plus-update-path.md)): a withdrawn upstream
 build must be repinnable without cutting a version. It also means a careless
 commit to `deps.conf` ships immediately.
+
+## A new asset is not installable until the release is cut
+
+`install.sh` is served from **`main`** while everything it downloads comes from
+**`releases/latest`**, and the two move at different moments. The asymmetry is the
+mirror of `deps.conf`'s: a change to the *installer* reaches users within minutes,
+while anything the installer must **fetch** waits for the tag. In the window between
+the merge and the release, an installer run finds the new asset missing.
+
+The launcher is the first component in that position, and it is built for it — the
+bundle step warns and continues, so the install still succeeds and simply installs no
+app ([the launcher design](../design/cycle6launch-launcher.md) §4.4). It is still a
+user meeting a warning about something merely not released yet, so **keep the merge →
+release gap short**, and expect any future component fetched from a release to inherit
+the same window.
 
 ## Testing a development build without disturbing the installed one
 

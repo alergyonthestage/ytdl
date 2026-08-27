@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -434,5 +435,162 @@ func TestServeGUIStaysWhileAnUpdateRuns(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Error("serveGUI never returned after the update finished; an unused GUI daemon must not linger (ADR-0008)")
+	}
+}
+
+// sleepingTool writes a yt-dlp stand-in that answers only after d, so a test can
+// tell "did not wait for the tool" from "the tool happened to be fast".
+//
+// sleep is invoked by ABSOLUTE path on purpose: surfaceSandbox replaces $PATH
+// with its own bin dir, so a bare `sleep` is not found, fails, and the stub
+// answers instantly — a stub that silently stops testing what it was written for.
+func sleepingTool(t *testing.T, dir, name string, d time.Duration, prints string) {
+	t.Helper()
+	sleepBin := "/bin/sleep"
+	if _, err := os.Stat(sleepBin); err != nil {
+		t.Skipf("no %s to build a slow stub with: %v", sleepBin, err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\n" + sleepBin + " " + strconv.Itoa(int(d.Seconds())) + "\necho '" + prints + "'\n"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeInstallerMarker records what the installer put on this machine.
+func writeInstallerMarker(t *testing.T, state, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(state, update.MarkerName), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// depVersion pulls one dependency's version out of the updater's view.
+func depVersion(t *testing.T, deps []update.Dependency, name string) string {
+	t.Helper()
+	for _, d := range deps {
+		if d.Name == name {
+			return d.Version
+		}
+	}
+	t.Fatalf("%s missing from Deps()", name)
+	return ""
+}
+
+// The measured defect, asserted directly: the constructor runs BEFORE the daemon
+// binds its port, so anything it waits for is time the browser spends looking at
+// nothing. On a user's Mac `yt-dlp --version` costs 7.33 s against waitForGUI's
+// 10 s cap — the first click failed silently often enough to be found by
+// accident (gate A). It must now not wait for the tool at all.
+func TestNewGUIUpdaterDoesNotWaitForATool(t *testing.T) {
+	state := surfaceSandbox(t)
+	sleepingTool(t, update.BinDir(), update.ComponentYtDlp, 5*time.Second, "2026.07.04")
+	writeInstallerMarker(t, state, "yt_dlp_version = 2026.08.20\n")
+
+	start := time.Now()
+	upd := newGUIUpdater(state, func() config.Settings { return config.Settings{} })
+	elapsed := time.Since(start)
+
+	if elapsed > time.Second {
+		t.Fatalf("newGUIUpdater took %s: it waited for the tool", elapsed)
+	}
+	// Fast AND right: (a) alone would be fast and blank, which is the defect V20
+	// closed, so speed on its own is not the contract.
+	if got := depVersion(t, upd.Deps(), update.ComponentYtDlp); got != "2026.08.20" {
+		t.Errorf("yt-dlp version = %q, want the marker's 2026.08.20", got)
+	}
+}
+
+// The page is right immediately, not blank. An installed and working yt-dlp must
+// never render as "versione non registrata" just because nothing was exec'd.
+func TestNewGUIUpdaterReportsTheRecordedVersion(t *testing.T) {
+	state := surfaceSandbox(t)
+	fakeBinary(t, update.BinDir(), update.ComponentYtDlp)
+	writeInstallerMarker(t, state, "yt_dlp_version = 2026.08.20\n")
+
+	upd := newGUIUpdater(state, func() config.Settings { return config.Settings{} })
+	for _, d := range upd.Deps() {
+		if d.Name != update.ComponentYtDlp {
+			continue
+		}
+		if d.Version != "2026.08.20" {
+			t.Errorf("Version = %q, want 2026.08.20", d.Version)
+		}
+		if d.VersionUnreadable() {
+			t.Error("VersionUnreadable: nothing was asked, so nothing failed to answer")
+		}
+	}
+}
+
+// A marker can go stale — a run that replaced yt-dlp and died before
+// write_marker, or a user who ran `yt-dlp -U` by hand. The reconcile is what
+// makes it safe to believe in the first place: once the port is open, the probe
+// replaces the recorded answer with the measured one.
+func TestRefreshLocalReconcilesWithReality(t *testing.T) {
+	state := surfaceSandbox(t)
+	sleepingTool(t, update.BinDir(), update.ComponentYtDlp, 0, "2026.09.01")
+	writeInstallerMarker(t, state, "yt_dlp_version = 2026.08.20\n")
+
+	upd := newGUIUpdater(state, func() config.Settings { return config.Settings{} })
+	if got := depVersion(t, upd.Deps(), update.ComponentYtDlp); got != "2026.08.20" {
+		t.Fatalf("before the reconcile: %q, want the marker's", got)
+	}
+
+	upd.refreshLocal()
+
+	if got := depVersion(t, upd.Deps(), update.ComponentYtDlp); got != "2026.09.01" {
+		t.Errorf("after the reconcile: %q, want what the tool says", got)
+	}
+}
+
+// countingPublisher records what the daemon knew AT THE MOMENT it published, which
+// is the only way to tell "measured, then told" from "told, then measured".
+type countingPublisher struct {
+	calls int
+	saw   string
+	deps  func() string
+}
+
+func (c *countingPublisher) PublishUpdate() {
+	c.calls++
+	c.saw = c.deps()
+}
+
+// The reconcile is not finished when the daemon knows: it is finished when the
+// page knows. A pushed advisory carrying the version the page already had would
+// be a round trip that changes nothing (V32).
+func TestReconcilePublishesWhatItMeasured(t *testing.T) {
+	state := surfaceSandbox(t)
+	sleepingTool(t, update.BinDir(), update.ComponentYtDlp, 0, "2026.09.01")
+	writeInstallerMarker(t, state, "yt_dlp_version = 2026.08.20\n")
+
+	upd := newGUIUpdater(state, func() config.Settings { return config.Settings{} })
+	pub := &countingPublisher{deps: func() string {
+		return depVersion(t, upd.Deps(), update.ComponentYtDlp)
+	}}
+
+	reconcileAndPublish(upd, pub)
+
+	if pub.calls != 1 {
+		t.Fatalf("PublishUpdate called %d times, want exactly 1", pub.calls)
+	}
+	if pub.saw != "2026.09.01" {
+		t.Errorf("published %q — the recorded answer, not the measured one; the probe ran after the push", pub.saw)
+	}
+}
+
+// A daemon with no GUI server has nobody to tell, and must not die trying.
+func TestReconcileWithoutAPublisherStillReconciles(t *testing.T) {
+	state := surfaceSandbox(t)
+	sleepingTool(t, update.BinDir(), update.ComponentYtDlp, 0, "2026.09.01")
+	writeInstallerMarker(t, state, "yt_dlp_version = 2026.08.20\n")
+
+	upd := newGUIUpdater(state, func() config.Settings { return config.Settings{} })
+	reconcileAndPublish(upd, nil)
+
+	if got := depVersion(t, upd.Deps(), update.ComponentYtDlp); got != "2026.09.01" {
+		t.Errorf("after the reconcile: %q, want what the tool says", got)
 	}
 }

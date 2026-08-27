@@ -14,13 +14,15 @@ and [go-engine.md](engine/design/go-engine.md) for the engine as built.
 **Where we are now.** **v2.2.0 is released, merged and installed**, Cycle 6-plus is
 closed, `DOCS-1` is **closed and merged**, and **`DEV-1` is done** — the project's
 primary gate, `go test -race ./...`, no longer destroys the session that runs it and
-returns in 8 s ([ADR-0017](foundation/decisions/0017-dev-container-oracle.md)). Its
-block below moves to the history once its branch is merged, like every closed unit.
+still returns in 8 s cold ([ADR-0017](foundation/decisions/0017-dev-container-oracle.md))
+— re-measured on 2026-08-27 with `cmd/ytdl-launch` in the tree. Its block is in
+[roadmap-history](roadmap-history.md#dev-1), like every closed unit.
 
-Next is **Cycle 6-launch** — ytdl as a double-clickable app — whose **design is done,
-whose gate B was approved on 2026-08-27, and whose work is now planned below as
-`L1`–`L12`**. It resumes at **implementation**, starting with `L2`. Cycle 6 (the
-scope model) has its gate A closed too, and follows it.
+In flight is **Cycle 6-launch** — ytdl as a double-clickable app — whose gate B was
+approved on 2026-08-27, whose **implementation (`L1`–`L8`) is complete**, and whose
+**two reviews (`L9`) have both run** on the same branch. What is left is the merge,
+the release and gate C. Cycle 6 (the scope model) has its gate A closed too, and
+follows it.
 
 A closed unit keeps **one line** here and its full block in
 [roadmap-history.md](roadmap-history.md). What is known, worth doing and **not**
@@ -41,10 +43,16 @@ flowchart LR
 ## Open now
 
 **[`Cycle 6-launch`](#cycle-6-launch) — the desktop launcher — is in flight, and its
-work is now planned.** Its gate B was approved on 2026-08-27 and design §8's eight
-steps are on the roadmap below as `L1`–`L12`, each with what it depends on. `L1` is `done` — the
-design, ADR-0019 and their index rows are on the branch `feat/launch/design`, **not yet
-merged**. The next phase is **implementation**, and it starts at `L2`.
+work is implemented and reviewed.** Gate B was approved on 2026-08-27 and **all eight
+implementation steps `L1`–`L8` are done** on `feat/launch/implementation`, not merged:
+the cold-start remedy, the launcher, the release assets and their signature assertion,
+the bundle step, and the Italian surfaces. **`L9` is done too**: the
+[implementation review](distribution/reviews/005-cycle6launch-implementation.md) fixed
+two defects in place — an empty `YTDL.app` left behind by a run that installed none
+(`V30`), and a launcher that reported a successful launch as a failure (`V31`) — and
+the [documentation review](distribution/reviews/006-cycle6launch-documentation.md)
+realigned the living docs. What remains is `L10`–`L12` — the merge, the release, and
+gate C. The design and ADR-0019 are merged into `main`.
 
 Its rulings are, in the order to read them:
 [ADR-0018](distribution/decisions/0018-desktop-launcher-app-bundle.md) (gate A — the
@@ -69,10 +77,12 @@ constraint: the GUI daemon takes **~7.5 s** to open its port against `waitForGUI
 **10 s** cap, and the cost is a single `yt-dlp --version` — **7.33 s on macOS, warm
 or cold** — called synchronously before the port opens. A first click that fails
 silently is not a launcher that ships, so it is **in scope**, not deferred behind it.
-Its remedy is decided:
+Its remedy is decided **and built** (`L2`–`L3`):
 [ADR-0019 §2](distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md) —
 the daemon answers from `installed.conf` and reconciles with a probe once the port is
-open, which **closes `T4`**.
+open, which **closes `T4`**. The tests pin the constructor against a stub that never
+answers and pin *no exec on the startup path*; that the first click then opens the
+browser in well under a second is gate C's to confirm, on hardware.
 
 ## Closed phases
 
@@ -117,7 +127,7 @@ planned as a dedicated cycle:** automatic retries/backoff (`Attempts`/`NotBefore
 and YouTube rate-limit handling — the riskiest hardening, deliberately separated
 from the manual cancel/retry above.
 
-## Phase 6 — GUI — `in progress` (6b + 6c done and shipped in v2.1.0; 6d planned; 6a split — launcher next, paste/drop deferred)
+## Phase 6 — GUI — `in progress` (6b + 6c done and shipped in v2.1.0; 6d planned; 6a split — the launcher is Cycle 6-launch, in flight; paste/drop deferred)
 
 A GUI for non-developer users. It is a **front-end over the Go engine** (config +
 queue + runner already built), not a reimplementation. Runtime is settled by
@@ -130,7 +140,7 @@ installed by default.
 
 | # | Item | Status | Notes |
 |---|---|---|---|
-| 6a | AppleScript/Automator MVP: paste/drop URL, pick folder, enqueue | split (2026-08-12) | its **entry point** — a double-clickable icon that brings up the GUI — is pulled out as **Cycle 6-launch** and runs next; the paste/drop-and-enqueue app stays planned, and may prove unnecessary once the GUI is one click away |
+| 6a | AppleScript/Automator MVP: paste/drop URL, pick folder, enqueue | split (2026-08-12) | its **entry point** — a double-clickable icon that brings up the GUI — is pulled out as **Cycle 6-launch**, which is in flight (implemented and reviewed, awaiting merge); the paste/drop-and-enqueue app stays planned, and may prove unnecessary once the GUI is one click away |
 | 6b | Web UI served by the daemon: live progress, format/settings, per-run/session/global output dir, settings editor, queue + in-progress view | done (Cycle 3) | `net/http` + SSE; single binary; authenticated local API |
 | 6c | Multi-view GUI (Download · Cronologia · Impostazioni), actionable queue and history, open/reveal the downloaded file | done (Cycle 5, shipped in v2.1.0) | designed with the CLI in one pass; [ADR-0013](ux/decisions/0013-cycle5-unified-ux.md) |
 | 6d | GUI/CLI follow-through from the gate-C review: scope model, partial outcomes, destination presets, authentication, visual language | planned (Cycles 6–10) | [ADR-0014](ux/decisions/0014-ux-scope-model-and-partial-outcome.md) · [findings](ux/reviews/001-cycle5-gate-c.md#gate-c) |
@@ -304,7 +314,7 @@ two findings, **G27** and **G28**, which land in this cycle. What remains is the
 
 <a id="cycle-6-launch"></a>
 
-#### `Cycle 6-launch` · The desktop launcher (`F`) — `planned` (opened 2026-08-23, planned 2026-08-27)
+#### `Cycle 6-launch` · The desktop launcher (`F`) — `in progress` (opened 2026-08-23, planned · implemented · reviewed 2026-08-27)
 
 **Why now.** Cycle 6-plus's gate C passed with exactly one recorded exception,
 `C2`: the update no longer needed a Terminal, but **opening the interface still
@@ -329,17 +339,18 @@ means, and what the user sees while it starts. None is reopened here.
 | id | entry | depends on | status |
 |---|---|---|---|
 | L1 | the design, ADR-0019, and their two rows in `docs/README.md` | — | `done` |
-| L2 | `internal/update`: the recorded version walk, `RecordedDependencies`, and the two comments the measurements falsified | — | `planned` |
-| L3 | `cmd/ytdl`: the constructor reads the record; `runDaemon` reconciles with a probe after `startWebUI` | L2 | `planned` |
-| L4 | `cmd/ytdl-launch`: resolve `ytdl` absolutely, run `ytdl gui`, always log, alert only on failure | — | `planned` |
-| L5 | `.github/workflows/release.yml`: the two launcher assets, in `SHA2-256SUMS`, with the arm64 `LC_CODE_SIGNATURE` asserted | L4 | `planned` |
-| L6 | `install.sh` pure functions: `app_dir`, `launcher_asset_for`, `render_app_plist`, `app_is_current`, `app_sidecar_path` | L4 | `planned` |
-| L7 | `install.sh`: `install_app_bundle`, wired after `verify_install` and before `write_marker`, non-fatal | L6 | `planned` |
-| L8 | the Italian surfaces — both user guides, `YTDL_APP_DIR` in `hack/ytdl-dev.sh` and `dev-testing.md`, `CHANGELOG.md` under `[Unreleased]` | L3 · L7 | `planned` |
-| L9 | `/review-implementation`, then `/review-docs` on the same branch | L1–L8 | `planned` |
-| L10 | merge `--no-ff` into `main` | L9 | `planned` |
+| L2 | `internal/update`: the recorded version walk, `RecordedDependencies`, and the two comments the measurements falsified | — | `done` |
+| L3 | `cmd/ytdl`: the constructor reads the record; `runDaemon` reconciles with a probe after `startWebUI` | L2 | `done` |
+| L4 | `cmd/ytdl-launch`: resolve `ytdl` absolutely, run `ytdl gui`, always log, alert only on failure | — | `done` |
+| L5 | `.github/workflows/release.yml`: the two launcher assets, in `SHA2-256SUMS`, with the arm64 `LC_CODE_SIGNATURE` asserted | L4 | `done` |
+| L6 | `install.sh` pure functions: `app_dir`, `launcher_asset_for`, `render_app_plist`, `app_is_current`, `app_sidecar_path` | L4 | `done` |
+| L7 | `install.sh`: `install_app_bundle`, wired after `verify_install` and before `write_marker`, non-fatal | L6 | `done` |
+| L8 | the Italian surfaces — both user guides, `YTDL_APP_DIR` in `hack/ytdl-dev.sh` and `dev-testing.md`, `CHANGELOG.md` under `[Unreleased]` | L3 · L7 | `done` |
+| L9 | [`/review-implementation`](distribution/reviews/005-cycle6launch-implementation.md), then [`/review-docs`](distribution/reviews/006-cycle6launch-documentation.md) on the same branch | L1–L8 | `done` |
+| L9b | `V32`: the advisory is pushed over SSE — the `update` frame on connect and on reconcile, the guard that yields while the user is mid-flow, and the dated addition to ADR-0019 §2 | L9 | `done` |
+| L10 | merge `--no-ff` into `main` | L9b | `planned` |
 | L11 | **cut the release**, so `releases/latest` carries the launcher assets | L10 | `planned` |
-| L12 | **gate C** on hardware — the eight items in [design §9](distribution/design/cycle6launch-launcher.md) | L11 | `planned` |
+| L12 | **gate C** on hardware — the eight items in [design §9](distribution/design/cycle6launch-launcher.md), plus the ninth `V32` adds below | L11 | `planned` |
 
 **Two independent halves, in this order.** L2–L3 are the cold-start remedy and
 ship without the bundle; L4–L7 are the bundle, which without the remedy would ship
@@ -367,6 +378,18 @@ install, a `deps.conf` change, a forced `ytdl --update` — takes the warn-and-c
 path and installs **no app**. Non-fatal by design, and still a user meeting a
 warning for something that is merely not released yet. **Gate C's four
 bundle items cannot be observed before L11.**
+
+**[`V32`](distribution/reviews/005-cycle6launch-implementation.md#v32) is decided
+and built** (`L9b`, 2026-08-27). The cold-start reconcile of
+[ADR-0019 §2](distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md)
+replaced the recorded version with the probed one **in the daemon's memory only**, so
+a page already open kept the record's answer for the life of that load — visible to a
+foreign or a stale yt-dlp, and stating nothing false, only *less* than was known. The
+maintainer chose to **push the advisory over SSE**, option A of the four priced in
+[the analysis](distribution/analysis/2026-08-27-tech-choice-v32-advisory-freshness.md);
+the ADR carries a dated addition saying so. Gate C keeps the item the decision does
+not remove: open *Aggiornamenti* on a Mac with a Homebrew yt-dlp and read what it
+says — that is the only machine where any of this is visible.
 
 - **Done when:** a non-developer starts ytdl **as an app** — from the Applications
   folder, the Dock, or wherever they chose to put it — twice in a row, without a
@@ -502,8 +525,12 @@ Implements ADR-0014 decision 2, plus the storage work it forces.
   question is moot.
 - Is ffmpeg strictly required for every format we advertise, or only for cover
   embedding and some conversions? Affects whether ffmpeg can be optional (C2).
-- Sequoia/Tahoe Gatekeeper specifics matter only if a `.app`/`.pkg` ships — now
-  only relevant to a possible `install.command`, not the web GUI.
+- Sequoia/Tahoe Gatekeeper specifics matter only for a **downloaded** `.app`/`.pkg`.
+  The bundle Cycle 6-launch ships is *generated on the machine* and never acquires
+  `com.apple.quarantine`, so Gatekeeper never assesses it
+  ([ADR-0018](distribution/decisions/0018-desktop-launcher-app-bundle.md) §4,
+  measured on hardware). The question stays open only for a possible downloadable
+  `install.command`.
 - ~~**Documentation drift (found in Session 1):** the `ytdl` script header comment
   lists an *album* ID3 tag, but `meta_args` writes only `meta_artist`/`meta_title`.~~
   **Closed (Session 3):** the Go port correctly omits album (parity, golden-tested)

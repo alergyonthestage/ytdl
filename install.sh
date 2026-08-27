@@ -53,6 +53,16 @@ OS_MAJOR=""; OS_MINOR=""; TIER=""; ARCH=""; ARCH_KEY=""
 # below is between two concrete strings.
 DEPS_FILE=""; YTDLP_TARGET=""; FFMPEG_TARGET=""; YTDL_TARGET=""
 
+# Whether THIS run wrote or confirmed YTDL.app — not whether the app is on the
+# machine. A run that skipped the bundle step, because the checksums or the asset
+# never arrived, leaves it 0 even when a working app is already in ~/Applications,
+# and the closing message then stays silent about it.
+#
+# That asymmetry is deliberate and it is the safe side of the gap: the message may
+# under-report an app that is there, never name one that is not (ux-principles §5
+# — a surface never states something untrue).
+APP_INSTALLED=0
+
 # Whether the ffmpeg actually installed is the build deps.conf attests. It is 0
 # only when that build has been withdrawn upstream and we fell back (§ADR-0016
 # §15); the marker records it, and every surface says so.
@@ -758,7 +768,7 @@ setup_path() {
     fi
     printf '\n%s\n%s\n' "$marker" "$line" >> "$rc"
     updated=1
-    info "Updated ${rc/#$HOME/~}"
+    info "Updated $(home_display "$rc")"
   done
 
   if [ "$updated" -eq 0 ]; then
@@ -794,6 +804,304 @@ verify_install() {
 }
 
 # ──────────────────────────────────────────────────────────────────
+#  The app bundle
+# ──────────────────────────────────────────────────────────────────
+# YTDL.app is what makes ytdl startable without a Terminal — the one thing
+# Cycle 6-plus's gate C recorded as still needing one (ADR-0018). It wraps a
+# dedicated launcher, never ytdl itself: ytdl's bytes move on every release, and
+# a bundle rebuilt on every update would churn the Dock entry, the Spotlight
+# identity and any alias the user made (ADR-0019 §1).
+#
+# It is generated HERE, on the machine, which is the whole reason it needs no
+# Developer ID: a bundle that was never downloaded never acquires
+# com.apple.quarantine, so Gatekeeper never assesses it. Measured on hardware at
+# gate A; ADR-0001 is superseded in part, for this case only.
+
+# app_dir — the bundle itself. YTDL_APP_DIR names its PARENT directory, so
+# hack/ytdl-dev.sh can give the development sandbox its own bundle and a dev
+# launcher can never start the installed ytdl (design §4.6).
+#
+# ~/Applications, not /Applications: the latter needs sudo, and this installer
+# has never used it. It does not exist by default, so it is created.
+app_dir()          { printf '%s/YTDL.app\n' "${YTDL_APP_DIR:-$HOME/Applications}"; }
+app_exe_path()     { printf '%s/Contents/MacOS/YTDL\n' "$(app_dir)"; }
+app_plist_path()   { printf '%s/Contents/Info.plist\n' "$(app_dir)"; }
+app_pkginfo_path() { printf '%s/Contents/PkgInfo\n' "$(app_dir)"; }
+
+# app_sidecar_path — where the absolute path of the installed ytdl is recorded.
+# The launcher reads it relative to its OWN location, never to the working
+# directory, which is what lets the user drag the bundle anywhere and keep it
+# working. It is a PATH and never a command line.
+app_sidecar_path() { printf '%s/Contents/Resources/ytdl-path\n' "$(app_dir)"; }
+
+# home_display PATH — a path with $HOME folded back to ~, the way this installer
+# writes every path it shows.
+#
+# Spelled out with case rather than ${p/#$HOME/~}, which does NOT do this:
+# bash tilde-expands the REPLACEMENT, so ~ becomes $HOME again and the
+# substitution puts back exactly what it took out. Measured, not assumed.
+home_display() {
+  local p="$1"
+  case "$p" in
+    "$HOME")   printf '~\n' ;;
+    "$HOME"/*) printf '~/%s\n' "${p#"$HOME"/}" ;;
+    *)         printf '%s\n' "$p" ;;
+  esac
+}
+
+# app_parent_display — the folder the closing message names. Derived from
+# app_dir() rather than written out: with YTDL_APP_DIR set the two used to
+# disagree, and a message naming a folder the app is not in is the same untruth
+# as naming an app that is not there (ux-principles §5).
+app_parent_display() { home_display "$(dirname "$(app_dir)")"; }
+
+# launcher_asset_for — the launcher published for THIS architecture. install.sh
+# already derives ARCH_KEY for both, so the launcher follows it rather than
+# assuming arm64 as the gate-A probe did (ADR-0019 §1).
+launcher_asset_for() { printf 'ytdl_launch_macos_%s\n' "$ARCH_KEY"; }
+
+# render_app_plist VERSION — the bundle's Info.plist, on stdout.
+#
+# Pure and deterministic: identical input renders identical bytes, which is what
+# lets install_app_bundle compare before writing and leave the file alone when
+# nothing changed. No icon key — the icon is deferred, and adding it later is one
+# file plus one key.
+#
+# No LSUIElement either, deliberately: with it a double-click gives no feedback at
+# all until the browser appears; without it the Dock tile that appears and then
+# goes away IS the feedback, and it is the signal the gate-A probe observed.
+render_app_plist() {
+  local version="$1"
+  cat <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>YTDL</string>
+	<key>CFBundleDisplayName</key>
+	<string>YTDL</string>
+	<key>CFBundleExecutable</key>
+	<string>YTDL</string>
+	<key>CFBundleIdentifier</key>
+	<string>io.github.alergyonthestage.ytdl</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>${version}</string>
+	<key>CFBundleVersion</key>
+	<string>${version}</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>10.15</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+</dict>
+</plist>
+PLIST
+}
+
+# app_is_current SUMS — true when the launcher already in the bundle is
+# byte-identical to the one this release publishes.
+#
+# By CHECKSUM, not by version, and that is stricter on purpose: the launcher
+# carries no version, and a release that does not change its bytes must not touch
+# the bundle at all. This is ADR-0016 §11's idempotence rule — resolve a concrete
+# target, compare, skip — applied to one more component.
+#
+# Every answer it cannot give is "not current", which is the safe direction: the
+# step that acts on it warns and leaves the bundle exactly as it found it.
+app_is_current() {
+  local sums="$1" exe expected actual
+  [ "$FORCE" -eq 0 ] || return 1
+  [ -n "$sums" ] && [ -f "$sums" ] || return 1
+
+  exe="$(app_exe_path)"
+  [ -f "$exe" ] || return 1
+
+  expected="$(awk -v n="$(launcher_asset_for)" '$2 == n {print $1; exit}' "$sums")"
+  [ -n "$expected" ] || return 1
+
+  actual="$(sha256_of "$exe")"
+  [ -n "$actual" ] && [ "$actual" = "$expected" ]
+}
+
+# download_optional URL DEST — like download, but a failure is REPORTED to the
+# caller instead of aborting the install. It exists for the bundle step, which
+# must never take the installation down with it (§4.4).
+download_optional() {
+  curl -fsSL --retry 2 --retry-delay 2 --connect-timeout 20 -o "$2" "$1" 2>/dev/null
+}
+
+# app_write_if_different PATH — write stdin to PATH, but only when the bytes
+# differ. Atomic, like everything else this installer writes.
+#
+# Leaving an identical file untouched is not an optimisation: it keeps the file's
+# mtime, and with it Spotlight's and the Dock's view of the bundle. Rewriting
+# identical bytes on every update is exactly the churn ADR-0018 exists to avoid.
+app_write_if_different() {
+  local path="$1" tmp
+  tmp="$path.tmp.$$"
+  cat > "$tmp" || { rm -f "$tmp"; return 1; }
+  if [ -f "$path" ] && cmp -s "$tmp" "$path"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  mv "$tmp" "$path" 2>/dev/null || { rm -f "$tmp"; return 1; }
+}
+
+# app_launcher_verified FILE ASSET SUMS — the downloaded launcher is the one the
+# release vouches for.
+#
+# Returns non-zero rather than calling fail(): a launcher we cannot vouch for is
+# never written into the bundle, but it must not take the whole installation down
+# either. The refusal is identical in effect — nothing unverified is installed —
+# and this is the one place where fail() would cost more than it buys (§4.4).
+#
+# The two non-zero codes are told apart because the WORDING differs, not the
+# effect: 1 is a real mismatch — the bytes are not the published ones, which is
+# alarming and is said so — while 2 is "there is nothing to compare against",
+# either because SHA2-256SUMS names no such asset or because this machine has
+# neither shasum nor openssl. Reporting a mismatch that never happened would be a
+# surface stating something untrue.
+app_launcher_verified() {
+  local file="$1" name="$2" sums="$3" expected actual
+  expected="$(awk -v n="$name" '$2 == n {print $1; exit}' "$sums")"
+  [ -n "$expected" ] || return 2
+  actual="$(sha256_of "$file")"
+  [ -n "$actual" ] || return 2
+  [ "$actual" = "$expected" ]
+}
+
+# install_app_bundle — put YTDL.app where the user can double-click it.
+#
+# THREE RULES, and they are decisions rather than accidents (§4.3):
+#
+#   1. The bundle directory is never deleted and never recreated. Only its
+#      contents are written. Deleting it is what would churn the Dock entry, the
+#      Spotlight index and any alias the user made.
+#   2. The launcher is compared BY CHECKSUM. Equal means nothing is fetched and
+#      nothing is written, so a release that does not change the launcher's bytes
+#      does not touch the bundle.
+#   3. Info.plist, PkgInfo and the sidecar are rendered, compared, and written
+#      only when different.
+#
+# AND IT NEVER FAILS THE INSTALL. Every failure it can meet — the asset missing
+# from the release, the sums file unavailable, ~/Applications unwritable, a full
+# disk — warns and returns 0. A CLI installation that aborted because an icon
+# could not be drawn would be a worse tool, and there is a concrete window where
+# the asset genuinely is missing: install.sh is served from the branch while
+# assets come from releases/latest, so between merging this cycle and cutting its
+# release the newest release has no launcher in it. fail() is not used here.
+install_app_bundle() {
+  step "Installing the YTDL app"
+
+  local dir parent exe sums asset tmp version created verdict
+
+  # Describes THIS run: every path below may return early, and a flag left over
+  # from a previous call would let the closing message name an app this run did
+  # not write.
+  APP_INSTALLED=0
+
+  dir="$(app_dir)"
+  parent="$(dirname "$dir")"
+  # ~/Applications does not exist by default, so it is created here — but the
+  # BUNDLE is not, not yet.
+  #
+  # Every path below may still return early, and an empty YTDL.app is not "no
+  # app": Finder treats ANY directory named *.app as an application, shows it,
+  # and then refuses to open it. That is a surface stating something untrue
+  # (ux-principles §5), and its window is dated and certain — install.sh is
+  # served from the branch while the assets come from releases/latest, so
+  # between merging a cycle and cutting its release there is no launcher to
+  # fetch. So the bundle's own directories are created only once there is a
+  # verified launcher to put in them (§4.4).
+  if ! mkdir -p "$parent" 2>/dev/null; then
+    warn "Could not create $parent — skipping the app. ytdl itself is installed."
+    return 0
+  fi
+
+  # The sums file cannot be assumed to be on disk already: install_ytdl returns
+  # BEFORE its downloads when ytdl_is_current, which is exactly the common update
+  # path this idempotence rule exists to serve. ~1 KB when it has to be fetched.
+  sums="$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+  if [ ! -f "$sums" ] && ! download_optional "$RELEASE_BASE/SHA2-256SUMS" "$sums"; then
+    warn "Could not fetch the checksums — leaving the app as it is."
+    return 0
+  fi
+
+  asset="$(launcher_asset_for)"
+  exe="$(app_exe_path)"
+
+  if app_is_current "$sums"; then
+    ok "The YTDL app is up to date"
+  else
+    tmp="$TMPDIR_YTDL/$asset"
+    if ! download_optional "$RELEASE_BASE/$asset" "$tmp"; then
+      warn "This release has no $asset — leaving the app as it is."
+      return 0
+    fi
+    verdict=0
+    app_launcher_verified "$tmp" "$asset" "$sums" || verdict=$?
+    if [ "$verdict" -ne 0 ]; then
+      rm -f "$tmp"
+      if [ "$verdict" -eq 1 ]; then
+        warn "The launcher did not match its published checksum — the app was not changed."
+      else
+        warn "The launcher could not be checked against a published checksum — the app was not changed."
+      fi
+      return 0
+    fi
+    chmod +x "$tmp" 2>/dev/null || true
+    # The one place the bundle is ever created, and still mkdir -p rather than
+    # rm -rf: an existing bundle keeps its directory, and with it the Dock entry,
+    # the Spotlight identity and any alias the user made (rule 1).
+    created=0
+    [ -d "$dir" ] || created=1
+    if ! mkdir -p "$dir/Contents/MacOS" 2>/dev/null; then
+      rm -f "$tmp"
+      warn "Could not create $dir — skipping the app. ytdl itself is installed."
+      return 0
+    fi
+    if ! mv "$tmp" "$exe" 2>/dev/null; then
+      rm -f "$tmp"
+      # Undo only what THIS run created, and only while it is still empty: rmdir
+      # refuses a directory with anything in it, so a bundle that was already
+      # there cannot be removed by this.
+      if [ "$created" -eq 1 ]; then
+        rmdir "$dir/Contents/MacOS" "$dir/Contents" "$dir" 2>/dev/null || true
+      fi
+      warn "Could not write $exe — leaving the app as it is."
+      return 0
+    fi
+    # Written by us, never downloaded through a browser, so it carries no
+    # quarantine attribute — cleared defensively, as for every other binary.
+    xattr -d com.apple.quarantine "$exe" 2>/dev/null || true
+  fi
+
+  # A launcher is in place, so the bundle is a real application and its remaining
+  # directory can be created without risking an empty .app.
+  mkdir -p "$dir/Contents/Resources" 2>/dev/null || true
+
+  # Rule 3. Local text with no download behind it, so the comparison is a cmp and
+  # the version key follows ytdl's, keeping Finder's Get Info truthful without
+  # ever replacing the bundle.
+  version="$(ytdl_version "$INSTALL_DIR/ytdl")"
+  render_app_plist "$version" | app_write_if_different "$(app_plist_path)" \
+    || warn "Could not write the app's Info.plist."
+  printf 'APPL????' | app_write_if_different "$(app_pkginfo_path)" \
+    || warn "Could not write the app's PkgInfo."
+  # An ABSOLUTE path, so the bundle keeps working wherever the user drags it.
+  printf '%s\n' "$INSTALL_DIR/ytdl" | app_write_if_different "$(app_sidecar_path)" \
+    || warn "Could not write the app's ytdl path."
+
+  APP_INSTALLED=1
+  ok "The YTDL app is in $(home_display "$dir")"
+  return 0
+}
+
+# ──────────────────────────────────────────────────────────────────
 #  Main
 # ──────────────────────────────────────────────────────────────────
 main() {
@@ -825,6 +1133,9 @@ main() {
   install_ytdl
   setup_path
   verify_install
+  # After verify_install and before write_marker, deliberately: an icon must
+  # never exist for an installation that does not work.
+  install_app_bundle
   write_marker
 
   printf '\n%s%s✓ Done.%s\n\n' "$B" "$GREEN" "$R"
@@ -833,6 +1144,23 @@ main() {
   printf 'Music is saved to ~/Music/ytdl by default.\n'
   printf 'Run %sytdl --help%s for all options, %sytdl --update%s to update later.\n\n' \
     "$B" "$R" "$B" "$R"
+
+  app_closing_note
+}
+
+# app_closing_note — the last thing the user reads, and only when this run put an
+# app there. A separate function so the two things that can go wrong with it are
+# testable without running an install: the silence when APP_INSTALLED is 0, and
+# the folder it names.
+#
+# English, like the rest of this installer — the Italian lives in the two user
+# guides, which is where the user reads Italian; one Italian line inside an
+# English installer is a worse surface than a consistent one (design §4.7).
+app_closing_note() {
+  [ "$APP_INSTALLED" -eq 1 ] || return 0
+  printf 'You can also open the interface without the Terminal:\n'
+  printf '  %sYTDL%s is in %s — drag it to the Dock if you like.\n\n' \
+    "$B" "$R" "$(app_parent_display)"
 }
 
 # Sourcing with YTDL_INSTALLER_LIB=1 loads the functions without running the

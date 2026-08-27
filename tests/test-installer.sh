@@ -555,6 +555,408 @@ ffmpeg_is_current
 check "a marked copy is never already current" "1" "$?"
 
 # ──────────────────────────────────────────────────────────────────
+#  The app bundle: pure functions
+# ──────────────────────────────────────────────────────────────────
+# Everything here is logic with no download behind it, which is exactly the part
+# that is testable away from a Mac. What the bundle step DOES with these — the
+# canary, the non-fatal failure, the write-only-when-different rule — is below.
+printf '\nApp bundle: pure functions\n'
+
+# The thin-arm64 defect ADR-0019 §1 closed: install.sh already derives ARCH_KEY
+# for both architectures, so the launcher follows it rather than assuming one.
+mock_platform "15.3.1" "arm64" >/dev/null 2>&1
+check "arm64 selects ytdl_launch_macos_arm64" \
+  "ytdl_launch_macos_arm64" "$(launcher_asset_for)"
+
+mock_platform "15.3.1" "x86_64" >/dev/null 2>&1
+check "Intel selects ytdl_launch_macos_amd64" \
+  "ytdl_launch_macos_amd64" "$(launcher_asset_for)"
+
+# ~/Applications needs no sudo, which is ADR-0001's whole shape.
+#
+# NOT in a subshell: check() increments PASS/FAIL, and a subshell would discard
+# both — every assertion below would PRINT its result and count for nothing, so a
+# real defect would leave the suite exiting 0. Saved and restored by hand instead.
+APP_TEST_HOME="$(mktemp -d)"
+APP_SANDBOX="$(mktemp -d)"
+SAVED_HOME="$HOME"; SAVED_FORCE="$FORCE"
+SAVED_APP_DIR="${YTDL_APP_DIR-}"; SAVED_APP_DIR_SET="${YTDL_APP_DIR+set}"
+
+HOME="$APP_TEST_HOME"
+unset YTDL_APP_DIR
+check "the bundle defaults to ~/Applications/YTDL.app" \
+  "$APP_TEST_HOME/Applications/YTDL.app" "$(app_dir)"
+
+# YTDL_APP_DIR names the PARENT, so hack/ytdl-dev.sh can give the sandbox its own
+# bundle and a dev launcher can never start the installed ytdl (design §4.6).
+YTDL_APP_DIR="$APP_TEST_HOME/dev/Applications"
+check "YTDL_APP_DIR moves the bundle for the dev sandbox" \
+  "$APP_TEST_HOME/dev/Applications/YTDL.app" "$(app_dir)"
+check "the sidecar sits in Contents/Resources" \
+  "$APP_TEST_HOME/dev/Applications/YTDL.app/Contents/Resources/ytdl-path" \
+  "$(app_sidecar_path)"
+check "the launcher sits in Contents/MacOS" \
+  "$APP_TEST_HOME/dev/Applications/YTDL.app/Contents/MacOS/YTDL" \
+  "$(app_exe_path)"
+
+# Every key §4.2 names has to be there: a plist missing CFBundleExecutable is a
+# bundle macOS refuses to launch, and nothing before gate C would say so.
+plist="$(render_app_plist "2.3.0")"
+for key in CFBundleName CFBundleDisplayName CFBundleExecutable CFBundleIdentifier \
+           CFBundlePackageType CFBundleInfoDictionaryVersion CFBundleShortVersionString \
+           CFBundleVersion LSMinimumSystemVersion NSHighResolutionCapable; do
+  printf '%s' "$plist" | grep -q "<key>$key</key>"
+  check "Info.plist carries $key" "0" "$?"
+done
+
+printf '%s' "$plist" | grep -q '<string>2.3.0</string>'
+check "Info.plist carries the installed ytdl version" "0" "$?"
+
+printf '%s' "$plist" | grep -q "<string>io.github.alergyonthestage.ytdl</string>"
+check "Info.plist carries the bundle identifier" "0" "$?"
+
+printf '%s' "$plist" | grep -q '<string>10.15</string>'
+check "Info.plist declares the 10.15 floor detect_platform enforces" "0" "$?"
+
+# Byte-identical across two runs is what makes "write only when different" a real
+# skip rather than a rewrite that happens to look the same.
+check "render_app_plist is byte-identical across two runs" \
+  "$(render_app_plist "2.3.0" | sha256_of /dev/stdin)" \
+  "$(render_app_plist "2.3.0" | sha256_of /dev/stdin)"
+
+check "a different version renders a different plist" "1" \
+  "$([ "$(render_app_plist "2.3.0")" = "$(render_app_plist "2.4.0")" ] && echo 0 || echo 1)"
+
+# app_is_current compares the launcher BY CHECKSUM, not by version: a release
+# that does not change its bytes must not touch the bundle at all (design §4.3).
+YTDL_APP_DIR="$APP_SANDBOX/Applications"
+mock_platform "15.3.1" "arm64" >/dev/null 2>&1
+mkdir -p "$(dirname "$(app_exe_path)")"
+printf 'the launcher bytes\n' > "$(app_exe_path)"
+app_sum="$(sha256_of "$(app_exe_path)")"
+app_sums="$APP_SANDBOX/SHA2-256SUMS"
+printf '%s  ytdl_launch_macos_arm64\n' "$app_sum" > "$app_sums"
+
+FORCE=0
+app_is_current "$app_sums"
+check "a matching checksum skips the launcher" "0" "$?"
+
+FORCE=1
+app_is_current "$app_sums"
+check "--force never skips the launcher" "1" "$?"
+
+FORCE=0
+printf '%s  ytdl_launch_macos_arm64\n' "0000000000000000000000000000000000000000000000000000000000000000" > "$app_sums"
+app_is_current "$app_sums"
+check "a differing checksum installs" "1" "$?"
+
+# A sums file with no entry for our asset cannot answer the question, so the safe
+# direction is "not current" — the step then warns and leaves the bundle exactly
+# as it found it.
+: > "$app_sums"
+app_is_current "$app_sums"
+check "no published sum for the launcher is not 'current'" "1" "$?"
+
+printf '%s  ytdl_launch_macos_arm64\n' "$app_sum" > "$app_sums"
+rm -f "$(app_exe_path)"
+app_is_current "$app_sums"
+check "an absent bundle installs" "1" "$?"
+
+HOME="$SAVED_HOME"; FORCE="$SAVED_FORCE"
+if [ -n "$SAVED_APP_DIR_SET" ]; then YTDL_APP_DIR="$SAVED_APP_DIR"; else unset YTDL_APP_DIR; fi
+rm -rf "$APP_TEST_HOME" "$APP_SANDBOX"
+
+# ──────────────────────────────────────────────────────────────────
+#  The app bundle: install_app_bundle
+# ──────────────────────────────────────────────────────────────────
+# No network: download_optional is replaced by a local copy, which is the only
+# outbound call this step makes.
+printf '\nApp bundle: install_app_bundle\n'
+
+BUNDLE_HOME="$(mktemp -d)"
+SAVED_HOME="$HOME"; SAVED_FORCE="$FORCE"; SAVED_INSTALL_DIR="$INSTALL_DIR"
+SAVED_TMPDIR_YTDL="${TMPDIR_YTDL-}"
+
+HOME="$BUNDLE_HOME"
+YTDL_APP_DIR="$BUNDLE_HOME/Applications"
+INSTALL_DIR="$BUNDLE_HOME/bin"
+TMPDIR_YTDL="$BUNDLE_HOME/tmp"
+FORCE=0
+mkdir -p "$INSTALL_DIR" "$TMPDIR_YTDL" "$BUNDLE_HOME/release"
+mock_platform "15.3.1" "arm64" >/dev/null 2>&1
+
+# A stand-in ytdl, so ytdl_version has something to read.
+printf '#!/bin/sh\necho "ytdl 2.3.0"\n' > "$INSTALL_DIR/ytdl"
+chmod +x "$INSTALL_DIR/ytdl"
+
+# The published launcher and the sums that vouch for it.
+printf 'launcher v1\n' > "$BUNDLE_HOME/release/ytdl_launch_macos_arm64"
+{
+  printf '%s  ytdl_launch_macos_arm64\n' "$(sha256_of "$BUNDLE_HOME/release/ytdl_launch_macos_arm64")"
+} > "$BUNDLE_HOME/release/SHA2-256SUMS"
+
+# The step's only outbound call, replaced by a copy out of the fake release.
+download_optional() {
+  local url="$1" dest="$2" name
+  name="${url##*/}"
+  [ -f "$BUNDLE_HOME/release/$name" ] || return 1
+  cp "$BUNDLE_HOME/release/$name" "$dest"
+}
+
+install_app_bundle >/dev/null 2>&1
+check "a first run installs the bundle" "0" "$?"
+check "the launcher is in place" "0" "$([ -x "$(app_exe_path)" ] && echo 0 || echo 1)"
+check "Info.plist is in place"   "0" "$([ -f "$(app_plist_path)" ] && echo 0 || echo 1)"
+check "PkgInfo is in place"      "0" "$([ -f "$(app_pkginfo_path)" ] && echo 0 || echo 1)"
+check "the sidecar records the absolute ytdl path" \
+  "$INSTALL_DIR/ytdl" "$(cat "$(app_sidecar_path)")"
+
+# The anti-churn decision, as an assertion rather than an intention: the bundle
+# directory is never deleted and never recreated, so the Dock entry, the
+# Spotlight identity and any alias the user made survive an update.
+printf 'canary\n' > "$(app_dir)/Contents/canary"
+plist_before="$(cat "$(app_plist_path)")"
+mtime_before="$(stat -c %Y "$(app_plist_path)" 2>/dev/null || stat -f %m "$(app_plist_path)")"
+sleep 1
+
+install_app_bundle >/dev/null 2>&1
+check "a second run returns 0" "0" "$?"
+check "the canary survives an update run" "canary" "$(cat "$(app_dir)/Contents/canary" 2>/dev/null)"
+check "an unchanged plist keeps its content" "$plist_before" "$(cat "$(app_plist_path)")"
+check "an unchanged plist is not rewritten (mtime)" \
+  "$mtime_before" "$(stat -c %Y "$(app_plist_path)" 2>/dev/null || stat -f %m "$(app_plist_path)")"
+
+# The sidecar follows INSTALL_DIR: an install with YTDL_INSTALL_DIR set must not
+# leave a bundle pointing at the previous location.
+INSTALL_DIR="$BUNDLE_HOME/elsewhere"
+mkdir -p "$INSTALL_DIR"
+printf '#!/bin/sh\necho "ytdl 2.3.0"\n' > "$INSTALL_DIR/ytdl"
+chmod +x "$INSTALL_DIR/ytdl"
+install_app_bundle >/dev/null 2>&1
+check "the sidecar is rewritten when INSTALL_DIR changes" \
+  "$INSTALL_DIR/ytdl" "$(cat "$(app_sidecar_path)")"
+
+# §4.4: the app never fails the installation. A CLI that aborted because an icon
+# could not be drawn would be a worse tool — and there is a real window where the
+# asset is genuinely missing, between merging this cycle and cutting its release.
+download_optional() { return 1; }
+rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+install_app_bundle >/dev/null 2>&1
+check "an unavailable checksum file warns and returns 0" "0" "$?"
+check "and leaves the existing bundle alone" "canary" "$(cat "$(app_dir)/Contents/canary" 2>/dev/null)"
+
+# The release has no launcher in it yet: the sums file arrives, our asset is not
+# named in it, and the download 404s. Warn, leave everything as it was.
+download_optional() {
+  local url="$1" dest="$2" name
+  name="${url##*/}"
+  [ "$name" = "SHA2-256SUMS" ] || return 1
+  printf '%s  ytdl_macos_arm64\n' "0000000000000000000000000000000000000000000000000000000000000000" > "$dest"
+}
+rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+install_app_bundle >/dev/null 2>&1
+check "a release with no launcher asset warns and returns 0" "0" "$?"
+check "and still leaves the existing bundle alone" "canary" "$(cat "$(app_dir)/Contents/canary" 2>/dev/null)"
+
+# Bytes we cannot vouch for are never written into the bundle — and still do not
+# abort the install.
+exe_before="$(sha256_of "$(app_exe_path)")"
+download_optional() {
+  local url="$1" dest="$2" name
+  name="${url##*/}"
+  case "$name" in
+    SHA2-256SUMS) printf '%s  ytdl_launch_macos_arm64\n' \
+      "1111111111111111111111111111111111111111111111111111111111111111" > "$dest" ;;
+    *) printf 'tampered\n' > "$dest" ;;
+  esac
+}
+rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+install_app_bundle >/dev/null 2>&1
+check "a launcher failing its checksum returns 0" "0" "$?"
+check "and is never written into the bundle" "$exe_before" "$(sha256_of "$(app_exe_path)")"
+
+# A run that installs no app must leave NO app. An empty YTDL.app is not "no
+# app": Finder treats any directory named *.app as an application, shows it in
+# Applications, and then refuses to open it — a control that cannot work, which
+# is what ux-principles §5 forbids.
+#
+# The window is dated and certain, not hypothetical: install.sh is served from
+# the branch while the assets come from releases/latest, so between merging a
+# cycle and cutting its release there is no launcher to fetch. Every fresh
+# install in that window took this path.
+YTDL_APP_DIR="$BUNDLE_HOME/first-install"
+download_optional() { return 1; }
+rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+install_app_bundle >/dev/null 2>&1
+check "a first install with no checksums returns 0" "0" "$?"
+check "and leaves no empty YTDL.app behind" "1" \
+  "$([ -e "$BUNDLE_HOME/first-install/YTDL.app" ] && echo 0 || echo 1)"
+# ~/Applications itself IS created: it does not exist by default, and creating it
+# is how the step learns whether it may write there at all.
+check "but ~/Applications itself is created" "0" \
+  "$([ -d "$BUNDLE_HOME/first-install" ] && echo 0 || echo 1)"
+
+# The same, one step further along: the sums arrive but name no launcher, so the
+# download 404s. Still no husk.
+download_optional() {
+  local url="$1" dest="$2" name
+  name="${url##*/}"
+  [ "$name" = "SHA2-256SUMS" ] || return 1
+  printf '%s  ytdl_macos_arm64\n' "0000000000000000000000000000000000000000000000000000000000000000" > "$dest"
+}
+rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+install_app_bundle >/dev/null 2>&1
+check "a first install with no launcher asset leaves no empty YTDL.app" "1" \
+  "$([ -e "$BUNDLE_HOME/first-install/YTDL.app" ] && echo 0 || echo 1)"
+
+# And once the launcher IS available, the same directory does get its bundle —
+# so the assertions above pin "not yet", not "never".
+download_optional() {
+  local url="$1" dest="$2" name
+  name="${url##*/}"
+  [ -f "$BUNDLE_HOME/release/$name" ] || return 1
+  cp "$BUNDLE_HOME/release/$name" "$dest"
+}
+rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+install_app_bundle >/dev/null 2>&1
+check "the same first install builds the bundle once the launcher exists" "0" \
+  "$([ -x "$BUNDLE_HOME/first-install/YTDL.app/Contents/MacOS/YTDL" ] && echo 0 || echo 1)"
+
+YTDL_APP_DIR="$BUNDLE_HOME/Applications"
+
+# An unwritable parent is warned about, not aborted on.
+unset -f download_optional
+YTDL_APP_DIR="/proc/nonexistent-and-unwritable"
+install_app_bundle >/dev/null 2>&1
+check "an unwritable app directory warns and returns 0" "0" "$?"
+
+# The closing message must not name an app that is not there. APP_INSTALLED is
+# what the message reads, and only a run that actually wrote the bundle sets it.
+check "a skipped bundle leaves APP_INSTALLED at 0" "0" "$APP_INSTALLED"
+
+YTDL_APP_DIR="$BUNDLE_HOME/Applications"
+download_optional() {
+  local url="$1" dest="$2" name
+  name="${url##*/}"
+  [ -f "$BUNDLE_HOME/release/$name" ] || return 1
+  cp "$BUNDLE_HOME/release/$name" "$dest"
+}
+rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+install_app_bundle >/dev/null 2>&1
+check "a successful bundle sets APP_INSTALLED to 1" "1" "$APP_INSTALLED"
+
+# home_display is the ONE place that folds $HOME to ~, and it exists because the
+# idiom it replaces silently did nothing: in ${p/#$HOME/~} bash tilde-expands the
+# REPLACEMENT, so ~ becomes $HOME again and the substitution puts back exactly
+# what it took out. Measured on this bash, then written as assertions.
+check "a path under \$HOME is folded to ~" \
+  "~/Applications" "$(home_display "$HOME/Applications")"
+check "\$HOME itself folds to ~" "~" "$(home_display "$HOME")"
+check "a path outside \$HOME is left alone" \
+  "/opt/elsewhere" "$(home_display /opt/elsewhere)"
+# The trap a plain prefix test falls into: a sibling whose name merely STARTS
+# with $HOME is not inside it.
+check "a sibling that only shares the prefix is left alone" \
+  "${HOME}-extra/App" "$(home_display "${HOME}-extra/App")"
+
+# The closing note is what the user reads last, and it must be true in both
+# directions: silent when this run wrote no app, and naming the folder the app is
+# ACTUALLY in when it did. It used to hardcode "your Applications folder" while
+# the step's own ok line printed the real directory — with YTDL_APP_DIR set, the
+# development sandbox, the two disagreed and one of them was wrong.
+APP_INSTALLED=1
+# Outside $HOME on purpose: that is the case the two messages used to disagree
+# about, and inside $HOME it is indistinguishable from the default.
+ALT_APP_DIR="$(mktemp -d)"
+YTDL_APP_DIR="$ALT_APP_DIR/elsewhere"
+note="$(app_closing_note)"
+check "the closing note names the folder the app was written to" "0" \
+  "$(case "$note" in *"$ALT_APP_DIR/elsewhere"*) echo 0 ;; *) echo 1 ;; esac)"
+check "and does not claim it is in Applications" "0" \
+  "$(case "$note" in *Applications*) echo 1 ;; *) echo 0 ;; esac)"
+rmdir "$ALT_APP_DIR"
+
+# And under $HOME it is written the way this installer writes every other path.
+unset YTDL_APP_DIR
+note="$(app_closing_note)"
+check "a default install is named with ~, like every other path printed" \
+  "0" "$(case "$note" in *"~/Applications"*) echo 0 ;; *) echo 1 ;; esac)"
+YTDL_APP_DIR="$BUNDLE_HOME/Applications"
+
+APP_INSTALLED=0
+check "and a run that wrote no app says nothing about one" "" "$(app_closing_note)"
+APP_INSTALLED=1
+
+# The refusal must say what actually happened. app_launcher_verified answers with
+# two distinct non-zero codes for exactly that reason, and the caller picks its
+# wording from them: 1 is a real mismatch — the bytes are not the published ones,
+# which is alarming and is said so — while 2 is "there is nothing to compare
+# against". Reporting a mismatch that never happened is the same untruth
+# ux-principles §5 forbids of every other surface.
+ZEROS="0000000000000000000000000000000000000000000000000000000000000000"
+probe="$BUNDLE_HOME/probe-launcher"
+probe_sums="$BUNDLE_HOME/probe-SHA2-256SUMS"
+printf 'launcher bytes\n' > "$probe"
+
+printf '%s  ytdl_launch_macos_arm64\n' "$(sha256_of "$probe")" > "$probe_sums"
+verdict=0; app_launcher_verified "$probe" "ytdl_launch_macos_arm64" "$probe_sums" || verdict=$?
+check "a launcher matching its published sum verifies" "0" "$verdict"
+
+printf '%s  ytdl_launch_macos_arm64\n' "$ZEROS" > "$probe_sums"
+verdict=0; app_launcher_verified "$probe" "ytdl_launch_macos_arm64" "$probe_sums" || verdict=$?
+check "bytes that differ from the published sum are code 1 (a mismatch)" "1" "$verdict"
+
+printf '%s  ytdl_macos_arm64\n' "$ZEROS" > "$probe_sums"
+verdict=0; app_launcher_verified "$probe" "ytdl_launch_macos_arm64" "$probe_sums" || verdict=$?
+check "a sums file naming no launcher is code 2 (nothing to compare)" "2" "$verdict"
+
+# Neither shasum nor openssl on the machine: nothing can be computed, so nothing
+# can mismatch. macOS always ships shasum, so this path is unreachable there — it
+# is also the one that used to report a mismatch that had not happened.
+#
+# Saved and restored by file: overriding a function does not stack, and every
+# check below still needs the real one.
+declare -f sha256_of > "$BUNDLE_HOME/real-sha256_of.bash"
+sha256_of() { printf ''; }
+printf '%s  ytdl_launch_macos_arm64\n' "$ZEROS" > "$probe_sums"
+verdict=0; app_launcher_verified "$probe" "ytdl_launch_macos_arm64" "$probe_sums" || verdict=$?
+check "no way to compute a sum at all is code 2, not a mismatch" "2" "$verdict"
+
+# The wording follows the code, at the surface the finding was about: same
+# effect — nothing unverified is ever written — different words.
+YTDL_APP_DIR="$BUNDLE_HOME/wording"
+download_optional() {
+  local url="$1" dest="$2" name
+  name="${url##*/}"
+  case "$name" in
+    SHA2-256SUMS) printf '%s  ytdl_launch_macos_arm64\n' "$ZEROS" > "$dest" ;;
+    *)            printf 'tampered\n' > "$dest" ;;
+  esac
+}
+rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+uncheckable_msg="$(install_app_bundle 2>&1)"
+unset -f sha256_of; . "$BUNDLE_HOME/real-sha256_of.bash"
+check "the real sha256_of is back for everything below" "0" \
+  "$([ -n "$(sha256_of "$probe")" ] && echo 0 || echo 1)"
+check "an unverifiable launcher is not called a mismatch" "0" \
+  "$(case "$uncheckable_msg" in *"could not be checked"*) echo 0 ;; *) echo 1 ;; esac)"
+
+rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+mismatch_msg="$(install_app_bundle 2>&1)"
+check "a real mismatch still IS called a mismatch" "0" \
+  "$(case "$mismatch_msg" in *"did not match its published checksum"*) echo 0 ;; *) echo 1 ;; esac)"
+check "and neither wording leaves an app behind" "1" \
+  "$([ -e "$BUNDLE_HOME/wording/YTDL.app" ] && echo 0 || echo 1)"
+YTDL_APP_DIR="$BUNDLE_HOME/Applications"
+
+HOME="$SAVED_HOME"; FORCE="$SAVED_FORCE"; INSTALL_DIR="$SAVED_INSTALL_DIR"
+TMPDIR_YTDL="$SAVED_TMPDIR_YTDL"
+unset -f download_optional
+unset YTDL_APP_DIR
+APP_INSTALLED=0
+rm -rf "$BUNDLE_HOME"
+
+# ──────────────────────────────────────────────────────────────────
 #  Portability: the shell that will actually run this is bash 3.2
 # ──────────────────────────────────────────────────────────────────
 # Every check above runs under the CONTAINER's bash (5.x). The installer runs on

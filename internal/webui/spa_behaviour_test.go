@@ -629,6 +629,7 @@ eval(extract(/function hashForView\(name\) \{[\s\S]*?\n\}/));
 const location = { hash: "" };
 const whenText = (iso) => "il 12/08/2026";
 let updateInfo = null, updatePollTimer = 0, updateVersionBefore = "", updateDeadline = 0;
+let updateConfirmOpen = false;
 // applyUpdate adopts a run in flight and asks for a poll; the harness counts the
 // asks rather than running timers.
 let scheduled = 0;
@@ -644,6 +645,8 @@ eval(extract(/function confirmUpdate\(\) \{[\s\S]*?\n\}/));
 eval(extract(/function renderUpdateAction\(\) \{[\s\S]*?\n\}/));
 eval(extract(/function showUpdatePanel\(st\) \{[\s\S]*?\n\}/));
 eval(extract(/function applyUpdate\(u\) \{[\s\S]*?\n\}/));
+eval(extract(/function updateFlowBusy\(\) \{[\s\S]*?\n\}/));
+eval(extract(/function applyPushedUpdate\(u\) \{[\s\S]*?\n\}/));
 
 const labels = (id) => ($(id).children || []).map((c) => c.textContent).join("|");
 const upToDate = {
@@ -1078,5 +1081,58 @@ console.log("clean-state:" + $("updateState").textContent);
 		if strings.HasPrefix(l, "clean-versions:") && strings.Contains(l, "non sono riuscito a leggerla") {
 			t.Errorf("the read-failed wording appeared with every version readable: %q", l)
 		}
+	}
+}
+
+// An advisory the DAEMON pushed is the one that can arrive while the user is
+// holding the control it redraws — the cold-start probe lands about seven seconds
+// after the page opens, and applyUpdate rebuilds the banner, the versions AND the
+// action slot. So the rule the queue already follows holds here too: the control
+// the user is aiming at survives (ux-principles.md §4).
+//
+// Executed rather than grepped, because all three cases are decided by conditions:
+// a grep would see the guard and could not see which way it goes.
+func TestAPushedAdvisoryNeverRedrawsAControlTheUserIsInside(t *testing.T) {
+	out := runNode(t, updateHarness+`
+// As index.html ships it: the run panel is hidden until there is a run to show.
+$("updatePanel").hidden = true;
+
+// 1. Nothing in flight: the push lands, and the measured version replaces the
+//    recorded one on screen.
+applyUpdate(upToDate);
+const measured = Object.assign({}, upToDate, {
+  installed: { ytdl: "v2.1.0", ytDlp: "2026.08.02", ffmpeg: "9.0" },
+});
+console.log("idle-applied:" + applyPushedUpdate(measured));
+console.log("idle-versions:" + labels("updateVersions"));
+
+// 2. The confirmation is open: Conferma must not vanish from under the pointer.
+applyUpdate(availableUpdate);
+confirmUpdate();
+const slotBefore = labels("updateActionSlot");
+console.log("confirm-applied:" + applyPushedUpdate(measured));
+console.log("confirm-slot-intact:" + (labels("updateActionSlot") === slotBefore));
+
+// 3. A run's panel is on screen — this tab's own, or one it adopted.
+renderUpdateAction();            // the user cancelled: the confirmation is gone
+console.log("after-cancel-applied:" + applyPushedUpdate(measured));
+showUpdatePanel({ state: "running" });
+console.log("run-applied:" + applyPushedUpdate(measured));
+`)
+	for _, want := range []string{
+		"idle-applied:true",
+		"confirm-applied:false",
+		"confirm-slot-intact:true",
+		// Cancelling releases the guard: a refusal that never lifts would be a page
+		// that stops listening after the first confirmation of its life.
+		"after-cancel-applied:true",
+		"run-applied:false",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "2026.08.02") {
+		t.Errorf("the pushed advisory did not reach the versions list:\n%s", out)
 	}
 }

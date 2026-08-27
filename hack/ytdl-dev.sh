@@ -21,6 +21,8 @@
 #   YTDL_BIN_DIR       where the engine READS      ─┘ two different names
 #   YTDL_OUT_DIR       downloads
 #   YTDL_GUI_PORT      so a dev GUI never collides with the real one
+#   YTDL_APP_DIR       where install.sh puts YTDL.app — the sandbox gets its own,
+#                      so a dev bundle can never launch the installed ytdl
 #
 # The daemon inherits the environment (internal/daemon's spawn does not set
 # cmd.Env), so a GUI daemon started from here stays inside the sandbox too.
@@ -118,6 +120,7 @@ export YTDL_INSTALL_DIR="$DEV_HOME/bin"
 export YTDL_BIN_DIR="$DEV_HOME/bin"
 export YTDL_OUT_DIR="$DEV_HOME/downloads"
 export YTDL_GUI_PORT="$DEV_PORT"
+export YTDL_APP_DIR="$DEV_HOME/Applications"
 EOF
 }
 
@@ -128,12 +131,13 @@ apply_env() {
   export YTDL_BIN_DIR="$DEV_HOME/bin"
   export YTDL_OUT_DIR="$DEV_HOME/downloads"
   export YTDL_GUI_PORT="$DEV_PORT"
+  export YTDL_APP_DIR="$DEV_HOME/Applications"
 }
 
 make_dirs() {
   assert_sandbox
   mkdir -p "$DEV_HOME/state/ytdl" "$DEV_HOME/config/ytdl" \
-           "$DEV_HOME/bin" "$DEV_HOME/downloads"
+           "$DEV_HOME/bin" "$DEV_HOME/downloads" "$DEV_HOME/Applications"
 }
 
 # ──────────────────────────────────────────────────────────────────

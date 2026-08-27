@@ -366,8 +366,15 @@ ffmpeg is **compared** by build id (`1785863997_9.0`) and **shown** by version
 (`9.0`): the build number is the only exact answer and means nothing to a reader.
 
 This screen was opened deliberately, so it pays to exec each tool for its version.
-The advisories of §3.7 do not: `yt-dlp --version` is a Python zipapp and costs the
-better part of a second, so they read the versions from the cached verdict.
+The advisories of §3.7 do not, and the reason is bigger than it used to read here:
+users run yt-dlp as a **PyInstaller one-file bundle that unpacks itself on every
+invocation**, so `yt-dlp --version` costs **7.33 s on macOS, warm or cold** (gate A
+of Cycle 6-launch, measured twice back to back). The sub-second figure this
+paragraph carried until 2026-08-27 described the development container's zipapp,
+which is not what a user runs (ADR-0017). So the advisories read the versions from
+the cached verdict — and since Cycle 6-launch the GUI daemon's startup reads them
+from the installer's record for the same reason, reconciling with a probe once its
+port is open ([ADR-0019 §2](../../distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md)).
 
 ### 8.4 The two advisories
 

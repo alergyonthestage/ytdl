@@ -195,8 +195,19 @@ fallito. `0` (default) significa nessun limite.
 
 ## L'interfaccia grafica (senza Terminale)
 
-Se preferisci non usare il Terminale, ytdl ha un'interfaccia nel browser. Aprila
-una volta sola così:
+Se preferisci non usare il Terminale, ytdl ha un'interfaccia nel browser.
+
+**Il modo normale di aprirla è l'app YTDL**: la trovi nella cartella
+**Applicazioni** e ti basta un doppio clic. Se la vuoi più comoda, trascinala sul
+Dock o sulla Scrivania — funziona da qualsiasi posizione.
+
+Quando la apri, l'icona compare per un attimo nel Dock, il browser si apre sulla
+pagina di ytdl, e l'icona sparisce. È normale: **YTDL non è un programma che
+resta acceso**, è solo il pulsante che accende il motore. La tua finestra su ytdl
+è la pagina del browser, e c'è un solo modo di chiuderla — chiudere quella pagina.
+Non c'è nessun «Esci» da cercare nel Dock.
+
+Se preferisci, o se sei già nel Terminale, puoi aprire la stessa interfaccia così:
 
 ```
 ytdl gui
@@ -223,6 +234,12 @@ pagina stessa, senza toccare la configurazione permanente.
 
 > Se la porta predefinita è occupata, scegline un'altra:
 > `YTDL_GUI_PORT=8790 ytdl gui`
+
+> **Se fai doppio clic sull'app e non succede niente**, ytdl te lo dice con un
+> messaggio a schermo. Se anche quello non compare, ogni tentativo lascia una
+> riga in `~/.local/state/ytdl/launcher.log`: aprila e vedrai che cosa è andato
+> storto. In quel caso puoi sempre aprire l'interfaccia dal Terminale con
+> `ytdl gui`, che scrive lo stesso messaggio.
 
 ## Cambiare la cartella di destinazione
 
