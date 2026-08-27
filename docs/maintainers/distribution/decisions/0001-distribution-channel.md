@@ -85,3 +85,34 @@ explicit explanation.
   installer — upstream releases require no change on our side.
 - A future GUI (`.app`) reopens the notarization question. That decision is
   deferred, and the installer's design does not depend on it.
+
+## Addition, 2026-08-27 — the downloadable installer, asked again and closed again
+
+The question was re-raised during Cycle 6-launch's design: now that ytdl ships an
+app icon, could the *install* also start from a double-click — a file downloaded from
+the repository, linked from the README, that runs the installer for the user?
+
+**The answer is no, on this ADR's own reasoning, and the reasoning got stronger
+rather than weaker.** Recorded here so the question is not re-opened a third time:
+
+- Anything executable **downloaded through a browser acquires `com.apple.quarantine`**
+  — a `.command`, an `.app`, or an archive containing either, since what is extracted
+  inherits the attribute. Without a Developer ID, `spctl` rejects it. That is exactly
+  the case this ADR reasoned about, and [ADR-0018](0018-desktop-launcher-app-bundle.md)
+  §4 states the boundary as an invariant: a bundle **generated** on the machine is a
+  different case, and distributing a prebuilt one re-enters the territory ruled out here.
+- **The escape hatch that made the block survivable is gone.** Earlier macOS offered
+  right-click → *Open*; on macOS Tahoe it does not
+  ([analysis §3](../analysis/2026-08-26-tech-choice-desktop-launcher.md)). What remains
+  is System Settings → Privacy & Security → *Open Anyway* — the multi-step detour this
+  ADR already judged the audience will not complete unaided. A downloaded file that
+  does nothing when double-clicked is **worse** than a line to paste.
+- **The Terminal cost is paid once per machine.** Since Cycle 6-plus, `ytdl --update`
+  fetches and runs `install.sh` itself (`internal/update/runner.go`), so the one-liner
+  is a first-install cost, not a recurring one. Cycle 6-launch removes the *daily*
+  Terminal need; this would target the one moment that is already non-recurring.
+
+**What would change the answer** is not a technique but the audience: a distribution
+that does not pass through the maintainer. The resolution there is notarization with a
+paid Developer ID — the scenario this ADR already named as its only revision trigger —
+not an unsigned downloadable artefact.

@@ -907,6 +907,17 @@ authority the marker could answer) and its own staleness question, and that meri
 is unchanged by any of this. Reopening either is a maintainer call, not a
 consequence of ADR-0017.
 
+> **Addition, 2026-08-27 — `T4` was reopened, and is now `done`.** The passage above
+> stands as written and was not wrong: it measured the saving **in this container, on
+> the zipapp** (263 ms). On the target platform the same probe costs **7.33 s**, warm
+> or cold, and it sat on the one path a user waits on — the GUI daemon's startup. The
+> premise was platform-specific, not mistaken. `T4` was reopened by
+> [ADR-0018](distribution/decisions/0018-desktop-launcher-app-bundle.md) and closed by
+> [ADR-0019 §2](distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md),
+> which also answers the staleness question this paragraph kept open: the record is
+> read first, then **reconciled by a probe** once the port is open. `T3` and `T5` stay
+> exactly as recorded here.
+
 **What is now settled and must not be re-litigated:** the cause (both halves), that
 the container runs a different *form* of yt-dlp from every user and why that is
 bounded, and that `rm -rf /tmp/_MEI*` is no longer part of any workflow. All in

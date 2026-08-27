@@ -87,6 +87,7 @@ it links out. Open it directly when resuming.
 |---|---|
 | [distribution.md](maintainers/distribution/design/distribution.md) | Constraints and design for shipping to non-developer macOS users |
 | [cycle6plus-update.md](maintainers/distribution/design/cycle6plus-update.md) | The update-path design approved at gate B |
+| [cycle6launch-launcher.md](maintainers/distribution/design/cycle6launch-launcher.md) | The desktop launcher design approved at gate B: the bundle, the launcher, and the cold-start remedy |
 | [guides/releasing.md](maintainers/distribution/guides/releasing.md) | How a release is cut, and the two failures that taught the order |
 | [reviews/](maintainers/distribution/reviews/) | Four Cycle 6-plus reviews: implementation, fix session, documentation, gate C |
 
@@ -100,7 +101,7 @@ it links out. Open it directly when resuming.
 
 ## Decisions
 
-One global numbering sequence across the per-domain folders; the next ADR is `0019`
+One global numbering sequence across the per-domain folders; the next ADR is `0020`
 wherever it lands. `hack/check-docs-links.sh` enforces both the uniqueness of the
 numbers and the completeness of this table.
 
@@ -124,6 +125,7 @@ numbers and the completeness of this table.
 | [0016](maintainers/distribution/decisions/0016-cycle6plus-update-path.md) | ytdl owns its dependency versions, and the update is one axis the user can see and apply | `distribution` |
 | [0017](maintainers/foundation/decisions/0017-dev-container-oracle.md) | The development container's oracle: yt-dlp as a zipapp, and a test binary that cannot become a daemon | `foundation` |
 | [0018](maintainers/distribution/decisions/0018-desktop-launcher-app-bundle.md) | ytdl ships an app bundle, built on the machine, around a linker-signed Mach-O | `distribution` |
+| [0019](maintainers/distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md) | The bundle's Mach-O is a dedicated launcher, and the daemon reads recorded versions instead of probing | `distribution` |
 
 ## Reading order
 

@@ -1,6 +1,6 @@
-# Handoff — `Cycle 6-launch` has its gate A closed and resumes at **design**
+# Handoff — `Cycle 6-launch` has its gate B approved and resumes at **Plan**
 
-**Ephemeral**, like the nine before it: deleted when the next session writes its own.
+**Ephemeral**, like the ten before it: deleted when the next session writes its own.
 Nothing is decided here. Everything normative is in [roadmap.md](roadmap.md), the
 ADRs, [ux-principles.md](ux/design/ux-principles.md) and the rules in
 `.cco/claude/rules/`.
@@ -9,85 +9,81 @@ ADRs, [ux-principles.md](ux/design/ux-principles.md) and the rules in
 
 ```mermaid
 flowchart LR
-  V["DEV-1<br/>merged ✓"] --> A["Cycle 6-launch<br/>analysis ✓ · gate A closed"]
-  A --> D["<b>DESIGN</b><br/>NEXT — gate B after it"]
-  D --> I["implementation<br/>+ review + gate C"]
+  A["gate A ✓<br/>ADR-0018"] --> D["design ✓ · gate B ✓<br/>ADR-0019 + design doc"]
+  D --> P["<b>PLAN</b><br/>NEXT — /plan, gate (c)"]
+  P --> I["implementation + test<br/>then review, gate C, docs"]
   I --> M["Cycle 6<br/>scope model<br/><i>gate A already closed</i>"]
 ```
 
 | | |
 |---|---|
-| phase | **Design** — analysis approved, implementation not started |
-| branch | **`docs/cycle6launch/gate-a`**, 4 commits above `main`, **not merged** |
-| `main` | `8a40b31`, `main == origin/main`, clean |
+| phase | **Plan** — design approved, implementation not started |
+| branch | **`feat/launch/design`**, **not merged** — documents only (`git log --oneline main..HEAD` for the exact set) |
+| `main` | `8e3cede`, **5 commits ahead of `origin/main`**, clean |
 | code touched | **none.** This session wrote documents only |
-| suite | not re-run — nothing was compiled. It was green in 8 s at `main` |
+| suite | re-run here: **14 packages green** under `-race`, installer **103/103**, `gofmt` empty, parity gate empty — but read the ⚠️ below about `go test ./...`'s exit code |
 
-## ✅ The suite is safe — the old warning stays withdrawn
+## ⚠️ `go test ./...` now exits non-zero, and it is NOT a regression
 
-`go test -race ./...` runs in ~8 s and leaves nothing behind. `rm -rf /tmp/_MEI*` is
-**not** part of any workflow; there is nothing left to remove, so do not reintroduce
-it ([ADR-0017](foundation/decisions/0017-dev-container-oracle.md)).
+`go build ./...`, `go vet ./...` and `go test -race ./...` all exit non-zero in this
+container because of **one untracked file**: `scratchpad/gatekeeper-probe/launcher.go`,
+the gate-A probe, is a **darwin** program and calls `syscall.Dup2`, which does not
+exist on linux. `./...` walks it because it sits inside the module.
+
+**Every real package is green.** The failing line is
+`FAIL github.com/alergyonthestage/ytdl/scratchpad/gatekeeper-probe [build failed]`,
+and nothing else.
+
+The remedy is to delete `scratchpad/gatekeeper-probe/` — the previous handoff records
+that it belongs to the maintainer and can be deleted freely. **This session did not
+delete it**: `scratchpad/` is the human's, and the rules forbid an agent removing or
+reorganising it unasked. Until then, read past that one line, or scope the run:
+`go test -race ./cmd/... ./internal/...`.
 
 ## What this session did, in one paragraph
 
-Closed gate A of `Cycle 6-launch`. The cycle rested on an unverified claim —
-that a bundle generated on the machine carries no quarantine attribute — and the
-container cannot evaluate it. Three candidate bundles were built and measured on the
-maintainer's Mac. **The claim holds**, and the artefact is settled:
-[ADR-0018](distribution/decisions/0018-desktop-launcher-app-bundle.md). The same
-verification found a defect nobody was looking for — the GUI's first launch fails
-silently about a quarter of the time — and the maintainer put it **in scope**. Every
-measurement is in the
-[analysis](distribution/analysis/2026-08-26-tech-choice-desktop-launcher.md).
+Closed the design phase. The criteria gate was settled first (one design document plus
+an ADR), then the design was written, then a **completeness pass** measured every claim
+it makes against the code — which found two gaps and corrected them. The maintainer
+approved gate B. The two questions [ADR-0018](distribution/decisions/0018-desktop-launcher-app-bundle.md)
+had explicitly deferred are now closed in
+[ADR-0019](distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md), and
+`T4` is closed with them.
 
 ---
 
 # How to resume
 
-**Read, in this order:** [ADR-0018](distribution/decisions/0018-desktop-launcher-app-bundle.md)
-→ [the analysis](distribution/analysis/2026-08-26-tech-choice-desktop-launcher.md)
-§6 and §7 → [roadmap § Cycle 6-launch](roadmap.md#cycle-6-launch). Then start the
-**design phase**. Do not re-open the artefact question or Gatekeeper: both are ruled,
-on measurements, in ADR-0018.
+**Read, in this order:** [ADR-0019](distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md)
+→ [the design](distribution/design/cycle6launch-launcher.md), §8 first (the ordered
+steps) then §5 (the cold start) → [roadmap § Cycle 6-launch](roadmap.md#cycle-6-launch).
+[ADR-0018](distribution/decisions/0018-desktop-launcher-app-bundle.md) and the
+[analysis](distribution/analysis/2026-08-26-tech-choice-desktop-launcher.md) are the
+layer beneath, needed only if a decision is questioned.
 
-**First concrete action:** branch from `main` as `feat/launch/design` *after* the
-merge below is done, and write the design at
-`distribution/design/cycle6launch-launcher.md`.
+**First concrete action: run `/plan`.** Do **not** start implementing — Plan is a phase
+transition with its own gate (objectives, priorities, order). Its input is already
+written: design §8 holds **eight ordered steps, each with its own oracle**, and records
+that steps **2–3** (the cold-start remedy) and **4–7** (the bundle) are independent of
+each other. `/plan` puts them on the roadmap, which is the SSOT for their status.
 
-## The four questions the design owes
+**Do not re-open**, all three ruled on measurements or approved at a gate:
 
-1. **Which binary fills `Contents/MacOS`.** ADR-0018 fixes the *kind* — a
-   linker-signed Mach-O — not which one. Two candidates, both viable:
-   - **`ytdl` itself**, with a launch role: no new release asset, no new checksum, no
-     new CI step; costs ~9.5 MB duplicated and couples the installer to refreshing it
-     whenever `ytdl` changes (which is exactly when it should).
-   - **A dedicated launcher**, ~2.2 MB: a second asset to build, checksum, version.
-
-   Two defects of the probe build must not be carried over: it reported
-   `Identifier=a.out`, and it was **thin arm64** where `install.sh` already handles
-   both architectures for `ytdl`.
-2. **The remedy for the cold start.** Candidates and costs are in the analysis §7 D2.
-   ⚠️ One of them — making yt-dlp itself cheap on macOS, as ADR-0017 did for the
-   container — **reintroduces Python**, which
-   [ADR-0005](foundation/decisions/0005-macos-floor-and-single-engine.md) deliberately
-   removed. It is listed there so it is rejected in writing rather than on sight.
-3. **Installer idempotence.** `install.sh` runs on every *update*, so whatever it does
-   to the bundle it does repeatedly. Deleting and recreating churns the Dock entry,
-   the Spotlight index and any alias the user made. "Leave it alone when unchanged" is
-   the likely answer and must be a decision, not an accident.
-4. **A visible failure path.** `runGUICmd` reports its errors on stderr — invisible
-   from Finder. The port being taken by another program currently produces a
-   double-click that does nothing at all.
+- the artefact, Gatekeeper, and the name `YTDL` — ADR-0018, measured on hardware;
+- which Mach-O, and the cold-start remedy — ADR-0019;
+- **the installer's language.** Design §4.7 had marked it *"a question for gate B"*:
+  approving the design approved its answer — `install.sh` stays **English**
+  throughout, and the Italian lands in the two user guides. It is a one-line change
+  if the maintainer ever wants it otherwise.
 
 ## Tasks
 
 | # | Task | Roadmap entry |
 |---|---|---|
-| 1 | **merge `docs/cycle6launch/gate-a` into `main`** from the Mac (see gates) | `Cycle 6-launch` |
-| 2 | design: the four questions above → `distribution/design/cycle6launch-launcher.md` | `Cycle 6-launch` |
-| 3 | gate B, then implementation + tests | `Cycle 6-launch` |
-| 4 | delete `docs/dev1/close-out` — merged into `main`, deletion deferred by the remote policy | — |
+| 1 | **`/plan`** — design §8's eight steps onto the roadmap, then its gate | `Cycle 6-launch` |
+| 2 | implementation + test, per the approved design | `Cycle 6-launch` |
+| 3 | **merge `feat/launch/design` into `main`** from the Mac (see gates) | `Cycle 6-launch` |
+| 4 | delete `docs/cycle6launch/gate-a` — merged, deletion deferred by the remote policy | — |
 
 Status lives in the roadmap, not here.
 
@@ -95,109 +91,134 @@ Status lives in the roadmap, not here.
 
 | Gate | What is suspended | What unblocks it |
 |---|---|---|
-| **Merge** | `main` does not yet carry gate A's rulings | the maintainer merges `docs/cycle6launch/gate-a` **from the Mac** — `git merge --no-ff`. Docs only, no code, so nothing to re-verify beyond `./hack/check-docs-links.sh` |
-| **Push** | `origin` has none of it | a **host step**: this container has no credentials and `gh` is not authenticated. `git push origin main` from the Mac |
-| **Gate B** | implementation | the maintainer approves the design document. `Design × Feature` is **`U`** in the profile — not delegable |
-| **Gate C** | closing the cycle | the maintainer's hands-on verification. **This cycle needs it more than most** — see below |
+| **Plan** | implementation | the maintainer approves the order and priorities that `/plan` produces |
+| **Merge** | `main` does not yet carry the design or ADR-0019 | the maintainer merges `feat/launch/design` **from the Mac** — `git merge --no-ff`. Documents only, no code, so `./hack/check-docs-links.sh` is the whole re-verification |
+| **Push** | `origin` has none of the last 5 commits on `main` | a **host step**: no credentials here, `gh` is not authenticated. `git push origin main` from the Mac |
+| **Gate C** | closing the cycle | the maintainer's hands-on verification on real hardware. This cycle's list grew — see below |
 
-### What gate C must carry, and why no oracle here replaces it
+### Why branch cleanup is deferred, measured rather than assumed
 
-Three things were measured as **unknowable** from where this session sat, and each is
-recorded in the analysis §9:
+`docs/cycle6launch/gate-a` **is** merged: `git merge-base --is-ancestor docs/cycle6launch/gate-a main`
+returns true, so deleting it would lose nothing. It stays anyway because `main` is
+**5 commits ahead of `origin/main`** and the profile's remote policy holds a local
+branch until its work is on the remote (`project-profile.md` §3). **That is correct
+behaviour, not a failure** — cleanup always defers by one session here.
 
-- **Spotlight and Launchpad discoverability.** The maintainer's Mac has indexing
-  **disabled** (`mdutil -s /` → *Indexing disabled*), so nothing about findability
-  was testable. The roadmap's claim that `~/Applications` is indexed does stand —
-  other locally created bundles there are in the index — but it was inferred, not
-  demonstrated for ours.
-- **`osacompile` without developer tooling.** The maintainer's Mac has **Xcode**, so
-  it cannot certify a property that depends on Xcode being absent. This is why the
-  applet was rejected rather than accepted with a caveat.
-- **macOS 26.** The maintainer's Mac is **15.6**. The shell-script bundle that
-  *worked* here is [reported to fail on 26](https://github.com/Ryubing/Issues/issues/422);
-  ADR-0018 does not depend on that report, but the gap is real and machines update.
+## What gate C must carry, and why no oracle here replaces it
+
+Four carried from gate A, and **four this design adds**. The first four are in the
+[analysis §9](distribution/analysis/2026-08-26-tech-choice-desktop-launcher.md);
+the design's own are in [§9](distribution/design/cycle6launch-launcher.md):
+
+- **Does the alert actually reach the user?** An `osascript` alert whose parent was
+  launched by LaunchServices may open behind other windows, or need an `activate`
+  first. **The `launcher.log` half does not depend on the answer** — that asymmetry is
+  deliberate, and it is why two remedies ship instead of one.
+- **Does the Dock tile behave as designed** — appear on launch, leave on exit, no
+  *Quit* stranded behind it.
+- **Does replacing only the inner binary preserve** the Dock entry, an alias, and the
+  Spotlight identity — the whole point of never recreating the bundle.
+- **The first click on the first bundle ever installed**: the exact scenario that
+  failed at gate A, now expected to open the browser in well under a second, twice in
+  a row, with no Terminal.
+
+One item from gate A **stopped being load-bearing**: `osacompile` without developer
+tooling. This design uses no applet, so the answer changes nothing unless the artefact
+decision is ever re-opened.
 
 ## Context the next session would otherwise rediscover
 
-### The cold start, in one place
+### The completeness pass found two gaps, and both are already corrected
 
-The daemon takes **~7.5 s** to open its port; `waitForGUI` caps at **10 s**. The cost
-is one `yt-dlp --version`, measured at **7.33 s on macOS — warm *and* cold** (7.34 s
-then 7.33 s back to back: the PyInstaller bundle re-unpacks every invocation, so
-there is no warm path). It is called synchronously by `newGUIUpdater`
-(`cmd/ytdl/update.go:66` → `update.Dependencies(stateDir, true)`), and `runDaemon`
-calls that **before** `startWebUI`. The same daemon answers in **0.80 s** in this
-container, where ADR-0017 replaced yt-dlp with the zipapp.
+They are recorded because they are what the implementation must respect, not because
+anything is left to decide.
 
-Two claims in `internal/update` contradict the measurements, **recorded and not
-corrected** — analysis does not touch code, so the design or the implementation owes
-them:
+- **Substantial.** The design made the launcher's idempotence depend on comparing its
+  checksum against `SHA2-256SUMS`, *"already downloaded for `ytdl`"*. **It is not**:
+  `install_ytdl` returns **before** its downloads when `ytdl_is_current`
+  (`install.sh:700`) — which is exactly the common update path the idempotence rule
+  exists to serve. The design now has `install_app_bundle` fetch the sums itself when
+  absent (~1 KB), non-fatal like the rest of the step.
+- **Minor.** *§Come disinstallare* in the installation guide holds **two** `rm` lines,
+  not three, so ADR-0018's *"a fourth line"* is off by one. ADR-0018 stands as written
+  — it is historical, and the count was never the obligation.
 
-- `Dependencies`' doc comment states the probe *"is never on a path a user is waiting
-  on"*. On the daemon startup path it passes `true`, and that path is one a user is
-  waiting on.
-- `versionTimeout`'s comment models the cost as cold-vs-warm, warm being *"well under
-  a second, ~800 ms measured in the container"*. That describes the container.
+### The install channel was questioned and confirmed — do not re-open it
 
-`installed.conf` already records `yt_dlp_version`, so the authority to skip the exec
-is on disk already. **`T4` is reopened** by this
-([roadmap-history](roadmap-history.md)): it was deferred on the premise that its
-saving is "milliseconds rather than gigabytes" — measured in the container, on the
-zipapp. On the target platform the saving is 7.33 seconds.
+Late in the session the maintainer asked whether the *install* could also start from a
+double-click, now that the *launch* does: a file downloaded from the repository,
+linked from the README, that runs the installer. **The answer is no**, and it is
+recorded where it belongs — a dated addition at the end of
+[ADR-0001](distribution/decisions/0001-distribution-channel.md), not here, because
+this file is deleted.
 
-### The probe scripts
+The short of it: anything executable downloaded through a browser acquires
+`com.apple.quarantine` and `spctl` rejects it without a Developer ID, the
+right-click → *Open* escape hatch is gone on current macOS, and the Terminal cost is
+paid **once per machine** anyway — `ytdl --update` re-runs `install.sh` by itself.
+`curl` remains the only channel that never meets Gatekeeper, which is why ADR-0001
+chose it.
 
-`scratchpad/gatekeeper-probe/` holds the three probes, the cross-built launcher
-binaries and the transcripts. **It is gitignored and belongs to the maintainer** — it
-does not travel, which is why every number is reproduced inside the analysis rather
-than linked. Delete it freely; `./probe.sh clean` removes what it installed on the
-Mac. If the design wants to re-measure, the launcher was cross-built from this
-container with `GOOS=darwin GOARCH=arm64` and came out **ad-hoc signed by the Go
-linker** — `LC_CODE_SIGNATURE`, blob `0xfade0cc0` — with no Xcode anywhere.
+### Three facts the ADR rests on, verified in this container
 
-### A method note that earned its place
+Re-deriving them costs an hour; they are cheap to record.
 
-The first probe reported P1 failing where P2 and P3 succeeded, and the script printed
-a verdict blaming P1's shape. **That verdict was wrong**: P2 and P3 were clicked with
-the daemon already warm, so they never sat the test P1 failed. A single sample of a
-race with a 25% margin decides nothing. The stamps and the captured stderr are what
-caught it — a check that records *what happened* survives a wrong conclusion drawn
-from it, and one that records only pass/fail does not.
+- **The Go linker hard-codes the signing identifier** to the literal `"a.out"` —
+  `/usr/local/go/src/cmd/link/internal/ld/macho.go:843` and `:1555`. No build flag
+  changes it. That is why `Identifier=a.out` is **accepted with a reason** rather than
+  treated as a defect.
+- **The linker signs arm64 only**: `NeedCodeSign()` is `IsDarwin() && IsARM64()`
+  (`ld/lib.go:301`). Confirmed against the gate-A probe artefacts themselves — the
+  arm64 binary carries the `0xfade0cc0` blob and the amd64 one carries **no signature
+  at all**. `ytdl_macos_amd64` has shipped unsigned since 2.0.0 and runs. So ADR-0018
+  §2's phrasing is exact on arm64 and vacuous on Intel, and ADR-0019 §1 restates it
+  precisely.
+- **`daemon.spawn` self-exec's `os.Executable()`** (`internal/daemon/daemon.go:486`).
+  This is the sharpest argument against putting `ytdl` in `Contents/MacOS`: a bundle
+  copy serving the GUI in process would spawn its daemon from the binary the last
+  update did not replace.
+
+### The two comments in `internal/update` are still uncorrected, and now owed
+
+The analysis recorded them and did not touch code; the design assigns them to steps
+2–3. `Dependencies`' doc comment claims *"a probe is never on a path a user is waiting
+on"* — false today, and **made true again** by the remedy rather than merely reworded.
+`versionTimeout`'s comment models cold-vs-warm at "~800 ms": that describes the
+container's zipapp, and on macOS there is no warm path at all.
 
 ## Debts carried, and they are NOT this cycle
 
 The unscheduled ones are in [improvements.md](improvements.md): `V23`, `V19` and the
 seven minors. The Cycle 10 ones — `V26`, `V27`, `V29`, `V22` — are on the roadmap as
 that cycle's precondition; **`V27` is a normative debt, not a preference**, and Cycle
-10 does not start without it. `T3` stays dropped.
+10 does not start without it. `T3` and `T5` stay as
+[roadmap-history](roadmap-history.md) records them; only `T4` closed.
 
 ## Container gotchas
 
 - git and `go build` want
   `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=/workspace/yt-download`
   on **every** invocation. `hack/check-docs-links.sh` carries its own exception.
-  `go build` inside `scratchpad/` also needs `GOFLAGS=-buildvcs=false`.
+- **`go test ./...` exits non-zero for the scratchpad probe** — see the ⚠️ at the top.
 - No credentials for `origin`: pushes are the maintainer's, from the Mac. `gh` is not
   authenticated here and **not installed on the Mac**.
 - `.cco/` is read-only unless the session starts with `--cco-access edit-project`, and
   it **cannot be raised afterwards**.
 - **No ffmpeg**, deliberately. Real conversions and the GUI are verified on macOS.
-- cco exposes **no tmpfs and no storage quota**, and a session is not root — a
-  size-capped filesystem is not obtainable from inside.
-- The container **can** cross-compile for macOS, both architectures, and the arm64
-  output is ad-hoc signed. That is how the P3 probe was produced.
+- The container **can** cross-compile for macOS, both architectures — that is how the
+  probe binaries were produced, and how step 4's `GOOS=darwin` oracle will run.
 
 ## Reference documents
 
-- [roadmap.md § Cycle 6-launch](roadmap.md#cycle-6-launch) — status, scope, what the
-  design still owes
-- [ADR-0018](distribution/decisions/0018-desktop-launcher-app-bundle.md) — the
-  rulings of this gate A
+- [roadmap.md § Cycle 6-launch](roadmap.md#cycle-6-launch) — status and what each gate
+  answered
+- [design/cycle6launch-launcher.md](distribution/design/cycle6launch-launcher.md) —
+  the artefact under gate B: requirements, flows, the eight steps, the test plan
+- [ADR-0019](distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md) —
+  the dedicated launcher, and versions read from the record
+- [ADR-0018](distribution/decisions/0018-desktop-launcher-app-bundle.md) — gate A's
+  rulings, which this cycle implements and does not revisit
 - [analysis 2026-08-26](distribution/analysis/2026-08-26-tech-choice-desktop-launcher.md)
-  — every measurement, and the two decisions it surfaced
-- [ADR-0001](distribution/decisions/0001-distribution-channel.md) — superseded in
-  part by ADR-0018, and only where it is now wrong
-- [ADR-0017](foundation/decisions/0017-dev-container-oracle.md) — why the container's
-  yt-dlp differs from every user's, and what that bounds
-- [ADR-0008](engine/decisions/0008-daemon-lifecycle.md) — the daemon's liveness
-  clause, which the launcher must not break
+  — every hardware measurement
+- [roadmap-history.md](roadmap-history.md) — `T4`'s deferral, and the dated addition
+  that closes it
