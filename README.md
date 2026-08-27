@@ -42,9 +42,17 @@ ytdl gui                                            # open the web interface in 
 **Always put the URL in quotes.** YouTube URLs contain `&`, which the terminal
 would otherwise read as "run this in the background".
 
-Prefer not to use the Terminal? `ytdl gui` opens a local web interface (on your
-own machine, at `127.0.0.1`) to paste a link, watch live progress, see the queue
-and history, and edit settings — no Terminal needed.
+Prefer not to use the Terminal at all? The installer also puts an app called
+**YTDL** in your Applications folder. Double-click it and the web interface opens
+in your browser: paste a link, watch live progress, see the queue and history,
+edit settings. Drag it to the Dock or the Desktop if you like — it keeps working
+from anywhere. It is built on your own machine during the install, which is why it
+needs no security exception.
+
+The app bounces in the Dock while the engine starts and then goes away: the
+browser page *is* the interface, and closing that page is what closes ytdl. From a
+Terminal, `ytdl gui` opens exactly the same interface (on your own machine, at
+`127.0.0.1`).
 
 A background download (`-b`) joins a queue that keeps draining after you close the
 Terminal window:
