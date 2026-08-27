@@ -33,6 +33,12 @@ and [ADR-0019](docs/maintainers/distribution/decisions/0019-launcher-mach-o-and-
   first attempt sometimes failed with nothing shown. Versions now come from what
   the installer recorded, and are checked against the tools once the interface is
   already up.
+- **The versions shown in *Aggiornamenti* correct themselves.** That check of the
+  real tools happens a few seconds after the interface opens, and its answer used
+  to stay inside ytdl: a page already open kept showing what the installer had
+  recorded — *versione non registrata* for a `yt-dlp` installed by something else,
+  Homebrew's for instance — until you pressed *Controlla aggiornamenti*. The page
+  is now told, and corrects itself unless you are in the middle of an update.
 
 ### Changed
 

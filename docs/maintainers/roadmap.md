@@ -18,11 +18,12 @@ still returns in 8 s cold ([ADR-0017](foundation/decisions/0017-dev-container-or
 — re-measured on 2026-08-27 with `cmd/ytdl-launch` in the tree. Its block is in
 [roadmap-history](roadmap-history.md#dev-1), like every closed unit.
 
-In flight is **Cycle 6-launch** — ytdl as a double-clickable app — whose gate B was
-approved on 2026-08-27, whose **implementation (`L1`–`L8`) is complete**, and whose
-**two reviews (`L9`) have both run** on the same branch. What is left is the merge,
-the release and gate C. Cycle 6 (the scope model) has its gate A closed too, and
-follows it.
+In flight is **Cycle 6-launch** — ytdl as a double-clickable app — whose work is
+**merged into `main` and pushed** (2026-08-27, `--no-ff`): gate B approved, `L1`–`L8`
+implemented, both reviews of `L9` run, `V32` decided and built as `L9b`. What is left
+is the **release** and **gate C**, in that order — the four bundle items cannot be
+observed before the assets exist. Cycle 6 (the scope model) has its gate A closed
+too, and follows it.
 
 A closed unit keeps **one line** here and its full block in
 [roadmap-history.md](roadmap-history.md). What is known, worth doing and **not**
@@ -43,16 +44,20 @@ flowchart LR
 ## Open now
 
 **[`Cycle 6-launch`](#cycle-6-launch) — the desktop launcher — is in flight, and its
-work is implemented and reviewed.** Gate B was approved on 2026-08-27 and **all eight
-implementation steps `L1`–`L8` are done** on `feat/launch/implementation`, not merged:
-the cold-start remedy, the launcher, the release assets and their signature assertion,
-the bundle step, and the Italian surfaces. **`L9` is done too**: the
+code is on `main`.** Gate B was approved on 2026-08-27, **`L1`–`L8` are done** — the
+cold-start remedy, the launcher, the release assets and their signature assertion,
+the bundle step, and the Italian surfaces — and **`L9` closed the reviews**: the
 [implementation review](distribution/reviews/005-cycle6launch-implementation.md) fixed
 two defects in place — an empty `YTDL.app` left behind by a run that installed none
-(`V30`), and a launcher that reported a successful launch as a failure (`V31`) — and
-the [documentation review](distribution/reviews/006-cycle6launch-documentation.md)
-realigned the living docs. What remains is `L10`–`L12` — the merge, the release, and
-gate C. The design and ADR-0019 are merged into `main`.
+(`V30`), and a launcher that reported a successful launch as a failure (`V31`) — the
+[documentation review](distribution/reviews/006-cycle6launch-documentation.md)
+realigned the living docs, and `L9b` built the maintainer's answer to `V32`. `L10`
+merged it all into `main` with `--no-ff` and pushed.
+
+**What remains is `L11` and `L12` — the release, then gate C.** Until the release is
+cut, `main` serves an `install.sh` that looks for launcher assets `releases/latest`
+does not have: every install in that window warns and produces **no app**. The
+release is therefore not a formality that can wait for a convenient week.
 
 Its rulings are, in the order to read them:
 [ADR-0018](distribution/decisions/0018-desktop-launcher-app-bundle.md) (gate A — the
@@ -314,7 +319,7 @@ two findings, **G27** and **G28**, which land in this cycle. What remains is the
 
 <a id="cycle-6-launch"></a>
 
-#### `Cycle 6-launch` · The desktop launcher (`F`) — `in progress` (opened 2026-08-23, planned · implemented · reviewed 2026-08-27)
+#### `Cycle 6-launch` · The desktop launcher (`F`) — `in progress` (opened 2026-08-23, planned · implemented · reviewed · **merged** 2026-08-27)
 
 **Why now.** Cycle 6-plus's gate C passed with exactly one recorded exception,
 `C2`: the update no longer needed a Terminal, but **opening the interface still
@@ -348,7 +353,7 @@ means, and what the user sees while it starts. None is reopened here.
 | L8 | the Italian surfaces — both user guides, `YTDL_APP_DIR` in `hack/ytdl-dev.sh` and `dev-testing.md`, `CHANGELOG.md` under `[Unreleased]` | L3 · L7 | `done` |
 | L9 | [`/review-implementation`](distribution/reviews/005-cycle6launch-implementation.md), then [`/review-docs`](distribution/reviews/006-cycle6launch-documentation.md) on the same branch | L1–L8 | `done` |
 | L9b | `V32`: the advisory is pushed over SSE — the `update` frame on connect and on reconcile, the guard that yields while the user is mid-flow, and the dated addition to ADR-0019 §2 | L9 | `done` |
-| L10 | merge `--no-ff` into `main` | L9b | `planned` |
+| L10 | merge `--no-ff` into `main` | L9b | `done` |
 | L11 | **cut the release**, so `releases/latest` carries the launcher assets | L10 | `planned` |
 | L12 | **gate C** on hardware — the eight items in [design §9](distribution/design/cycle6launch-launcher.md), plus the ninth `V32` adds below | L11 | `planned` |
 
