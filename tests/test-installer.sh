@@ -555,6 +555,117 @@ ffmpeg_is_current
 check "a marked copy is never already current" "1" "$?"
 
 # ──────────────────────────────────────────────────────────────────
+#  The app bundle: pure functions
+# ──────────────────────────────────────────────────────────────────
+# Everything here is logic with no download behind it, which is exactly the part
+# that is testable away from a Mac. What the bundle step DOES with these — the
+# canary, the non-fatal failure, the write-only-when-different rule — is below.
+printf '\nApp bundle: pure functions\n'
+
+# The thin-arm64 defect ADR-0019 §1 closed: install.sh already derives ARCH_KEY
+# for both architectures, so the launcher follows it rather than assuming one.
+mock_platform "15.3.1" "arm64" >/dev/null 2>&1
+check "arm64 selects ytdl_launch_macos_arm64" \
+  "ytdl_launch_macos_arm64" "$(launcher_asset_for)"
+
+mock_platform "15.3.1" "x86_64" >/dev/null 2>&1
+check "Intel selects ytdl_launch_macos_amd64" \
+  "ytdl_launch_macos_amd64" "$(launcher_asset_for)"
+
+# ~/Applications needs no sudo, which is ADR-0001's whole shape.
+#
+# NOT in a subshell: check() increments PASS/FAIL, and a subshell would discard
+# both — every assertion below would PRINT its result and count for nothing, so a
+# real defect would leave the suite exiting 0. Saved and restored by hand instead.
+APP_TEST_HOME="$(mktemp -d)"
+APP_SANDBOX="$(mktemp -d)"
+SAVED_HOME="$HOME"; SAVED_FORCE="$FORCE"
+SAVED_APP_DIR="${YTDL_APP_DIR-}"; SAVED_APP_DIR_SET="${YTDL_APP_DIR+set}"
+
+HOME="$APP_TEST_HOME"
+unset YTDL_APP_DIR
+check "the bundle defaults to ~/Applications/YTDL.app" \
+  "$APP_TEST_HOME/Applications/YTDL.app" "$(app_dir)"
+
+# YTDL_APP_DIR names the PARENT, so hack/ytdl-dev.sh can give the sandbox its own
+# bundle and a dev launcher can never start the installed ytdl (design §4.6).
+YTDL_APP_DIR="$APP_TEST_HOME/dev/Applications"
+check "YTDL_APP_DIR moves the bundle for the dev sandbox" \
+  "$APP_TEST_HOME/dev/Applications/YTDL.app" "$(app_dir)"
+check "the sidecar sits in Contents/Resources" \
+  "$APP_TEST_HOME/dev/Applications/YTDL.app/Contents/Resources/ytdl-path" \
+  "$(app_sidecar_path)"
+check "the launcher sits in Contents/MacOS" \
+  "$APP_TEST_HOME/dev/Applications/YTDL.app/Contents/MacOS/YTDL" \
+  "$(app_exe_path)"
+
+# Every key §4.2 names has to be there: a plist missing CFBundleExecutable is a
+# bundle macOS refuses to launch, and nothing before gate C would say so.
+plist="$(render_app_plist "2.3.0")"
+for key in CFBundleName CFBundleDisplayName CFBundleExecutable CFBundleIdentifier \
+           CFBundlePackageType CFBundleInfoDictionaryVersion CFBundleShortVersionString \
+           CFBundleVersion LSMinimumSystemVersion NSHighResolutionCapable; do
+  printf '%s' "$plist" | grep -q "<key>$key</key>"
+  check "Info.plist carries $key" "0" "$?"
+done
+
+printf '%s' "$plist" | grep -q '<string>2.3.0</string>'
+check "Info.plist carries the installed ytdl version" "0" "$?"
+
+printf '%s' "$plist" | grep -q "<string>io.github.alergyonthestage.ytdl</string>"
+check "Info.plist carries the bundle identifier" "0" "$?"
+
+printf '%s' "$plist" | grep -q '<string>10.15</string>'
+check "Info.plist declares the 10.15 floor detect_platform enforces" "0" "$?"
+
+# Byte-identical across two runs is what makes "write only when different" a real
+# skip rather than a rewrite that happens to look the same.
+check "render_app_plist is byte-identical across two runs" \
+  "$(render_app_plist "2.3.0" | sha256_of /dev/stdin)" \
+  "$(render_app_plist "2.3.0" | sha256_of /dev/stdin)"
+
+check "a different version renders a different plist" "1" \
+  "$([ "$(render_app_plist "2.3.0")" = "$(render_app_plist "2.4.0")" ] && echo 0 || echo 1)"
+
+# app_is_current compares the launcher BY CHECKSUM, not by version: a release
+# that does not change its bytes must not touch the bundle at all (design §4.3).
+YTDL_APP_DIR="$APP_SANDBOX/Applications"
+mock_platform "15.3.1" "arm64" >/dev/null 2>&1
+mkdir -p "$(dirname "$(app_exe_path)")"
+printf 'the launcher bytes\n' > "$(app_exe_path)"
+app_sum="$(sha256_of "$(app_exe_path)")"
+app_sums="$APP_SANDBOX/SHA2-256SUMS"
+printf '%s  ytdl_launch_macos_arm64\n' "$app_sum" > "$app_sums"
+
+FORCE=0
+app_is_current "$app_sums"
+check "a matching checksum skips the launcher" "0" "$?"
+
+FORCE=1
+app_is_current "$app_sums"
+check "--force never skips the launcher" "1" "$?"
+
+FORCE=0
+printf '%s  ytdl_launch_macos_arm64\n' "0000000000000000000000000000000000000000000000000000000000000000" > "$app_sums"
+app_is_current "$app_sums"
+check "a differing checksum installs" "1" "$?"
+
+# A sums file with no entry for our asset cannot answer the question, so the safe
+# direction is "not current" — the step then warns and leaves the bundle exactly
+# as it found it.
+: > "$app_sums"
+app_is_current "$app_sums"
+check "no published sum for the launcher is not 'current'" "1" "$?"
+
+printf '%s  ytdl_launch_macos_arm64\n' "$app_sum" > "$app_sums"
+rm -f "$(app_exe_path)"
+app_is_current "$app_sums"
+check "an absent bundle installs" "1" "$?"
+
+HOME="$SAVED_HOME"; FORCE="$SAVED_FORCE"
+if [ -n "$SAVED_APP_DIR_SET" ]; then YTDL_APP_DIR="$SAVED_APP_DIR"; else unset YTDL_APP_DIR; fi
+rm -rf "$APP_TEST_HOME" "$APP_SANDBOX"
+# ──────────────────────────────────────────────────────────────────
 #  Portability: the shell that will actually run this is bash 3.2
 # ──────────────────────────────────────────────────────────────────
 # Every check above runs under the CONTAINER's bash (5.x). The installer runs on

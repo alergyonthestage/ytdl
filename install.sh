@@ -794,6 +794,109 @@ verify_install() {
 }
 
 # ──────────────────────────────────────────────────────────────────
+#  The app bundle
+# ──────────────────────────────────────────────────────────────────
+# YTDL.app is what makes ytdl startable without a Terminal — the one thing
+# Cycle 6-plus's gate C recorded as still needing one (ADR-0018). It wraps a
+# dedicated launcher, never ytdl itself: ytdl's bytes move on every release, and
+# a bundle rebuilt on every update would churn the Dock entry, the Spotlight
+# identity and any alias the user made (ADR-0019 §1).
+#
+# It is generated HERE, on the machine, which is the whole reason it needs no
+# Developer ID: a bundle that was never downloaded never acquires
+# com.apple.quarantine, so Gatekeeper never assesses it. Measured on hardware at
+# gate A; ADR-0001 is superseded in part, for this case only.
+
+# app_dir — the bundle itself. YTDL_APP_DIR names its PARENT directory, so
+# hack/ytdl-dev.sh can give the development sandbox its own bundle and a dev
+# launcher can never start the installed ytdl (design §4.6).
+#
+# ~/Applications, not /Applications: the latter needs sudo, and this installer
+# has never used it. It does not exist by default, so it is created.
+app_dir()          { printf '%s/YTDL.app\n' "${YTDL_APP_DIR:-$HOME/Applications}"; }
+app_exe_path()     { printf '%s/Contents/MacOS/YTDL\n' "$(app_dir)"; }
+app_plist_path()   { printf '%s/Contents/Info.plist\n' "$(app_dir)"; }
+app_pkginfo_path() { printf '%s/Contents/PkgInfo\n' "$(app_dir)"; }
+
+# app_sidecar_path — where the absolute path of the installed ytdl is recorded.
+# The launcher reads it relative to its OWN location, never to the working
+# directory, which is what lets the user drag the bundle anywhere and keep it
+# working. It is a PATH and never a command line.
+app_sidecar_path() { printf '%s/Contents/Resources/ytdl-path\n' "$(app_dir)"; }
+
+# launcher_asset_for — the launcher published for THIS architecture. install.sh
+# already derives ARCH_KEY for both, so the launcher follows it rather than
+# assuming arm64 as the gate-A probe did (ADR-0019 §1).
+launcher_asset_for() { printf 'ytdl_launch_macos_%s\n' "$ARCH_KEY"; }
+
+# render_app_plist VERSION — the bundle's Info.plist, on stdout.
+#
+# Pure and deterministic: identical input renders identical bytes, which is what
+# lets install_app_bundle compare before writing and leave the file alone when
+# nothing changed. No icon key — the icon is deferred, and adding it later is one
+# file plus one key.
+#
+# No LSUIElement either, deliberately: with it a double-click gives no feedback at
+# all until the browser appears; without it the Dock tile that appears and then
+# goes away IS the feedback, and it is the signal the gate-A probe observed.
+render_app_plist() {
+  local version="$1"
+  cat <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>YTDL</string>
+	<key>CFBundleDisplayName</key>
+	<string>YTDL</string>
+	<key>CFBundleExecutable</key>
+	<string>YTDL</string>
+	<key>CFBundleIdentifier</key>
+	<string>io.github.alergyonthestage.ytdl</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>${version}</string>
+	<key>CFBundleVersion</key>
+	<string>${version}</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>10.15</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+</dict>
+</plist>
+PLIST
+}
+
+# app_is_current SUMS — true when the launcher already in the bundle is
+# byte-identical to the one this release publishes.
+#
+# By CHECKSUM, not by version, and that is stricter on purpose: the launcher
+# carries no version, and a release that does not change its bytes must not touch
+# the bundle at all. This is ADR-0016 §11's idempotence rule — resolve a concrete
+# target, compare, skip — applied to one more component.
+#
+# Every answer it cannot give is "not current", which is the safe direction: the
+# step that acts on it warns and leaves the bundle exactly as it found it.
+app_is_current() {
+  local sums="$1" exe expected actual
+  [ "$FORCE" -eq 0 ] || return 1
+  [ -n "$sums" ] && [ -f "$sums" ] || return 1
+
+  exe="$(app_exe_path)"
+  [ -f "$exe" ] || return 1
+
+  expected="$(awk -v n="$(launcher_asset_for)" '$2 == n {print $1; exit}' "$sums")"
+  [ -n "$expected" ] || return 1
+
+  actual="$(sha256_of "$exe")"
+  [ -n "$actual" ] && [ "$actual" = "$expected" ]
+}
+
+# ──────────────────────────────────────────────────────────────────
 #  Main
 # ──────────────────────────────────────────────────────────────────
 main() {
