@@ -14,8 +14,9 @@ and [go-engine.md](engine/design/go-engine.md) for the engine as built.
 **Where we are now.** **v2.2.0 is released, merged and installed**, Cycle 6-plus is
 closed, `DOCS-1` is **closed and merged**, and **`DEV-1` is done** — the project's
 primary gate, `go test -race ./...`, no longer destroys the session that runs it and
-returns in 8 s ([ADR-0017](foundation/decisions/0017-dev-container-oracle.md)). Its
-block below moves to the history once its branch is merged, like every closed unit.
+still returns in 8 s cold ([ADR-0017](foundation/decisions/0017-dev-container-oracle.md))
+— re-measured on 2026-08-27 with `cmd/ytdl-launch` in the tree. Its block is in
+[roadmap-history](roadmap-history.md#dev-1), like every closed unit.
 
 In flight is **Cycle 6-launch** — ytdl as a double-clickable app — whose gate B was
 approved on 2026-08-27 and whose **implementation (`L1`–`L8`) is complete** and awaiting
