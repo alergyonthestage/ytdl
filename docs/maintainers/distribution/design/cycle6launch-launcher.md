@@ -252,13 +252,24 @@ Three rules, and they are decisions rather than accidents:
 - **The bundle directory is never deleted and never recreated.** Only its
   contents are written. Deleting it is what would churn the Dock entry, the
   Spotlight index and any alias the user made.
-- **The launcher binary is compared by checksum**, not by version. The release's
-  `SHA2-256SUMS` — already downloaded for `ytdl` — names the expected sum of
-  `ytdl_launch_macos_$ARCH_KEY`; `shasum -a 256` of the installed copy answers
-  the other side. Equal means nothing is fetched and nothing is written. This is
-  ADR-0016 §11's idempotence rule (resolve a concrete target, compare, skip)
-  applied to one more component, and it is stricter than a version comparison:
-  a release that does not change the launcher's bytes does not touch the bundle.
+- **The launcher binary is compared by checksum**, not by version.
+  `SHA2-256SUMS` names the expected sum of `ytdl_launch_macos_$ARCH_KEY`;
+  `shasum -a 256` of the installed copy answers the other side. Equal means
+  nothing is fetched and nothing is written. This is ADR-0016 §11's idempotence
+  rule (resolve a concrete target, compare, skip) applied to one more component,
+  and it is stricter than a version comparison: a release that does not change
+  the launcher's bytes does not touch the bundle.
+
+  ⚠️ **The sums file cannot be assumed to be on disk already.** `install_ytdl`
+  returns **before** its downloads when `ytdl_is_current`, so
+  `$TMPDIR_YTDL/ytdl-SHA2-256SUMS` is absent on exactly the update path this
+  rule exists to serve — an update where ytdl itself did not move.
+  `install_app_bundle` therefore fetches `SHA2-256SUMS` itself when it is not
+  already there (~1 KB), reusing the copy when it is. That fetch is subject to
+  §4.4 like every other: it cannot fail the installation, and a sums file that
+  does not arrive means the bundle step warns and leaves the bundle exactly as
+  it found it — which is the safe direction, since "leave it alone" is the
+  common answer anyway.
 - **`Info.plist` and the sidecar are rendered, compared, and written only when
   different.** They are local text with no download behind them, so the
   comparison is a `cmp`; the version key moves when ytdl moves, which keeps
@@ -297,9 +308,11 @@ exist for an installation that does not work.
 
 ### 4.5 Uninstalling
 
-`rm -rf ~/Applications/YTDL.app` — the fourth line ADR-0018 predicted, in
+`rm -rf ~/Applications/YTDL.app`, in
 [guida-installazione](../../../users/guides/guida-installazione.md) §*Come
-disinstallare*, in Italian, not only in the changelog.
+disinstallare*, in Italian, not only in the changelog. ADR-0018 called it "a
+fourth line"; that section holds **two** `rm` lines covering four binaries, so
+concretely it is a third. The count was never the point — the obligation is.
 
 ### 4.6 The development sandbox
 
@@ -652,3 +665,8 @@ And four this design adds:
 | the sidecar records the absolute ytdl path | And is rewritten when `INSTALL_DIR` changes |
 | a failed bundle step returns 0 | The app never fails the installation |
 | bash 3.2 shape check | Already global in the suite; the new code is covered by it |
+
+
+
+
+
