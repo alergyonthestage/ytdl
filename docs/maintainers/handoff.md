@@ -18,7 +18,7 @@ flowchart LR
 | | |
 |---|---|
 | phase | **Plan** — design approved, implementation not started |
-| branch | **`feat/launch/design`**, 3 commits above `main`, **not merged** |
+| branch | **`feat/launch/design`**, 4 commits above `main`, **not merged** |
 | `main` | `8e3cede`, **5 commits ahead of `origin/main`**, clean |
 | code touched | **none.** This session wrote documents only |
 | suite | re-run here: **14 packages green** under `-race`, installer **103/103**, `gofmt` empty, parity gate empty — but read the ⚠️ below about `go test ./...`'s exit code |
