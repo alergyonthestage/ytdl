@@ -199,7 +199,9 @@ Se preferisci non usare il Terminale, ytdl ha un'interfaccia nel browser.
 
 **Il modo normale di aprirla è l'app YTDL**: la trovi nella cartella
 **Applicazioni** e ti basta un doppio clic. Se la vuoi più comoda, trascinala sul
-Dock o sulla Scrivania — funziona da qualsiasi posizione.
+**Dock** — che ci mette un collegamento senza spostarla — oppure mettine un
+**alias** sulla Scrivania (tasto destro → *Crea alias*). L'originale conviene
+lasciarlo in Applicazioni: è l'unica cartella che gli aggiornamenti guardano.
 
 Quando la apri, l'icona compare per un attimo nel Dock, il browser si apre sulla
 pagina di ytdl, e l'icona sparisce. È normale: **YTDL non è un programma che
