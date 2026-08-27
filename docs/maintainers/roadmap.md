@@ -17,8 +17,9 @@ primary gate, `go test -race ./...`, no longer destroys the session that runs it
 returns in 8 s ([ADR-0017](foundation/decisions/0017-dev-container-oracle.md)). Its
 block below moves to the history once its branch is merged, like every closed unit.
 
-Next is **Cycle 6-launch** — ytdl as a double-clickable app — whose **design is done
-and whose gate B was approved on 2026-08-27**. It resumes at **Plan**. Cycle 6 (the
+Next is **Cycle 6-launch** — ytdl as a double-clickable app — whose **design is done,
+whose gate B was approved on 2026-08-27, and whose work is now planned below as
+`L1`–`L12`**. It resumes at **implementation**, starting with `L2`. Cycle 6 (the
 scope model) has its gate A closed too, and follows it.
 
 A closed unit keeps **one line** here and its full block in
@@ -39,11 +40,11 @@ flowchart LR
 
 ## Open now
 
-**[`Cycle 6-launch`](#cycle-6-launch) — the desktop launcher — is in flight, at the
-end of its design phase.** Its **gate B was approved on 2026-08-27**; the design and
-ADR-0019 are on the branch `feat/launch/design`, **not yet merged**. The next phase is
-**Plan**: [design §8](distribution/design/cycle6launch-launcher.md) already holds eight
-ordered steps, each with its own oracle, and `/plan` records them here.
+**[`Cycle 6-launch`](#cycle-6-launch) — the desktop launcher — is in flight, and its
+work is now planned.** Its gate B was approved on 2026-08-27 and design §8's eight
+steps are on the roadmap below as `L1`–`L12`, each with what it depends on. `L1` is `done` — the
+design, ADR-0019 and their index rows are on the branch `feat/launch/design`, **not yet
+merged**. The next phase is **implementation**, and it starts at `L2`.
 
 Its rulings are, in the order to read them:
 [ADR-0018](distribution/decisions/0018-desktop-launcher-app-bundle.md) (gate A — the
@@ -303,115 +304,74 @@ two findings, **G27** and **G28**, which land in this cycle. What remains is the
 
 <a id="cycle-6-launch"></a>
 
-#### Cycle 6-launch — the desktop launcher (`F`) — **design done, gate B approved (2026-08-27)**
+#### `Cycle 6-launch` · The desktop launcher (`F`) — `planned` (opened 2026-08-23, planned 2026-08-27)
+
+**Why now.** Cycle 6-plus's gate C passed with exactly one recorded exception,
+`C2`: the update no longer needed a Terminal, but **opening the interface still
+did** — for an audience the GUI exists to spare a Terminal, the one thing it was
+built to avoid. This cycle delivers the **entry point** half of phase item `6a`
+and leaves 6a's paste/drop-and-enqueue app to a later pass, if it is still wanted
+once the interface is one click away.
 
 **Read in this order:**
-[ADR-0018](distribution/decisions/0018-desktop-launcher-app-bundle.md) (gate A) →
+[ADR-0018](distribution/decisions/0018-desktop-launcher-app-bundle.md) (gate A —
+the artefact, `~/Applications/YTDL.app`, the name, Gatekeeper measured on
+hardware) →
 [ADR-0019](distribution/decisions/0019-launcher-mach-o-and-recorded-versions.md)
-(gate B) → [the design](distribution/design/cycle6launch-launcher.md), with the
-[analysis](distribution/analysis/2026-08-26-tech-choice-desktop-launcher.md) for the
-measurements behind all three.
+(gate B — a dedicated launcher, and the cold start answered from `installed.conf`)
+→ [the design](distribution/design/cycle6launch-launcher.md), §8 for the steps and
+§5 for the cold start. Every measurement behind the three is in the
+[analysis](distribution/analysis/2026-08-26-tech-choice-desktop-launcher.md).
+**The questions this entry used to hold open are all answered there** — the
+artefact, the name, idempotence, the port and the headless daemon, what "quit"
+means, and what the user sees while it starts. None is reopened here.
 
-Gate A settled the artefact (an app bundle around a **linker-signed Mach-O**, in
-`~/Applications/YTDL.app`), confirmed on hardware that a bundle generated in place
-carries no quarantine, rejected the `osacompile` applet, fixed the name as **YTDL**,
-and pulled the GUI's cold-start defect into scope. **Gate B closed the two questions
-it deferred** — the Mach-O is a **dedicated launcher** (`cmd/ytdl-launch`), and the
-cold start is answered from `installed.conf` then reconciled by a probe once the port
-is open. Both are ADR-0019; the design builds what they decide, and settles the
-installer's idempotence, a failure path visible from Finder, and the three scope items
-below.
+| id | entry | depends on | status |
+|---|---|---|---|
+| L1 | the design, ADR-0019, and their two rows in `docs/README.md` | — | `done` |
+| L2 | `internal/update`: the recorded version walk, `RecordedDependencies`, and the two comments the measurements falsified | — | `planned` |
+| L3 | `cmd/ytdl`: the constructor reads the record; `runDaemon` reconciles with a probe after `startWebUI` | L2 | `planned` |
+| L4 | `cmd/ytdl-launch`: resolve `ytdl` absolutely, run `ytdl gui`, always log, alert only on failure | — | `planned` |
+| L5 | `.github/workflows/release.yml`: the two launcher assets, in `SHA2-256SUMS`, with the arm64 `LC_CODE_SIGNATURE` asserted | L4 | `planned` |
+| L6 | `install.sh` pure functions: `app_dir`, `launcher_asset_for`, `render_app_plist`, `app_is_current`, `app_sidecar_path` | L4 | `planned` |
+| L7 | `install.sh`: `install_app_bundle`, wired after `verify_install` and before `write_marker`, non-fatal | L6 | `planned` |
+| L8 | the Italian surfaces — both user guides, `YTDL_APP_DIR` in `hack/ytdl-dev.sh` and `dev-testing.md`, `CHANGELOG.md` under `[Unreleased]` | L3 · L7 | `planned` |
+| L9 | `/review-implementation`, then `/review-docs` on the same branch | L1–L8 | `planned` |
+| L10 | merge `--no-ff` into `main` | L9 | `planned` |
+| L11 | **cut the release**, so `releases/latest` carries the launcher assets | L10 | `planned` |
+| L12 | **gate C** on hardware — the eight items in [design §9](distribution/design/cycle6launch-launcher.md) | L11 | `planned` |
 
-**Next phase: Plan.** [Design §8](distribution/design/cycle6launch-launcher.md) holds
-eight ordered steps, each with its own oracle, and records that steps 2–3 (the
-cold-start remedy) and 4–7 (the bundle) are independent of each other. Work is on
-`feat/launch/design`, **not merged**.
+**Two independent halves, in this order.** L2–L3 are the cold-start remedy and
+ship without the bundle; L4–L7 are the bundle, which without the remedy would ship
+the defect ADR-0018 pulled into scope. Neither half depends on the other; they land
+in this order so the diff reads as two coherent halves.
 
-Also not a gate-C finding, and the same trigger: today the only way to start the
-interface is `ytdl gui` in a Terminal, which for the audience the GUI exists for
-is the one thing it was built to avoid. This cycle delivers the **entry point**
-half of the long-planned phase item **6a** — an icon the user double-clicks that
-brings up the interface — and leaves 6a's paste/drop-and-enqueue app to a later
-pass, if it is ever wanted once the GUI itself is one click away.
+**Constraints.**
 
-- **Scope:** a launcher installed by `install.sh` alongside the binary, that
-  starts the daemon and opens the browser when nothing is running, and only
-  opens the browser when something already is. Plus its uninstall path, and the
-  installer telling the user, in Italian, that it is there and where.
-  **Added at gate A:** the **cold-start defect** — the daemon takes ~7.5 s to open
-  its port against a 10 s cap, because `newGUIUpdater` calls `yt-dlp --version`
-  (7.33 s on macOS) synchronously first. A first click that fails silently makes the
-  *Done when* unreachable, so the remedy ships with the launcher. Candidate remedies
-  and their costs are in the analysis §7 D2; **`T4` is reopened** by it, its deferral
-  premise having been measured in the container rather than on the target platform.
-- **What "desktop launcher" means — clarified by the maintainer, 2026-08-23.**
-  Not an icon that must live on the Desktop. **The user should see ytdl as an
-  app**: an icon in the Applications folder, which they can then put in the Dock,
-  on the Desktop, or anywhere they like. The name of the cycle is about the
-  *destination* — the desktop metaphor — not about a location on disk.
+- `internal/core` stays **byte-unchanged** and `internal/daemon` untouched. The
+  parity gate `git diff main -- internal/core/ internal/daemon/` comes back empty
+  at **every** commit, not only at the end.
+- Every step ends green on the **whole** gate, not just its own oracle:
+  `go test -race ./...` · `go vet ./...` and `gofmt -l` empty ·
+  `bash tests/test-installer.sh` · `./hack/check-docs-links.sh` · the parity gate.
+- **Tests are written from the design, by the independent tester role.**
+  [Appendix C](distribution/design/cycle6launch-launcher.md) is the contract list;
+  it is not derived from the implementation.
+- **The bundle step never fails the install** (design §4.4) — an app that cannot be
+  written is warned about, never aborted on.
 
-  That is a scope input, not a settled design, but it narrows the artefact
-  question sharply and adds three of its own:
-  - **A `.command` file is effectively ruled out.** It is not an app: it cannot
-    sit in the Applications folder as one, it cannot be pinned to the Dock as
-    one, and double-clicking it opens a Terminal window — which this cycle exists
-    to avoid.
-  - **`/Applications` needs admin; `~/Applications` does not.** The installer has
-    never used `sudo` and that is ADR-0001's whole shape, so `~/Applications` is
-    the candidate — it is indexed by Spotlight and Launchpad, and it does not
-    exist by default, so the installer would create it.
-  - **It must survive being moved.** If the user drags it to the Dock, to the
-    Desktop, or into a folder of their own, it must still work — so it resolves
-    `ytdl` by absolute path and never by its own location.
-- **What the two gates settled** — *analysis closed 2026-08-26, design closed
-  2026-08-27. Every entry below is now answered; each says which gate answered it:*
-  - ~~**The artefact.** A double-clickable `.command`, an `osacompile`-built
-    `.app` in `~/Applications`, or an Automator app. The decisive question is
-    **Gatekeeper**.~~ **Answered** (ADR-0018): an app bundle around a
-    **linker-signed Mach-O**. Quarantine is absent on a bundle generated in place —
-    measured, not assumed. The applet is rejected twice over: patching its
-    `Info.plist` to set the name invalidates its signature, and its signature exists
-    only because the maintainer's Mac has Xcode, which the user's does not.
-    **Left to design:** whether that Mach-O is `ytdl` itself or a dedicated launcher.
-  - ~~**Its name.**~~ **Answered:** **YTDL**, the same name in both channels.
-  - ~~**Where the icon comes from.**~~ **Deferred by the maintainer, 2026-08-26:** not
-    a priority and changeable afterwards. It does not block design; it is a gate-C
-    look, not a structural choice.
-  - ~~**Idempotence.** What the icon does when a daemon is already running, when
-    one is running *headless* from `ytdl -b`, and when the
-    port is taken by something else.~~ **Answered by the design** (§6.1, §6.2):
-    **nothing is added for either**. The launcher runs `ytdl gui` unconditionally and
-    that command already holds both rules — it serves the UI while retrying the
-    contended lock, and it refuses to point the browser at a stranger's server. A
-    second implementation in the launcher would be the rule most likely to drift.
-  - ~~**What the user sees while it starts.**~~ **Answered by the design** (§3.3, §5):
-    the delay goes away with ADR-0019 §2's remedy, and the failure becomes visible in
-    two ways — a line always appended to `launcher.log`, the mechanism the gate-A probe
-    itself proved on hardware, plus an `osascript` alert carrying **`ytdl gui`'s own
-    Italian message**, so there is one message catalogue and the launcher authors none
-    of it. Whether that alert reaches the front of the screen from LaunchServices is a
-    gate-C observation; the log does not depend on the answer.
-  - ~~**What `install.sh` does to it on every UPDATE, not just on install.**~~
-    **Answered by the design** (§4.3), and it is a decision: the bundle directory is
-    **never deleted and never recreated** — only its contents are written. The launcher
-    is compared **by checksum**, the plist and the sidecar are rendered and written only
-    when they differ. This is what makes a dedicated launcher worth its cost: `ytdl`'s
-    bytes move on every release, so a bundle wrapping `ytdl` would be rewritten on
-    every update — exactly the churn to avoid.
-  - ~~**What it means to "quit" it.**~~ **Answered by the design** (§6.3): it is a
-    **launcher that bounces and goes**. The tile appears while `ytdl gui` runs and
-    leaves when it returns; the interface is the browser page, and the engine stops
-    itself when the page closes and the queue is empty (ADR-0008). Nothing stays in the
-    Dock offering a Quit that has nothing to quit, and both guides say so in Italian —
-    which is what makes it tellable, the thing the open question said was
-    indispensable.
-- **Depends on nothing in Cycles 6/7**, and touches neither `internal/core` nor
-  `internal/daemon`: it is installer + one entry-point path.
-- **Done when:** a non-developer starts ytdl **as an app** — from the
-  Applications folder, the Dock, or wherever they chose to put it — twice in a
-  row, without a Terminal ever appearing, and uninstalling removes it. It is the
-  single exception `C2` recorded when it passed at Cycle 6-plus's gate C: the
-  update itself needed no Terminal, but opening the interface still did.
+⚠️ **L11 is not optional, and the L10 → L11 gap is a surface.** `install.sh` is
+served from `main` while assets come from `releases/latest`, so in that window the
+newest release carries no launcher. Any run of the installer in it — a fresh
+install, a `deps.conf` change, a forced `ytdl --update` — takes the warn-and-continue
+path and installs **no app**. Non-fatal by design, and still a user meeting a
+warning for something that is merely not released yet. **Gate C's four
+bundle items cannot be observed before L11.**
+
+- **Done when:** a non-developer starts ytdl **as an app** — from the Applications
+  folder, the Dock, or wherever they chose to put it — twice in a row, without a
+  Terminal ever appearing, and uninstalling removes it. That closes `C2`, the
+  single exception Cycle 6-plus's gate C recorded.
 
 #### Cycle 7 — partial outcome and playlists per track (`F`) — planned
 
