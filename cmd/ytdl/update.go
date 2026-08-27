@@ -41,9 +41,16 @@ type guiUpdater struct {
 	settings func() config.Settings
 
 	// deps is this machine's local facts, refreshed at the events that can change
-	// them — construction, an explicit check, and the end of an installer run —
-	// rather than on every /api/state. Asking yt-dlp its version costs the better
-	// part of a second, and the state endpoint is on the page's load path.
+	// them — construction, the reconcile that follows it, an explicit check, and
+	// the end of an installer run — rather than on every /api/state. Asking yt-dlp
+	// its version costs 7.33 s on a user's Mac, and the state endpoint is on the
+	// page's load path.
+	//
+	// CONSTRUCTION fills it from the installer's record and execs nothing: it runs
+	// before the port is bound, so every millisecond it takes is time the browser
+	// spends waiting on a daemon that does not answer yet (ADR-0019 §2). The probe
+	// still happens — runDaemon schedules refreshLocal once the port is open —
+	// which is what keeps a stale marker from being believed for ever.
 	//
 	// The DEPENDENCY list is what is held, not the flattened Installed: the page
 	// needs "present but no version recorded" and "not there at all" to stay
@@ -63,7 +70,7 @@ func newGUIUpdater(stateDir string, settings func() config.Settings) *guiUpdater
 		stateDir: stateDir,
 		runner:   update.NewRunner(stateDir),
 		settings: settings,
-		deps:     update.Dependencies(stateDir, true),
+		deps:     update.RecordedDependencies(stateDir),
 	}
 	return u
 }
