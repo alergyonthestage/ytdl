@@ -665,6 +665,144 @@ check "an absent bundle installs" "1" "$?"
 HOME="$SAVED_HOME"; FORCE="$SAVED_FORCE"
 if [ -n "$SAVED_APP_DIR_SET" ]; then YTDL_APP_DIR="$SAVED_APP_DIR"; else unset YTDL_APP_DIR; fi
 rm -rf "$APP_TEST_HOME" "$APP_SANDBOX"
+
+# ──────────────────────────────────────────────────────────────────
+#  The app bundle: install_app_bundle
+# ──────────────────────────────────────────────────────────────────
+# No network: download_optional is replaced by a local copy, which is the only
+# outbound call this step makes.
+printf '\nApp bundle: install_app_bundle\n'
+
+BUNDLE_HOME="$(mktemp -d)"
+SAVED_HOME="$HOME"; SAVED_FORCE="$FORCE"; SAVED_INSTALL_DIR="$INSTALL_DIR"
+SAVED_TMPDIR_YTDL="${TMPDIR_YTDL-}"
+
+HOME="$BUNDLE_HOME"
+YTDL_APP_DIR="$BUNDLE_HOME/Applications"
+INSTALL_DIR="$BUNDLE_HOME/bin"
+TMPDIR_YTDL="$BUNDLE_HOME/tmp"
+FORCE=0
+mkdir -p "$INSTALL_DIR" "$TMPDIR_YTDL" "$BUNDLE_HOME/release"
+mock_platform "15.3.1" "arm64" >/dev/null 2>&1
+
+# A stand-in ytdl, so ytdl_version has something to read.
+printf '#!/bin/sh\necho "ytdl 2.3.0"\n' > "$INSTALL_DIR/ytdl"
+chmod +x "$INSTALL_DIR/ytdl"
+
+# The published launcher and the sums that vouch for it.
+printf 'launcher v1\n' > "$BUNDLE_HOME/release/ytdl_launch_macos_arm64"
+{
+  printf '%s  ytdl_launch_macos_arm64\n' "$(sha256_of "$BUNDLE_HOME/release/ytdl_launch_macos_arm64")"
+} > "$BUNDLE_HOME/release/SHA2-256SUMS"
+
+# The step's only outbound call, replaced by a copy out of the fake release.
+download_optional() {
+  local url="$1" dest="$2" name
+  name="${url##*/}"
+  [ -f "$BUNDLE_HOME/release/$name" ] || return 1
+  cp "$BUNDLE_HOME/release/$name" "$dest"
+}
+
+install_app_bundle >/dev/null 2>&1
+check "a first run installs the bundle" "0" "$?"
+check "the launcher is in place" "0" "$([ -x "$(app_exe_path)" ] && echo 0 || echo 1)"
+check "Info.plist is in place"   "0" "$([ -f "$(app_plist_path)" ] && echo 0 || echo 1)"
+check "PkgInfo is in place"      "0" "$([ -f "$(app_pkginfo_path)" ] && echo 0 || echo 1)"
+check "the sidecar records the absolute ytdl path" \
+  "$INSTALL_DIR/ytdl" "$(cat "$(app_sidecar_path)")"
+
+# The anti-churn decision, as an assertion rather than an intention: the bundle
+# directory is never deleted and never recreated, so the Dock entry, the
+# Spotlight identity and any alias the user made survive an update.
+printf 'canary\n' > "$(app_dir)/Contents/canary"
+plist_before="$(cat "$(app_plist_path)")"
+mtime_before="$(stat -c %Y "$(app_plist_path)" 2>/dev/null || stat -f %m "$(app_plist_path)")"
+sleep 1
+
+install_app_bundle >/dev/null 2>&1
+check "a second run returns 0" "0" "$?"
+check "the canary survives an update run" "canary" "$(cat "$(app_dir)/Contents/canary" 2>/dev/null)"
+check "an unchanged plist keeps its content" "$plist_before" "$(cat "$(app_plist_path)")"
+check "an unchanged plist is not rewritten (mtime)" \
+  "$mtime_before" "$(stat -c %Y "$(app_plist_path)" 2>/dev/null || stat -f %m "$(app_plist_path)")"
+
+# The sidecar follows INSTALL_DIR: an install with YTDL_INSTALL_DIR set must not
+# leave a bundle pointing at the previous location.
+INSTALL_DIR="$BUNDLE_HOME/elsewhere"
+mkdir -p "$INSTALL_DIR"
+printf '#!/bin/sh\necho "ytdl 2.3.0"\n' > "$INSTALL_DIR/ytdl"
+chmod +x "$INSTALL_DIR/ytdl"
+install_app_bundle >/dev/null 2>&1
+check "the sidecar is rewritten when INSTALL_DIR changes" \
+  "$INSTALL_DIR/ytdl" "$(cat "$(app_sidecar_path)")"
+
+# §4.4: the app never fails the installation. A CLI that aborted because an icon
+# could not be drawn would be a worse tool — and there is a real window where the
+# asset is genuinely missing, between merging this cycle and cutting its release.
+download_optional() { return 1; }
+rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+install_app_bundle >/dev/null 2>&1
+check "an unavailable checksum file warns and returns 0" "0" "$?"
+check "and leaves the existing bundle alone" "canary" "$(cat "$(app_dir)/Contents/canary" 2>/dev/null)"
+
+# The release has no launcher in it yet: the sums file arrives, our asset is not
+# named in it, and the download 404s. Warn, leave everything as it was.
+download_optional() {
+  local url="$1" dest="$2" name
+  name="${url##*/}"
+  [ "$name" = "SHA2-256SUMS" ] || return 1
+  printf '%s  ytdl_macos_arm64\n' "0000000000000000000000000000000000000000000000000000000000000000" > "$dest"
+}
+rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+install_app_bundle >/dev/null 2>&1
+check "a release with no launcher asset warns and returns 0" "0" "$?"
+check "and still leaves the existing bundle alone" "canary" "$(cat "$(app_dir)/Contents/canary" 2>/dev/null)"
+
+# Bytes we cannot vouch for are never written into the bundle — and still do not
+# abort the install.
+exe_before="$(sha256_of "$(app_exe_path)")"
+download_optional() {
+  local url="$1" dest="$2" name
+  name="${url##*/}"
+  case "$name" in
+    SHA2-256SUMS) printf '%s  ytdl_launch_macos_arm64\n' \
+      "1111111111111111111111111111111111111111111111111111111111111111" > "$dest" ;;
+    *) printf 'tampered\n' > "$dest" ;;
+  esac
+}
+rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+install_app_bundle >/dev/null 2>&1
+check "a launcher failing its checksum returns 0" "0" "$?"
+check "and is never written into the bundle" "$exe_before" "$(sha256_of "$(app_exe_path)")"
+
+# An unwritable parent is warned about, not aborted on.
+unset -f download_optional
+YTDL_APP_DIR="/proc/nonexistent-and-unwritable"
+install_app_bundle >/dev/null 2>&1
+check "an unwritable app directory warns and returns 0" "0" "$?"
+
+# The closing message must not name an app that is not there. APP_INSTALLED is
+# what the message reads, and only a run that actually wrote the bundle sets it.
+check "a skipped bundle leaves APP_INSTALLED at 0" "0" "$APP_INSTALLED"
+
+YTDL_APP_DIR="$BUNDLE_HOME/Applications"
+download_optional() {
+  local url="$1" dest="$2" name
+  name="${url##*/}"
+  [ -f "$BUNDLE_HOME/release/$name" ] || return 1
+  cp "$BUNDLE_HOME/release/$name" "$dest"
+}
+rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+install_app_bundle >/dev/null 2>&1
+check "a successful bundle sets APP_INSTALLED to 1" "1" "$APP_INSTALLED"
+
+HOME="$SAVED_HOME"; FORCE="$SAVED_FORCE"; INSTALL_DIR="$SAVED_INSTALL_DIR"
+TMPDIR_YTDL="$SAVED_TMPDIR_YTDL"
+unset -f download_optional
+unset YTDL_APP_DIR
+APP_INSTALLED=0
+rm -rf "$BUNDLE_HOME"
+
 # ──────────────────────────────────────────────────────────────────
 #  Portability: the shell that will actually run this is bash 3.2
 # ──────────────────────────────────────────────────────────────────
