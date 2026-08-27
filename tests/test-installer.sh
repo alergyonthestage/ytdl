@@ -845,6 +845,110 @@ rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
 install_app_bundle >/dev/null 2>&1
 check "a successful bundle sets APP_INSTALLED to 1" "1" "$APP_INSTALLED"
 
+# home_display is the ONE place that folds $HOME to ~, and it exists because the
+# idiom it replaces silently did nothing: in ${p/#$HOME/~} bash tilde-expands the
+# REPLACEMENT, so ~ becomes $HOME again and the substitution puts back exactly
+# what it took out. Measured on this bash, then written as assertions.
+check "a path under \$HOME is folded to ~" \
+  "~/Applications" "$(home_display "$HOME/Applications")"
+check "\$HOME itself folds to ~" "~" "$(home_display "$HOME")"
+check "a path outside \$HOME is left alone" \
+  "/opt/elsewhere" "$(home_display /opt/elsewhere)"
+# The trap a plain prefix test falls into: a sibling whose name merely STARTS
+# with $HOME is not inside it.
+check "a sibling that only shares the prefix is left alone" \
+  "${HOME}-extra/App" "$(home_display "${HOME}-extra/App")"
+
+# The closing note is what the user reads last, and it must be true in both
+# directions: silent when this run wrote no app, and naming the folder the app is
+# ACTUALLY in when it did. It used to hardcode "your Applications folder" while
+# the step's own ok line printed the real directory — with YTDL_APP_DIR set, the
+# development sandbox, the two disagreed and one of them was wrong.
+APP_INSTALLED=1
+# Outside $HOME on purpose: that is the case the two messages used to disagree
+# about, and inside $HOME it is indistinguishable from the default.
+ALT_APP_DIR="$(mktemp -d)"
+YTDL_APP_DIR="$ALT_APP_DIR/elsewhere"
+note="$(app_closing_note)"
+check "the closing note names the folder the app was written to" "0" \
+  "$(case "$note" in *"$ALT_APP_DIR/elsewhere"*) echo 0 ;; *) echo 1 ;; esac)"
+check "and does not claim it is in Applications" "0" \
+  "$(case "$note" in *Applications*) echo 1 ;; *) echo 0 ;; esac)"
+rmdir "$ALT_APP_DIR"
+
+# And under $HOME it is written the way this installer writes every other path.
+unset YTDL_APP_DIR
+note="$(app_closing_note)"
+check "a default install is named with ~, like every other path printed" \
+  "0" "$(case "$note" in *"~/Applications"*) echo 0 ;; *) echo 1 ;; esac)"
+YTDL_APP_DIR="$BUNDLE_HOME/Applications"
+
+APP_INSTALLED=0
+check "and a run that wrote no app says nothing about one" "" "$(app_closing_note)"
+APP_INSTALLED=1
+
+# The refusal must say what actually happened. app_launcher_verified answers with
+# two distinct non-zero codes for exactly that reason, and the caller picks its
+# wording from them: 1 is a real mismatch — the bytes are not the published ones,
+# which is alarming and is said so — while 2 is "there is nothing to compare
+# against". Reporting a mismatch that never happened is the same untruth
+# ux-principles §5 forbids of every other surface.
+ZEROS="0000000000000000000000000000000000000000000000000000000000000000"
+probe="$BUNDLE_HOME/probe-launcher"
+probe_sums="$BUNDLE_HOME/probe-SHA2-256SUMS"
+printf 'launcher bytes\n' > "$probe"
+
+printf '%s  ytdl_launch_macos_arm64\n' "$(sha256_of "$probe")" > "$probe_sums"
+verdict=0; app_launcher_verified "$probe" "ytdl_launch_macos_arm64" "$probe_sums" || verdict=$?
+check "a launcher matching its published sum verifies" "0" "$verdict"
+
+printf '%s  ytdl_launch_macos_arm64\n' "$ZEROS" > "$probe_sums"
+verdict=0; app_launcher_verified "$probe" "ytdl_launch_macos_arm64" "$probe_sums" || verdict=$?
+check "bytes that differ from the published sum are code 1 (a mismatch)" "1" "$verdict"
+
+printf '%s  ytdl_macos_arm64\n' "$ZEROS" > "$probe_sums"
+verdict=0; app_launcher_verified "$probe" "ytdl_launch_macos_arm64" "$probe_sums" || verdict=$?
+check "a sums file naming no launcher is code 2 (nothing to compare)" "2" "$verdict"
+
+# Neither shasum nor openssl on the machine: nothing can be computed, so nothing
+# can mismatch. macOS always ships shasum, so this path is unreachable there — it
+# is also the one that used to report a mismatch that had not happened.
+#
+# Saved and restored by file: overriding a function does not stack, and every
+# check below still needs the real one.
+declare -f sha256_of > "$BUNDLE_HOME/real-sha256_of.bash"
+sha256_of() { printf ''; }
+printf '%s  ytdl_launch_macos_arm64\n' "$ZEROS" > "$probe_sums"
+verdict=0; app_launcher_verified "$probe" "ytdl_launch_macos_arm64" "$probe_sums" || verdict=$?
+check "no way to compute a sum at all is code 2, not a mismatch" "2" "$verdict"
+
+# The wording follows the code, at the surface the finding was about: same
+# effect — nothing unverified is ever written — different words.
+YTDL_APP_DIR="$BUNDLE_HOME/wording"
+download_optional() {
+  local url="$1" dest="$2" name
+  name="${url##*/}"
+  case "$name" in
+    SHA2-256SUMS) printf '%s  ytdl_launch_macos_arm64\n' "$ZEROS" > "$dest" ;;
+    *)            printf 'tampered\n' > "$dest" ;;
+  esac
+}
+rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+uncheckable_msg="$(install_app_bundle 2>&1)"
+unset -f sha256_of; . "$BUNDLE_HOME/real-sha256_of.bash"
+check "the real sha256_of is back for everything below" "0" \
+  "$([ -n "$(sha256_of "$probe")" ] && echo 0 || echo 1)"
+check "an unverifiable launcher is not called a mismatch" "0" \
+  "$(case "$uncheckable_msg" in *"could not be checked"*) echo 0 ;; *) echo 1 ;; esac)"
+
+rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+mismatch_msg="$(install_app_bundle 2>&1)"
+check "a real mismatch still IS called a mismatch" "0" \
+  "$(case "$mismatch_msg" in *"did not match its published checksum"*) echo 0 ;; *) echo 1 ;; esac)"
+check "and neither wording leaves an app behind" "1" \
+  "$([ -e "$BUNDLE_HOME/wording/YTDL.app" ] && echo 0 || echo 1)"
+YTDL_APP_DIR="$BUNDLE_HOME/Applications"
+
 HOME="$SAVED_HOME"; FORCE="$SAVED_FORCE"; INSTALL_DIR="$SAVED_INSTALL_DIR"
 TMPDIR_YTDL="$SAVED_TMPDIR_YTDL"
 unset -f download_optional

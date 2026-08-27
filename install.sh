@@ -53,10 +53,14 @@ OS_MAJOR=""; OS_MINOR=""; TIER=""; ARCH=""; ARCH_KEY=""
 # below is between two concrete strings.
 DEPS_FILE=""; YTDLP_TARGET=""; FFMPEG_TARGET=""; YTDL_TARGET=""
 
-# Whether YTDL.app is actually on this machine when the run ends. The closing
-# message reads it rather than assuming: the bundle step is allowed to warn and
-# carry on, so a run that could not write the app must not then tell the user
-# where to find it (ux-principles §5 — a surface never states something untrue).
+# Whether THIS run wrote or confirmed YTDL.app — not whether the app is on the
+# machine. A run that skipped the bundle step, because the checksums or the asset
+# never arrived, leaves it 0 even when a working app is already in ~/Applications,
+# and the closing message then stays silent about it.
+#
+# That asymmetry is deliberate and it is the safe side of the gap: the message may
+# under-report an app that is there, never name one that is not (ux-principles §5
+# — a surface never states something untrue).
 APP_INSTALLED=0
 
 # Whether the ffmpeg actually installed is the build deps.conf attests. It is 0
@@ -764,7 +768,7 @@ setup_path() {
     fi
     printf '\n%s\n%s\n' "$marker" "$line" >> "$rc"
     updated=1
-    info "Updated ${rc/#$HOME/~}"
+    info "Updated $(home_display "$rc")"
   done
 
   if [ "$updated" -eq 0 ]; then
@@ -829,6 +833,27 @@ app_pkginfo_path() { printf '%s/Contents/PkgInfo\n' "$(app_dir)"; }
 # directory, which is what lets the user drag the bundle anywhere and keep it
 # working. It is a PATH and never a command line.
 app_sidecar_path() { printf '%s/Contents/Resources/ytdl-path\n' "$(app_dir)"; }
+
+# home_display PATH — a path with $HOME folded back to ~, the way this installer
+# writes every path it shows.
+#
+# Spelled out with case rather than ${p/#$HOME/~}, which does NOT do this:
+# bash tilde-expands the REPLACEMENT, so ~ becomes $HOME again and the
+# substitution puts back exactly what it took out. Measured, not assumed.
+home_display() {
+  local p="$1"
+  case "$p" in
+    "$HOME")   printf '~\n' ;;
+    "$HOME"/*) printf '~/%s\n' "${p#"$HOME"/}" ;;
+    *)         printf '%s\n' "$p" ;;
+  esac
+}
+
+# app_parent_display — the folder the closing message names. Derived from
+# app_dir() rather than written out: with YTDL_APP_DIR set the two used to
+# disagree, and a message naming a folder the app is not in is the same untruth
+# as naming an app that is not there (ux-principles §5).
+app_parent_display() { home_display "$(dirname "$(app_dir)")"; }
 
 # launcher_asset_for — the launcher published for THIS architecture. install.sh
 # already derives ARCH_KEY for both, so the launcher follows it rather than
@@ -933,12 +958,20 @@ app_write_if_different() {
 # never written into the bundle, but it must not take the whole installation down
 # either. The refusal is identical in effect — nothing unverified is installed —
 # and this is the one place where fail() would cost more than it buys (§4.4).
+#
+# The two non-zero codes are told apart because the WORDING differs, not the
+# effect: 1 is a real mismatch — the bytes are not the published ones, which is
+# alarming and is said so — while 2 is "there is nothing to compare against",
+# either because SHA2-256SUMS names no such asset or because this machine has
+# neither shasum nor openssl. Reporting a mismatch that never happened would be a
+# surface stating something untrue.
 app_launcher_verified() {
   local file="$1" name="$2" sums="$3" expected actual
   expected="$(awk -v n="$name" '$2 == n {print $1; exit}' "$sums")"
-  [ -n "$expected" ] || return 1
+  [ -n "$expected" ] || return 2
   actual="$(sha256_of "$file")"
-  [ -n "$actual" ] && [ "$actual" = "$expected" ]
+  [ -n "$actual" ] || return 2
+  [ "$actual" = "$expected" ]
 }
 
 # install_app_bundle — put YTDL.app where the user can double-click it.
@@ -964,7 +997,7 @@ app_launcher_verified() {
 install_app_bundle() {
   step "Installing the YTDL app"
 
-  local dir parent exe sums asset tmp version created
+  local dir parent exe sums asset tmp version created verdict
 
   # Describes THIS run: every path below may return early, and a flag left over
   # from a previous call would let the closing message name an app this run did
@@ -1009,9 +1042,15 @@ install_app_bundle() {
       warn "This release has no $asset — leaving the app as it is."
       return 0
     fi
-    if ! app_launcher_verified "$tmp" "$asset" "$sums"; then
+    verdict=0
+    app_launcher_verified "$tmp" "$asset" "$sums" || verdict=$?
+    if [ "$verdict" -ne 0 ]; then
       rm -f "$tmp"
-      warn "The launcher did not match its published checksum — the app was not changed."
+      if [ "$verdict" -eq 1 ]; then
+        warn "The launcher did not match its published checksum — the app was not changed."
+      else
+        warn "The launcher could not be checked against a published checksum — the app was not changed."
+      fi
       return 0
     fi
     chmod +x "$tmp" 2>/dev/null || true
@@ -1058,7 +1097,7 @@ install_app_bundle() {
     || warn "Could not write the app's ytdl path."
 
   APP_INSTALLED=1
-  ok "The YTDL app is in ${dir/#$HOME/~}"
+  ok "The YTDL app is in $(home_display "$dir")"
   return 0
 }
 
@@ -1106,15 +1145,22 @@ main() {
   printf 'Run %sytdl --help%s for all options, %sytdl --update%s to update later.\n\n' \
     "$B" "$R" "$B" "$R"
 
-  # Only when it is actually there. English, like the rest of this installer —
-  # the Italian lives in the two user guides, which is where the user reads
-  # Italian; one Italian line inside an English installer is a worse surface
-  # than a consistent one (design §4.7).
-  if [ "$APP_INSTALLED" -eq 1 ]; then
-    printf 'You can also open the interface without the Terminal:\n'
-    printf '  %sYTDL%s is in your Applications folder — drag it to the Dock if you like.\n\n' \
-      "$B" "$R"
-  fi
+  app_closing_note
+}
+
+# app_closing_note — the last thing the user reads, and only when this run put an
+# app there. A separate function so the two things that can go wrong with it are
+# testable without running an install: the silence when APP_INSTALLED is 0, and
+# the folder it names.
+#
+# English, like the rest of this installer — the Italian lives in the two user
+# guides, which is where the user reads Italian; one Italian line inside an
+# English installer is a worse surface than a consistent one (design §4.7).
+app_closing_note() {
+  [ "$APP_INSTALLED" -eq 1 ] || return 0
+  printf 'You can also open the interface without the Terminal:\n'
+  printf '  %sYTDL%s is in %s — drag it to the Dock if you like.\n\n' \
+    "$B" "$R" "$(app_parent_display)"
 }
 
 # Sourcing with YTDL_INSTALLER_LIB=1 loads the functions without running the
