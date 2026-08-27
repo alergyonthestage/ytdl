@@ -354,3 +354,189 @@ func TestAMarkerWithoutThePinnedKeyCountsAsAttested(t *testing.T) {
 		t.Errorf("Unattested = %v, want none", in.Unattested)
 	}
 }
+
+// recordingTool writes an executable stub that leaves a sentinel behind when it
+// runs. It is how a test asserts something was NEVER exec'd: an assertion on a
+// returned value cannot tell "asked and got this" from "never asked".
+func recordingTool(t *testing.T, dir, name, sentinel, printsVersion string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	script := "#!/bin/sh\n: > '" + sentinel + "'\necho '" + printsVersion + "'\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// byName picks one dependency out of the walk, so a test names what it asserts
+// about instead of indexing into a slice whose order it would then depend on.
+func byName(t *testing.T, deps []Dependency, name string) Dependency {
+	t.Helper()
+	for _, d := range deps {
+		if d.Name == name {
+			return d
+		}
+	}
+	t.Fatalf("%s missing from the walk of %d", name, len(deps))
+	return Dependency{}
+}
+
+// The startup path answers from what the installer wrote down. The version is
+// present immediately and is NOT flagged as probed: `!Probed && Version != ""`
+// is the documented state meaning "the installer recorded this", which is
+// already ffmpeg's normal one (ADR-0019 §2).
+func TestRecordedDependenciesAnswerFromTheMarker(t *testing.T) {
+	ourDir, _ := isolate(t)
+	fakeTool(t, ourDir, ComponentYtDlp, "2026.07.04")
+	state := t.TempDir()
+	writeMarker(t, state, "yt_dlp_version = 2026.08.20\n")
+
+	d := byName(t, RecordedDependencies(state), ComponentYtDlp)
+	if d.Version != "2026.08.20" {
+		t.Errorf("Version = %q, want the marker's 2026.08.20", d.Version)
+	}
+	if d.Probed {
+		t.Error("Probed = true: a recorded version was never asked for")
+	}
+	if !d.Ours || d.Missing() {
+		t.Errorf("Ours = %v, Path = %q, want our copy found", d.Ours, d.Path)
+	}
+}
+
+// The measured defect, asserted at its source: nothing on the startup path
+// execs a dependency. A stub that records its own invocation leaves no record.
+func TestRecordedDependenciesAskNoTool(t *testing.T) {
+	ourDir, pathDir := isolate(t)
+	sentinel := filepath.Join(t.TempDir(), "invoked")
+	recordingTool(t, ourDir, ComponentYtDlp, sentinel, "2026.07.04")
+	recordingTool(t, pathDir, ComponentFFmpeg, sentinel, "ffmpeg version 9.0")
+	state := t.TempDir()
+	writeMarker(t, state, "yt_dlp_version = 2026.08.20\nffmpeg_build = 1785863997_9.0\n")
+
+	RecordedDependencies(state)
+
+	if _, err := os.Stat(sentinel); err == nil {
+		t.Fatal("a dependency was exec'd on the recorded walk")
+	}
+}
+
+// Our record describes OUR copy. Attributing it to a Homebrew yt-dlp would print
+// our number beside somebody else's path — the rule ffmpeg has followed since
+// Cycle 6-plus, applied to the tool that now reads the marker too.
+func TestRecordedDependenciesDoNotAttributeOurRecordToAForeignCopy(t *testing.T) {
+	_, pathDir := isolate(t)
+	fakeTool(t, pathDir, ComponentYtDlp, "2020.01.01")
+	state := t.TempDir()
+	writeMarker(t, state, "yt_dlp_version = 2026.08.20\n")
+
+	d := byName(t, RecordedDependencies(state), ComponentYtDlp)
+	if d.Ours {
+		t.Fatal("a $PATH copy was called ours")
+	}
+	if d.Version != "" {
+		t.Errorf("Version = %q, want empty: the marker does not describe a foreign copy", d.Version)
+	}
+}
+
+// Unrecorded is not missing. An install predating the marker has yt-dlp and no
+// note of its version: the tool is still listed, with an empty version that
+// reads as "nobody wrote one down" rather than as a failed probe.
+func TestRecordedDependenciesWithNoMarker(t *testing.T) {
+	ourDir, _ := isolate(t)
+	fakeTool(t, ourDir, ComponentYtDlp, "2026.07.04")
+
+	d := byName(t, RecordedDependencies(t.TempDir()), ComponentYtDlp)
+	if d.Missing() {
+		t.Fatal("an installed yt-dlp was reported missing")
+	}
+	if d.Version != "" || d.Probed {
+		t.Errorf("Version = %q, Probed = %v, want unrecorded rather than unreadable", d.Version, d.Probed)
+	}
+	if d.VersionUnreadable() {
+		t.Error("VersionUnreadable: nothing was asked, so nothing failed to answer")
+	}
+}
+
+// The deliberate screens keep paying. Dependencies(_, true) is unchanged by the
+// refactor: it asks the tool, and says it asked.
+func TestDependenciesStillProbeWhenAsked(t *testing.T) {
+	ourDir, _ := isolate(t)
+	sentinel := filepath.Join(t.TempDir(), "invoked")
+	recordingTool(t, ourDir, ComponentYtDlp, sentinel, "2026.07.04")
+	state := t.TempDir()
+	writeMarker(t, state, "yt_dlp_version = 2026.08.20\n")
+
+	d := byName(t, Dependencies(state, true), ComponentYtDlp)
+	if !d.Probed {
+		t.Error("Probed = false on the probing walk")
+	}
+	if d.Version != "2026.07.04" {
+		t.Errorf("Version = %q, want what the tool said, not the marker", d.Version)
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Error("the tool was never asked")
+	}
+}
+
+// The refactor moved no ffmpeg rule. In every mode ffmpeg's version comes from
+// the marker, only for a copy that is ours, and Attested is gated by
+// ffmpeg_pinned — the three facts ADR-0016 §15 fixed.
+func TestFFmpegSemanticsUnchangedAcrossSources(t *testing.T) {
+	walks := map[string]func(string) []Dependency{
+		"none":     func(s string) []Dependency { return Dependencies(s, false) },
+		"recorded": RecordedDependencies,
+		"probed":   func(s string) []Dependency { return Dependencies(s, true) },
+	}
+
+	t.Run("ours and attested", func(t *testing.T) {
+		for mode, walk := range walks {
+			t.Run(mode, func(t *testing.T) {
+				ourDir, _ := isolate(t)
+				fakeTool(t, ourDir, ComponentFFmpeg, "ffmpeg version 9.0")
+				state := t.TempDir()
+				writeMarker(t, state, "ffmpeg_build = 1785863997_9.0\n")
+
+				d := byName(t, walk(state), ComponentFFmpeg)
+				if d.Version != "1785863997_9.0" {
+					t.Errorf("Version = %q, want the marker's build", d.Version)
+				}
+				if !d.Attested {
+					t.Error("Attested = false with no ffmpeg_pinned key")
+				}
+				if d.Probed {
+					t.Error("ffmpeg was probed: it does not describe its own build")
+				}
+			})
+		}
+	})
+
+	t.Run("foreign gets no version", func(t *testing.T) {
+		for mode, walk := range walks {
+			t.Run(mode, func(t *testing.T) {
+				_, pathDir := isolate(t)
+				fakeTool(t, pathDir, ComponentFFmpeg, "ffmpeg version 9.0")
+				state := t.TempDir()
+				writeMarker(t, state, "ffmpeg_build = 1785863997_9.0\n")
+
+				if d := byName(t, walk(state), ComponentFFmpeg); d.Version != "" {
+					t.Errorf("Version = %q on a foreign copy", d.Version)
+				}
+			})
+		}
+	})
+
+	t.Run("unattested when the pin fell back", func(t *testing.T) {
+		for mode, walk := range walks {
+			t.Run(mode, func(t *testing.T) {
+				ourDir, _ := isolate(t)
+				fakeTool(t, ourDir, ComponentFFmpeg, "ffmpeg version 9.0")
+				state := t.TempDir()
+				writeMarker(t, state, "ffmpeg_build = 9.0\nffmpeg_pinned = false\n")
+
+				if d := byName(t, walk(state), ComponentFFmpeg); d.Attested {
+					t.Error("Attested = true after a declared fallback")
+				}
+			})
+		}
+	})
+}

@@ -27,26 +27,27 @@ const MarkerName = "installed.conf"
 // on a measurement of ~650 ms taken in the development container. That
 // measurement was real; what it described was a WARM invocation (`V20`).
 //
-// yt-dlp ships as a PyInstaller one-file bundle that unpacks itself before it
-// can answer. Warm, that costs well under a second — ~800 ms measured in the
-// container. COLD, on a stock macOS machine, `yt-dlp --version` measured
-// **7.4 s**, of which only 0.86 s was CPU: the rest is a cold page cache and
-// Gatekeeper's first-run verification.
+// yt-dlp ships TO USERS as a PyInstaller one-file bundle that unpacks itself on
+// EVERY invocation, so on their machines there is no warm path at all: gate A
+// measured `yt-dlp --version` at 7.34 s and then 7.33 s back to back on macOS
+// 15.6. The ~800 ms this comment once called the warm case describes the
+// DEVELOPMENT CONTAINER, which runs the zipapp instead and unpacks nothing
+// (ADR-0017) — it never described what a user pays.
 //
-// A cold invocation is not the rare case it sounds like. The first `--version` a
-// new user ever runs is cold, and so is the first startup probe after the machine
-// is switched on.
+// So 30 s does not bound a COLD invocation, as an earlier reading of the same
+// number had it: it bounds a genuinely HUNG one, at four times the cost every
+// invocation actually has, leaving room for a slower disk or an antivirus
+// scanner.
 //
 // The failure was silent and expensive: the exec returned no answer, which
 // looked exactly like "nobody ever recorded a version", and left the installed
 // yt-dlp UNCOMPARED — so the surface reported "sei aggiornato" on a machine that
 // could not see its own dependency at all.
 //
-// 30 s is four times the measured worst case, leaving room for a slower disk or
-// an antivirus scanner, while still bounding a genuinely hung process. The
-// released Bash-era path had no timeout whatsoever, so this is not a regression
-// against it. Nothing here is on a hot path: only the screens a user opened
-// deliberately pay this cost (see Dependencies' withVersions).
+// The released Bash-era path had no timeout whatsoever, so this is not a
+// regression against it. Nothing here is on a hot path: only the screens a user
+// opened deliberately pay this cost, and since Cycle 6-launch the GUI daemon's
+// startup is no longer among them (see Dependencies' withVersions).
 const versionTimeout = 30 * time.Second
 
 // BinDir is where install.sh puts the tools ytdl drives. It returns "" when the
@@ -157,12 +158,58 @@ func (d Dependency) Missing() bool { return d.Path == "" }
 // and without touching the network.
 //
 // withVersions decides whether each tool is ASKED for its version. It is a real
-// choice, not a convenience: `yt-dlp --version` costs the better part of a second
-// (it is a Python zipapp), measured on the reference container. A probe is never
-// on a path a user is waiting on, and neither is that exec — so the surfaces that
-// interrupt a download pass false and read the versions from the cached verdict
-// instead, while the screens the user deliberately opened pass true.
+// choice, not a convenience: on a user's Mac `yt-dlp --version` costs 7.33 s
+// every time it is called (see versionTimeout) — so the surfaces that interrupt a
+// download pass false and read the versions from the cached verdict instead,
+// while the screens the user deliberately opened pass true.
+//
+// "A probe is never on a path a user is waiting on" is this package's rule
+// (ADR-0016 §5), and until Cycle 6-launch exactly one path broke it: the GUI
+// daemon built its updater with withVersions=true BEFORE it bound its port, so
+// the browser waited ~7.5 s against a 10 s cap. That path calls
+// RecordedDependencies now — the marker answers at once and a probe reconciles it
+// afterwards, off the path (ADR-0019 §2). The rule holds again, which is why it
+// is still written here as one.
 func Dependencies(stateDir string, withVersions bool) []Dependency {
+	if withVersions {
+		return dependencies(stateDir, versionsProbed)
+	}
+	return dependencies(stateDir, versionsNone)
+}
+
+// RecordedDependencies is the same walk, asking no tool anything: yt-dlp's
+// version comes from the installer's marker, and — exactly as for ffmpeg — only
+// when the copy is ours.
+//
+// It exists for the one caller that cannot afford an exec: the GUI daemon's
+// constructor, which runs before the port opens (ADR-0019 §2). The versions it
+// returns are NOT flagged Probed, because nothing was asked — `!Probed &&
+// Version != ""` already means "the installer recorded this", which has been
+// ffmpeg's normal state since Cycle 6-plus.
+//
+// A marker can go stale: a run that replaced yt-dlp and died before write_marker,
+// or a user who ran `yt-dlp -U` by hand. That is why this is only half the
+// remedy — the caller reconciles with a probe once it is off the critical path.
+func RecordedDependencies(stateDir string) []Dependency {
+	return dependencies(stateDir, versionsRecorded)
+}
+
+// versionSource is where one walk gets its versions. It keeps the SHOW shape and
+// the COMPARE shape a single walk with three entry points rather than three walks
+// that drift apart — the property InstalledFrom exists to preserve.
+type versionSource int
+
+const (
+	// versionsNone fills no version at all.
+	versionsNone versionSource = iota
+	// versionsRecorded reads what the installer wrote down. Costs a file read.
+	versionsRecorded
+	// versionsProbed asks each tool itself. Costs an exec, bounded by
+	// versionTimeout.
+	versionsProbed
+)
+
+func dependencies(stateDir string, src versionSource) []Dependency {
 	// ffmpeg does not describe its own BUILD: `ffmpeg -version` reports 9.0 while
 	// the pin names 1785863997_9.0, so the only exact answer is the one the
 	// installer wrote down when it put this copy here (design §5). An install
@@ -198,7 +245,16 @@ func Dependencies(stateDir string, withVersions bool) []Dependency {
 				d.Version = marker[markerFFmpegBuild]
 				d.Attested = ffmpegAttested
 			}
-		case withVersions:
+		case src == versionsRecorded:
+			// Free, like ffmpeg's above, and gated on ours for the same reason: the
+			// marker records what OUR installer put down, so it describes THIS copy
+			// only when this copy is ours. A foreign yt-dlp therefore has no version
+			// anybody wrote down — which is what "" already means — and Foreign is
+			// the fact that describes it.
+			if ours {
+				d.Version = marker[markerYtDlpVersion]
+			}
+		case src == versionsProbed:
 			// Probed regardless of the outcome: the point of the flag is that we
 			// tried, so an empty Version below reads as a failure rather than as an
 			// absence of record.
