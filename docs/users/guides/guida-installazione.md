@@ -81,8 +81,14 @@ L'installazione mette anche un'app che si chiama **YTDL** nella tua cartella
 **Applicazioni**. Serve ad aprire l'interfaccia grafica **senza passare dal
 Terminale**: basta un doppio clic.
 
-Se la vuoi più a portata di mano, trascinala sul **Dock** o sulla **Scrivania** —
-continua a funzionare da qualsiasi posizione tu la metta.
+Se la vuoi più a portata di mano, **trascinala sul Dock**: il Dock non sposta
+l'app, ci mette solo un collegamento. Per averla anche sulla Scrivania, fai
+**tasto destro → Crea alias** e trascina lì l'alias.
+
+**Lascia l'originale in Applicazioni.** L'app funziona anche se la sposti
+altrove, ma gli aggiornamenti guardano solo la cartella Applicazioni: un'app
+spostata resta a quella versione, e al primo aggiornamento te ne ritrovi una
+seconda, nuova, in Applicazioni.
 
 Che cosa succede quando la apri è spiegato nella
 [guida all'uso](guida-uso.md#linterfaccia-grafica-senza-terminale).

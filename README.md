@@ -45,8 +45,9 @@ would otherwise read as "run this in the background".
 Prefer not to use the Terminal at all? The installer also puts an app called
 **YTDL** in your Applications folder. Double-click it and the web interface opens
 in your browser: paste a link, watch live progress, see the queue and history,
-edit settings. Drag it to the Dock or the Desktop if you like — it keeps working
-from anywhere. It is built on your own machine during the install, which is why it
+edit settings. Drag it to the Dock — that leaves the app where it is and puts a
+shortcut there — or put an alias on the Desktop; leave the original in
+Applications, which is the only folder updates look at. It is built on your own machine during the install, which is why it
 needs no security exception.
 
 The app bounces in the Dock while the engine starts and then goes away: the
