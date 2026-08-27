@@ -966,10 +966,11 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"sessionOutputDir": req.OutputDir})
 }
 
-// handleEvents is the SSE stream: an initial queue frame, then live progress
-// frames (pushed) and queue frames (on change, polled), plus a keepalive comment
-// so a dropped connection is noticed. It owns the single writing goroutine for
-// this client, so no locking of w is needed.
+// handleEvents is the SSE stream: an initial queue frame and an initial update
+// frame, then live progress frames (pushed), queue frames (on change, polled) and
+// update frames (pushed, when the daemon learns a local version it did not know),
+// plus a keepalive comment so a dropped connection is noticed. It owns the single
+// writing goroutine for this client, so no locking of w is needed.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeErr(w, http.StatusMethodNotAllowed, "GET only")
@@ -998,6 +999,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 	sendQueue()
+	// And the advisory as it stands right now, which is NOT redundant with the one
+	// /api/state just served: the page fetches the state and only THEN opens this
+	// stream, so a probe finishing between those two calls would be broadcast to a
+	// client that is not connected yet and the page would keep the record's answer
+	// with no second chance (V32).
+	if data, ok := s.updateFrame(); ok {
+		writeSSE(w, "update", data)
+		flusher.Flush()
+	}
 	lastSig := s.queueSignature()
 
 	poll := time.NewTicker(pollInterval)

@@ -544,3 +544,53 @@ func TestRefreshLocalReconcilesWithReality(t *testing.T) {
 		t.Errorf("after the reconcile: %q, want what the tool says", got)
 	}
 }
+
+// countingPublisher records what the daemon knew AT THE MOMENT it published, which
+// is the only way to tell "measured, then told" from "told, then measured".
+type countingPublisher struct {
+	calls int
+	saw   string
+	deps  func() string
+}
+
+func (c *countingPublisher) PublishUpdate() {
+	c.calls++
+	c.saw = c.deps()
+}
+
+// The reconcile is not finished when the daemon knows: it is finished when the
+// page knows. A pushed advisory carrying the version the page already had would
+// be a round trip that changes nothing (V32).
+func TestReconcilePublishesWhatItMeasured(t *testing.T) {
+	state := surfaceSandbox(t)
+	sleepingTool(t, update.BinDir(), update.ComponentYtDlp, 0, "2026.09.01")
+	writeInstallerMarker(t, state, "yt_dlp_version = 2026.08.20\n")
+
+	upd := newGUIUpdater(state, func() config.Settings { return config.Settings{} })
+	pub := &countingPublisher{deps: func() string {
+		return depVersion(t, upd.Deps(), update.ComponentYtDlp)
+	}}
+
+	reconcileAndPublish(upd, pub)
+
+	if pub.calls != 1 {
+		t.Fatalf("PublishUpdate called %d times, want exactly 1", pub.calls)
+	}
+	if pub.saw != "2026.09.01" {
+		t.Errorf("published %q — the recorded answer, not the measured one; the probe ran after the push", pub.saw)
+	}
+}
+
+// A daemon with no GUI server has nobody to tell, and must not die trying.
+func TestReconcileWithoutAPublisherStillReconciles(t *testing.T) {
+	state := surfaceSandbox(t)
+	sleepingTool(t, update.BinDir(), update.ComponentYtDlp, 0, "2026.09.01")
+	writeInstallerMarker(t, state, "yt_dlp_version = 2026.08.20\n")
+
+	upd := newGUIUpdater(state, func() config.Settings { return config.Settings{} })
+	reconcileAndPublish(upd, nil)
+
+	if got := depVersion(t, upd.Deps(), update.ComponentYtDlp); got != "2026.09.01" {
+		t.Errorf("after the reconcile: %q, want what the tool says", got)
+	}
+}

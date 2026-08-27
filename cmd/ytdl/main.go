@@ -330,7 +330,7 @@ func runDaemon(daemonArgs []string) int {
 		// record safe to believe — a marker can be stale, and only a probe finds
 		// out (ADR-0019 §2). It is deliberately after startWebUI, not before it:
 		// before, it is the 7.5 s cold start gate A measured.
-		go upd.refreshLocal()
+		go reconcileAndPublish(upd, srv)
 
 		return serveGUI(cfg, alive)
 	}

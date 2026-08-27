@@ -661,6 +661,11 @@ function connect() {
       if (currentView() === "history" && !historyPaged) loadHistory(false);
     }).catch(() => {});
   });
+  es.addEventListener("update", (e) => {
+    // The daemon measured the local versions after the port opened, and this is
+    // the page learning them without being asked (V32).
+    applyPushedUpdate(JSON.parse(e.data));
+  });
   es.addEventListener("progress", (e) => {
     const p = JSON.parse(e.data);
     progress.set(p.id, p);
@@ -986,6 +991,7 @@ loadSettings()
 // the ban.
 
 let updateInfo = null;      // the last /api/state update object, or null
+let updateConfirmOpen = false; // the confirmation is on screen with its two buttons
 let updatePollTimer = 0;
 let updateVersionBefore = "";  // the ytdl version in force when the update started
 let updateDeadline = 0;        // when to stop waiting for the interface to return
@@ -995,6 +1001,32 @@ let updateDeadline = 0;        // when to stop waiting for the interface to retu
 // only place a Terminal is mentioned, and the thing Cycle 6-launch removes.
 const RESTART_TIMEOUT_MS = 60000;
 const UPDATE_POLL_MS = 1500;
+
+// applyPushedUpdate applies an advisory the DAEMON sent rather than one the page
+// asked for, which is the one case where the news can arrive while the user is
+// holding the control it redraws.
+//
+// The page is told the RECORDED versions on load and the daemon measures the real
+// ones a few seconds later (ADR-0019 §2); this is how a page already open learns
+// them (V32). But applyUpdate rebuilds the banner, the versions and the action, so
+// the rule the queue already follows holds here too: the control the user is
+// aiming at survives (§4).
+//
+// Skipped, not queued. Everything that ends the flow refreshes the state on its
+// own — a reload after a handover, loadState after a run that did not restart,
+// renderUpdateAction when the confirmation is cancelled — so a stash would be a
+// second path to the same place, and the one that goes stale.
+function applyPushedUpdate(u) {
+  if (updateFlowBusy()) return false;
+  applyUpdate(u);
+  return true;
+}
+
+// updateFlowBusy — the user is inside the update flow: a run's panel is on screen
+// (their own or one this tab adopted), or the confirmation is open.
+function updateFlowBusy() {
+  return !$("updatePanel").hidden || updateConfirmOpen;
+}
 
 function applyUpdate(u) {
   // No update object means the capability is absent: render nothing at all
@@ -1155,6 +1187,8 @@ function renderUpdateBanner() {
 // renderUpdateAction draws the one action, or the disabled one with its reason.
 function renderUpdateAction() {
   const slot = $("updateActionSlot");
+  // Whatever this draws, the confirmation is not on screen afterwards.
+  updateConfirmOpen = false;
   if (!updateInfo.available || updateInfo.busy) {
     replaceChildren(slot, []);
     return;
@@ -1184,6 +1218,10 @@ function confirmUpdate() {
   const go = button("Conferma", "", () => startUpdate(false));
   const cancel = button("Annulla", "secondary", renderUpdateAction);
   replaceChildren(slot, [el("span", "confirm-text", msg), go, cancel]);
+  // From here until the user resolves it, a pushed advisory must not redraw this
+  // slot: Conferma would vanish from under the pointer. Cancel goes through
+  // renderUpdateAction, which clears it.
+  updateConfirmOpen = true;
   go.focus();
 }
 

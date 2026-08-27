@@ -94,6 +94,27 @@ func (u *guiUpdater) refreshLocal() {
 	u.mu.Unlock()
 }
 
+// updatePublisher is the half of the reconcile that TELLS the pages. An interface
+// rather than *webui.Server so the order below can be tested without a browser.
+type updatePublisher interface{ PublishUpdate() }
+
+// reconcileAndPublish is the cold start's second half: measure what is really
+// installed, then tell whoever is already looking.
+//
+// The order is the contract. The page was handed the installer's record about a
+// second ago and holds an SSE connection open; publishing BEFORE the probe would
+// send it the same recorded answer a second time and change nothing, and not
+// publishing at all leaves the measured versions in this process's memory for the
+// life of that load — which is what V32 found. ADR-0019 §2 says the probe replaces
+// the recorded answer; this is the half that makes that true of the surface and
+// not only of the daemon.
+func reconcileAndPublish(u *guiUpdater, p updatePublisher) {
+	u.refreshLocal()
+	if p != nil {
+		p.PublishUpdate()
+	}
+}
+
 // Verdict pairs the remembered REMOTE answer with the local facts.
 //
 // The local half is filled in even when no round has ever completed, because the
