@@ -40,6 +40,14 @@ const (
 	// it learned this way, so it is known to work on the target platform.
 	logName = "launcher.log"
 
+	// maxLauncherLog caps launcher.log, past which it is truncated. One line per
+	// double-click would take years to matter, so this is not a size problem being
+	// solved: it is the same rule internal/daemon already applies to daemon.log at
+	// the same 256 KiB, so the two files in the state dir cannot grow by different
+	// rules. Truncating rather than rotating keeps a second copy off the disk; what
+	// is lost is launches nobody went looking for.
+	maxLauncherLog = 256 * 1024
+
 	// guiCmdTimeout bounds a wedged child. `ytdl gui` bounds ITSELF at waitForGUI's
 	// 10 s plus a browser spawn, so this is six times its own worst case and
 	// exists only so a hung engine cannot leave a Dock tile that never goes away.
@@ -150,7 +158,11 @@ func (l *launcher) log(ytdl string, code int, childSaid string) {
 		return
 	}
 	_ = os.MkdirAll(l.stateDir, 0o700)
-	f, err := os.OpenFile(filepath.Join(l.stateDir, logName), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	path := filepath.Join(l.stateDir, logName)
+	if fi, err := os.Stat(path); err == nil && fi.Size() > maxLauncherLog {
+		_ = os.Truncate(path, 0)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}

@@ -410,3 +410,42 @@ func TestLauncherLogAppends(t *testing.T) {
 		t.Errorf("the log holds %d lines after two launches, want 2", got)
 	}
 }
+
+// And the append is BOUNDED. One line per double-click would take years to
+// matter, so what this pins is not a size problem: it is that the launcher
+// follows the rule internal/daemon already applies to daemon.log — the same
+// 256 KiB, the same truncation — rather than inventing a second one for the
+// second file in the same state dir.
+func TestLauncherLogIsCapped(t *testing.T) {
+	exe, resources := bundle(t)
+	ytdl := stubYtdl(t, t.TempDir(), filepath.Join(t.TempDir(), "argv"), "", 0)
+	writeSidecar(t, resources, ytdl+"\n")
+
+	l, _ := testLauncher(t, exe)
+	if err := os.MkdirAll(l.stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(l.stateDir, logName)
+	old := strings.Repeat("x", maxLauncherLog+1) + "\n"
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	l.run()
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) > maxLauncherLog {
+		t.Errorf("the log is %d bytes after a launch past the cap, want it truncated", len(raw))
+	}
+	if strings.Contains(string(raw), "xxxx") {
+		t.Error("the truncated log still carries what it held before")
+	}
+	// Truncation must not cost the line that triggered it: the launch is still
+	// recorded, which is the whole point of the file.
+	if !strings.Contains(string(raw), ytdl) {
+		t.Errorf("the launch that crossed the cap was not recorded: %q", raw)
+	}
+}
