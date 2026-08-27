@@ -18,9 +18,8 @@ returns in 8 s ([ADR-0017](foundation/decisions/0017-dev-container-oracle.md)). 
 block below moves to the history once its branch is merged, like every closed unit.
 
 In flight is **Cycle 6-launch** — ytdl as a double-clickable app — whose gate B was
-approved on 2026-08-27 and whose work is planned below as `L1`–`L12`. Its **cold-start
-half is done**; the bundle half starts at `L4`. Cycle 6 (the scope model) has its
-gate A closed too, and follows it.
+approved on 2026-08-27 and whose **implementation (`L1`–`L8`) is complete** and awaiting
+review. Cycle 6 (the scope model) has its gate A closed too, and follows it.
 
 A closed unit keeps **one line** here and its full block in
 [roadmap-history.md](roadmap-history.md). What is known, worth doing and **not**
@@ -41,11 +40,12 @@ flowchart LR
 ## Open now
 
 **[`Cycle 6-launch`](#cycle-6-launch) — the desktop launcher — is in flight, and its
-work is in implementation.** Gate B was approved on 2026-08-27, the plan is `L1`–`L12`
-below, and the **cold-start half (`L2`–`L3`) is done**: the GUI daemon binds its port
-before asking any tool its version, so the ~7.5 s first click measured at gate A is
-gone. Work is on `feat/launch/implementation`; the design and ADR-0019 are merged into
-`main`. Next is `L4`, the launcher.
+work is implemented.** Gate B was approved on 2026-08-27 and **all eight
+implementation steps `L1`–`L8` are done** on `feat/launch/implementation`, not merged:
+the cold-start remedy, the launcher, the release assets and their signature assertion,
+the bundle step, and the Italian surfaces. What remains is `L9`–`L12` — the two
+reviews, the merge, the release, and gate C. The design and ADR-0019 are merged into
+`main`.
 
 Its rulings are, in the order to read them:
 [ADR-0018](distribution/decisions/0018-desktop-launcher-app-bundle.md) (gate A — the
@@ -332,11 +332,11 @@ means, and what the user sees while it starts. None is reopened here.
 | L1 | the design, ADR-0019, and their two rows in `docs/README.md` | — | `done` |
 | L2 | `internal/update`: the recorded version walk, `RecordedDependencies`, and the two comments the measurements falsified | — | `done` |
 | L3 | `cmd/ytdl`: the constructor reads the record; `runDaemon` reconciles with a probe after `startWebUI` | L2 | `done` |
-| L4 | `cmd/ytdl-launch`: resolve `ytdl` absolutely, run `ytdl gui`, always log, alert only on failure | — | `planned` |
-| L5 | `.github/workflows/release.yml`: the two launcher assets, in `SHA2-256SUMS`, with the arm64 `LC_CODE_SIGNATURE` asserted | L4 | `planned` |
-| L6 | `install.sh` pure functions: `app_dir`, `launcher_asset_for`, `render_app_plist`, `app_is_current`, `app_sidecar_path` | L4 | `planned` |
-| L7 | `install.sh`: `install_app_bundle`, wired after `verify_install` and before `write_marker`, non-fatal | L6 | `planned` |
-| L8 | the Italian surfaces — both user guides, `YTDL_APP_DIR` in `hack/ytdl-dev.sh` and `dev-testing.md`, `CHANGELOG.md` under `[Unreleased]` | L3 · L7 | `planned` |
+| L4 | `cmd/ytdl-launch`: resolve `ytdl` absolutely, run `ytdl gui`, always log, alert only on failure | — | `done` |
+| L5 | `.github/workflows/release.yml`: the two launcher assets, in `SHA2-256SUMS`, with the arm64 `LC_CODE_SIGNATURE` asserted | L4 | `done` |
+| L6 | `install.sh` pure functions: `app_dir`, `launcher_asset_for`, `render_app_plist`, `app_is_current`, `app_sidecar_path` | L4 | `done` |
+| L7 | `install.sh`: `install_app_bundle`, wired after `verify_install` and before `write_marker`, non-fatal | L6 | `done` |
+| L8 | the Italian surfaces — both user guides, `YTDL_APP_DIR` in `hack/ytdl-dev.sh` and `dev-testing.md`, `CHANGELOG.md` under `[Unreleased]` | L3 · L7 | `done` |
 | L9 | `/review-implementation`, then `/review-docs` on the same branch | L1–L8 | `planned` |
 | L10 | merge `--no-ff` into `main` | L9 | `planned` |
 | L11 | **cut the release**, so `releases/latest` carries the launcher assets | L10 | `planned` |
