@@ -775,6 +775,55 @@ install_app_bundle >/dev/null 2>&1
 check "a launcher failing its checksum returns 0" "0" "$?"
 check "and is never written into the bundle" "$exe_before" "$(sha256_of "$(app_exe_path)")"
 
+# A run that installs no app must leave NO app. An empty YTDL.app is not "no
+# app": Finder treats any directory named *.app as an application, shows it in
+# Applications, and then refuses to open it — a control that cannot work, which
+# is what ux-principles §5 forbids.
+#
+# The window is dated and certain, not hypothetical: install.sh is served from
+# the branch while the assets come from releases/latest, so between merging a
+# cycle and cutting its release there is no launcher to fetch. Every fresh
+# install in that window took this path.
+YTDL_APP_DIR="$BUNDLE_HOME/first-install"
+download_optional() { return 1; }
+rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+install_app_bundle >/dev/null 2>&1
+check "a first install with no checksums returns 0" "0" "$?"
+check "and leaves no empty YTDL.app behind" "1" \
+  "$([ -e "$BUNDLE_HOME/first-install/YTDL.app" ] && echo 0 || echo 1)"
+# ~/Applications itself IS created: it does not exist by default, and creating it
+# is how the step learns whether it may write there at all.
+check "but ~/Applications itself is created" "0" \
+  "$([ -d "$BUNDLE_HOME/first-install" ] && echo 0 || echo 1)"
+
+# The same, one step further along: the sums arrive but name no launcher, so the
+# download 404s. Still no husk.
+download_optional() {
+  local url="$1" dest="$2" name
+  name="${url##*/}"
+  [ "$name" = "SHA2-256SUMS" ] || return 1
+  printf '%s  ytdl_macos_arm64\n' "0000000000000000000000000000000000000000000000000000000000000000" > "$dest"
+}
+rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+install_app_bundle >/dev/null 2>&1
+check "a first install with no launcher asset leaves no empty YTDL.app" "1" \
+  "$([ -e "$BUNDLE_HOME/first-install/YTDL.app" ] && echo 0 || echo 1)"
+
+# And once the launcher IS available, the same directory does get its bundle —
+# so the assertions above pin "not yet", not "never".
+download_optional() {
+  local url="$1" dest="$2" name
+  name="${url##*/}"
+  [ -f "$BUNDLE_HOME/release/$name" ] || return 1
+  cp "$BUNDLE_HOME/release/$name" "$dest"
+}
+rm -f "$TMPDIR_YTDL/ytdl-SHA2-256SUMS"
+install_app_bundle >/dev/null 2>&1
+check "the same first install builds the bundle once the launcher exists" "0" \
+  "$([ -x "$BUNDLE_HOME/first-install/YTDL.app/Contents/MacOS/YTDL" ] && echo 0 || echo 1)"
+
+YTDL_APP_DIR="$BUNDLE_HOME/Applications"
+
 # An unwritable parent is warned about, not aborted on.
 unset -f download_optional
 YTDL_APP_DIR="/proc/nonexistent-and-unwritable"

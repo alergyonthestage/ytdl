@@ -964,7 +964,7 @@ app_launcher_verified() {
 install_app_bundle() {
   step "Installing the YTDL app"
 
-  local dir exe sums asset tmp version
+  local dir parent exe sums asset tmp version created
 
   # Describes THIS run: every path below may return early, and a flag left over
   # from a previous call would let the closing message name an app this run did
@@ -972,9 +972,20 @@ install_app_bundle() {
   APP_INSTALLED=0
 
   dir="$(app_dir)"
-  # mkdir -p, never rm -rf: rule 1.
-  if ! mkdir -p "$dir/Contents/MacOS" "$dir/Contents/Resources" 2>/dev/null; then
-    warn "Could not create $dir — skipping the app. ytdl itself is installed."
+  parent="$(dirname "$dir")"
+  # ~/Applications does not exist by default, so it is created here — but the
+  # BUNDLE is not, not yet.
+  #
+  # Every path below may still return early, and an empty YTDL.app is not "no
+  # app": Finder treats ANY directory named *.app as an application, shows it,
+  # and then refuses to open it. That is a surface stating something untrue
+  # (ux-principles §5), and its window is dated and certain — install.sh is
+  # served from the branch while the assets come from releases/latest, so
+  # between merging a cycle and cutting its release there is no launcher to
+  # fetch. So the bundle's own directories are created only once there is a
+  # verified launcher to put in them (§4.4).
+  if ! mkdir -p "$parent" 2>/dev/null; then
+    warn "Could not create $parent — skipping the app. ytdl itself is installed."
     return 0
   fi
 
@@ -1004,8 +1015,24 @@ install_app_bundle() {
       return 0
     fi
     chmod +x "$tmp" 2>/dev/null || true
+    # The one place the bundle is ever created, and still mkdir -p rather than
+    # rm -rf: an existing bundle keeps its directory, and with it the Dock entry,
+    # the Spotlight identity and any alias the user made (rule 1).
+    created=0
+    [ -d "$dir" ] || created=1
+    if ! mkdir -p "$dir/Contents/MacOS" 2>/dev/null; then
+      rm -f "$tmp"
+      warn "Could not create $dir — skipping the app. ytdl itself is installed."
+      return 0
+    fi
     if ! mv "$tmp" "$exe" 2>/dev/null; then
       rm -f "$tmp"
+      # Undo only what THIS run created, and only while it is still empty: rmdir
+      # refuses a directory with anything in it, so a bundle that was already
+      # there cannot be removed by this.
+      if [ "$created" -eq 1 ]; then
+        rmdir "$dir/Contents/MacOS" "$dir/Contents" "$dir" 2>/dev/null || true
+      fi
       warn "Could not write $exe — leaving the app as it is."
       return 0
     fi
@@ -1013,6 +1040,10 @@ install_app_bundle() {
     # quarantine attribute — cleared defensively, as for every other binary.
     xattr -d com.apple.quarantine "$exe" 2>/dev/null || true
   fi
+
+  # A launcher is in place, so the bundle is a real application and its remaining
+  # directory can be created without risking an empty .app.
+  mkdir -p "$dir/Contents/Resources" 2>/dev/null || true
 
   # Rule 3. Local text with no download behind it, so the comparison is a cmp and
   # the version key follows ytdl's, keeping Finder's Get Info truthful without
